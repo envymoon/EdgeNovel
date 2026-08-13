@@ -1,0 +1,4 @@
+# F5-TTS pulls torch, torchaudio and its own vocoder. On an NVIDIA machine
+# install torch from pytorch.org first if you want a specific CUDA build;
+# otherwise pip's default wheel is used.
+f5-tts>=1.1.0

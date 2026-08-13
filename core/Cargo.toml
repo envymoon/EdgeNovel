@@ -1,0 +1,26 @@
+[package]
+name = "novel-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+encoding_rs = "0.8"
+chardetng = "0.1"
+# `bundled` compiles SQLite from source, so Android and iOS get the same version
+# as the desktop instead of whatever the OS happens to ship.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+regex = "1.13.0"
+scraper = "0.27.0"
+serde_json_path = "0.7.2"
+ureq = { version = "3.3.0", features = ["gzip"] }
+ego-tree = "0.11.0"
+
+[[bin]]
+name = "diagnose"
+path = "src/bin/diagnose.rs"
+
+[[bin]]
+name = "sourcecheck"
+path = "src/bin/sourcecheck.rs"

@@ -1,0 +1,31 @@
+[package]
+name = "rust_lib_novel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+flutter_rust_bridge = "=2.12.0"
+novel-core = { path = "../../core" }
+# Talking to the local llama-server. The HTTP itself is a hand-rolled loopback
+# TcpStream client (no TLS, no proxy — nothing a full HTTP crate is for).
+serde_json = "1"
+# Unpacking the sherpa-onnx (TTS) downloads, which ship as .tar.bz2. bzip2-rs is
+# a pure-Rust, decode-only bzip2 — no C toolchain, and far faster than doing the
+# ~160 MB model decompress on the Dart isolate.
+tar = "0.4"
+bzip2-rs = "0.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# Opening a book decodes and structures megabytes of text; unoptimized that is
+# seconds of spinner. Dependencies (novel-core does all the work) are optimized
+# even in dev builds — this crate itself stays low so bridge edits rebuild fast.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,57 @@
+# Build products and tool caches
+**/build/
+**/target/
+**/.dart_tool/
+**/.pub-cache/
+**/.gradle/
+**/.idea/
+**/.vscode/
+*.iml
+*.log
+*.tmp
+*.dmp
+*.bak
+**/__pycache__/
+*.py[cod]
+
+# Local/generated application state
+**/novel_data/
+**/app_data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+
+# Models and partial downloads
+*.gguf
+*.onnx
+*.safetensors
+*.part
+*.download
+
+# Signing material and local configuration
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+key.properties
+local.properties
+.env
+.env.*
+!.env.example
+
+# Local experiments, copyrighted test books, and diagnostic captures
+/.scan-lab/
+/bad/
+/bad-synth/
+/releases/
+/*.txt
+/android-*.png
+/android-*.xml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

@@ -1,0 +1,6 @@
+# The server itself. The model lives in a per-backend file next to this one, so
+# choosing kokoro does not drag in F5's dependencies (or its 2 GB of torch).
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+numpy>=1.24
