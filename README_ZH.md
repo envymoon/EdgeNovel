@@ -42,6 +42,22 @@
 ## 在阅读器里看看
 
 <p align="center">
+  <img src="docs/assets/android-book-detail.png" width="31%" alt="书籍详情与扫书报告">
+  <img src="docs/assets/android-reader-open.png" width="31%" alt="移动端阅读界面">
+  <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="小说中的标注">
+</p>
+
+同一条流程从**选书**进入**阅读**，再延伸到**个人标注**。截图来自当前中文网文流程；小说原文始终保存在用户本地，公开仓库不会附带测试小说。
+
+### 阅读中的一小段
+
+> 雨声沿着窗棂落下。他合上这一章，留下了一行稍后再看的标注，又回到故事暂停的地方。
+
+这段中文是专门为展示页创作的示例文字，不是仓库附带的测试小说。
+
+### 扫书报告内部界面
+
+<p align="center">
   <img src="docs/assets/android-test-detail2.png" width="31%" alt="人物构成与感情结构">
   <img src="docs/assets/android-test-toc-open2.png" width="31%" alt="章节目录与阅读位置">
   <img src="docs/assets/android-test-ai-runtime-mobile.png" width="31%" alt="动态负载设置">
@@ -52,11 +68,13 @@
   <img src="docs/assets/mood-chart.svg" width="47%" alt="章节氛围与节奏图界面示意">
 </p>
 
-截图来自当前中文阅读流程：书籍详情、人物关系与感情结构、章节概览、阅读位置和动态负载设置。人物关系图与氛围/节奏图为展示用界面示意，具体数据仍以应用实际分析结果为准。
+截图来自当前中文阅读流程：书籍详情、阅读界面、标注、人物关系与感情结构、章节概览、阅读位置和动态负载设置。人物关系图与氛围/节奏图为展示用界面示意，具体数据仍以应用实际分析结果为准。
 
 ## 当前内容支持范围
 
 应用界面已经可以切换为 English，但小说导入、章节识别、语义检索、人物关系和扫书报告目前只针对**中文网文**进行规则和模型调试。英文小说（例如《了不起的盖茨比》）暂不属于支持范围，可能出现章节识别、检索或分析失效。
+
+英文界面不会自动让英文小说获得支持；当前分析管线仍然是中文网文专用。
 
 ## 主要功能
 

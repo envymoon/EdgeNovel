@@ -39,11 +39,40 @@ A small model cannot reliably make unrestricted, book-wide judgments about a ver
 
 The in-reader assistant provides character lookup, chapter overviews, semantic search, and reading-related tools. It is kept separate from the pre-reading report so that choosing a book and reading a book do not become the same workflow.
 
+## See It in the Reader
+
+<p align="center">
+  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and pre-reading report">
+  <img src="docs/assets/android-reader-open.png" width="31%" alt="Mobile reading view">
+  <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="An annotation saved in the novel">
+</p>
+
+The same flow moves from **book choice** to **reading** to **personal annotation**. These are screenshots of the current Chinese web-fiction flow; the English captions describe the product surface, not an English novel pipeline.
+
+### A small reading moment
+
+> Rain traced the window. He closed the chapter, left one line for later, and returned to the exact place where the story had paused.
+
+This short English passage is original showcase copy. It is not a bundled test novel.
+
+### Inside the scan report
+
+<p align="center">
+  <img src="docs/assets/android-test-detail2.png" width="31%" alt="Cast composition and relationship structure">
+  <img src="docs/assets/android-test-toc-open2.png" width="31%" alt="Chapter overview and current reading position">
+  <img src="docs/assets/android-test-ai-runtime-mobile.png" width="31%" alt="Dynamic workload settings">
+</p>
+
+<p align="center">
+  <img src="docs/assets/cast-graph.svg" width="47%" alt="Cast relationship graph interface illustration">
+  <img src="docs/assets/mood-chart.svg" width="47%" alt="Chapter mood and pacing chart interface illustration">
+</p>
+
+The cast graph and mood chart are interface illustrations for the planned report surface; the underlying evidence remains tied to Chinese novel chapters.
+
 ## Current Content Support
 
-The interface can be switched to English in the current source, but the reading and analysis pipeline is currently tuned for **Chinese web fiction only**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and scan reports may be incomplete or fail.
-
-The English README and English showcase page therefore document the product idea only. They do not claim to be an English reading build or show English novel screenshots. Detailed in-app captures are kept on the Chinese showcase page until the content pipeline has been adapted and tested.
+The interface can be switched to English in the current source, but an English interface does not automatically add English novel support; the current analysis pipeline is dedicated to **Chinese web fiction**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and scan reports may be incomplete or fail.
 
 ## Features
 
