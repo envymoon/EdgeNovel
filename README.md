@@ -39,21 +39,11 @@ A small model cannot reliably make unrestricted, book-wide judgments about a ver
 
 The in-reader assistant provides character lookup, chapter overviews, semantic search, and reading-related tools. It is kept separate from the pre-reading report so that choosing a book and reading a book do not become the same workflow.
 
-## See It in the Reader
+## Current Content Support
 
-<p align="center">
-  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and pre-reading report">
-  <img src="docs/assets/android-reader-open.png" width="31%" alt="Mobile reading view">
-  <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="An annotation saved in the novel">
-</p>
+The interface can be switched to English in the current source, but the reading and analysis pipeline is currently tuned for **Chinese web fiction only**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and scan reports may be incomplete or fail.
 
-The same flow moves from **book choice** to **reading** to **personal annotation**. The screenshots use the app's current mobile UI; novel text is kept local and is never bundled with the public repository.
-
-### A small reading moment
-
-> Rain traced the window. He closed the chapter, left one line for later, and returned to the exact place where the story had paused.
-
-This short English passage is original showcase copy. It represents the kind of local reading context the app is built around, not a bundled test novel.
+The English README and English showcase page therefore document the product idea only. They do not claim to be an English reading build or show English novel screenshots. Detailed in-app captures are kept on the Chinese showcase page until the content pipeline has been adapted and tested.
 
 ## Features
 
@@ -116,7 +106,7 @@ Windows and Android use separate GitHub Releases. Their packages and release tag
 
 Windows is currently the most complete version. The `novel.exe` file must remain beside the bundled `data` directory and DLL files; copying or downloading the executable alone will not work.
 
-Current status: the first public Windows 1.0.0 release is available. Download the complete ZIP; the executable must stay beside its `data` directory and DLL files.
+Current status: the first public Windows 1.0.0 release is available. The source now includes the interface-language switch, but this published package predates that change; a new Windows package is required for the switch to appear in the installed app. Download the complete ZIP; the executable must stay beside its `data` directory and DLL files.
 
 ### Android
 

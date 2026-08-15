@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-labelledby="title desc">
+  <title id="title">章节氛围与节奏图界面示意</title>
+  <desc id="desc">以章节区间显示紧张、平缓和转折变化。</desc>
+  <rect width="720" height="420" rx="26" fill="#18223d"/>
+  <text x="38" y="54" fill="#f6f7fb" font-size="25" font-family="sans-serif" font-weight="700">章节氛围与节奏</text>
+  <text x="38" y="82" fill="#a9b3ca" font-size="15" font-family="sans-serif">按区段查看紧张度与叙事变化</text>
+  <g stroke="#506080" stroke-width="1"><path d="M74 130H660"/><path d="M74 190H660"/><path d="M74 250H660"/><path d="M74 310H660"/></g>
+  <path d="M74 294 C130 278 137 230 185 252 S248 280 294 195 S360 185 404 212 S467 270 509 168 S584 145 660 122 L660 310 L74 310Z" fill="#a9e8d333"/>
+  <path d="M74 294 C130 278 137 230 185 252 S248 280 294 195 S360 185 404 212 S467 270 509 168 S584 145 660 122" fill="none" stroke="#a9e8d3" stroke-width="5" stroke-linecap="round"/>
+  <g fill="#a9b3ca" font-size="13" font-family="sans-serif"><text x="48" y="134" text-anchor="end">紧张</text><text x="48" y="314" text-anchor="end">平缓</text><text x="74" y="342">开局</text><text x="294" y="342">转折</text><text x="509" y="342">高潮</text><text x="660" y="342" text-anchor="end">后段</text></g>
+  <g fill="#ffd49a" font-family="sans-serif" font-size="14"><circle cx="294" cy="195" r="6"/><text x="304" y="190">身份揭示</text><circle cx="509" cy="168" r="6"/><text x="519" y="163">冲突升级</text></g>
+</svg>

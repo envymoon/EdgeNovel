@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-labelledby="title desc">
+  <title id="title">人物关系图界面示意</title>
+  <desc id="desc">主角与主要人物、盟友和对手的关系图。</desc>
+  <defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#f7f0df"/><stop offset="1" stop-color="#e8dfcb"/></linearGradient></defs>
+  <rect width="720" height="420" rx="26" fill="url(#bg)"/>
+  <text x="38" y="54" fill="#40392e" font-size="25" font-family="sans-serif" font-weight="700">人物构成与关系</text>
+  <text x="38" y="82" fill="#928979" font-size="15" font-family="sans-serif">活跃章节 · 重要程度 · 敌友变化</text>
+  <g stroke="#b6a890" stroke-width="3" fill="none"><path d="M360 210 L170 135"/><path d="M360 210 L550 135"/><path d="M360 210 L170 305"/><path d="M360 210 L550 305"/></g>
+  <g fill="#f5ead5" stroke="#b39c76" stroke-width="2"><rect x="277" y="158" width="166" height="104" rx="22" fill="#cbb6ff" stroke="#7a64a9"/><rect x="90" y="100" width="160" height="72" rx="18"/><rect x="470" y="100" width="160" height="72" rx="18"/><rect x="90" y="270" width="160" height="72" rx="18"/><rect x="470" y="270" width="160" height="72" rx="18"/></g>
+  <g fill="#40392e" font-family="sans-serif" text-anchor="middle"><text x="360" y="200" font-size="22" font-weight="700">主角</text><text x="360" y="228" font-size="14">核心 · 100%</text><text x="170" y="132" font-size="18">青翎</text><text x="170" y="153" font-size="13">盟友 · 高活跃</text><text x="550" y="132" font-size="18">高阳</text><text x="550" y="153" font-size="13">对手 · 反复</text><text x="170" y="302" font-size="18">林间客</text><text x="170" y="323" font-size="13">长期随队</text><text x="550" y="302" font-size="18">城中人</text><text x="550" y="323" font-size="13">工具人</text></g>
+</svg>
