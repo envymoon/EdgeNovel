@@ -53,6 +53,8 @@ section { padding: 74px 0; }
 .shot { overflow:hidden; border-radius: 20px; border:1px solid var(--line); background: #141b30; }
 .shot img { width:100%; height: 300px; object-fit:cover; object-position:top; display:block; }
 .shot.tall img { height: 400px; }
+.shot.wide, .shot:has(img[src*="cast-graph-real"]), .shot:has(img[src*="chapter-overview-real"]) { grid-column: span 2; }
+.shot.wide img, .shot:has(img[src*="cast-graph-real"]) img, .shot:has(img[src*="chapter-overview-real"]) img { height: auto; min-height: 390px; max-height: 520px; object-fit: contain; object-position: center; background: #0d1427; }
 .shot figcaption { padding: 14px 16px; color: var(--muted); font-size:.9rem; }
 .quote { border-left: 3px solid var(--warm); padding: 18px 24px; background: rgba(255,212,154,.08); border-radius: 0 16px 16px 0; color: #f9e7c7; font-size: 1.08rem; }
 .modes { display:grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
@@ -67,6 +69,7 @@ section { padding: 74px 0; }
   .grid, .modes { grid-template-columns: 1fr; }
   .screens { grid-template-columns: 1fr 1fr; }
   .shot:first-child { grid-column: 1 / -1; }
+  .shot.wide, .shot:has(img[src*="cast-graph-real"]), .shot:has(img[src*="chapter-overview-real"]) { grid-column: 1 / -1; }
   .nav-links { gap: 10px; }
 }
 @media (max-width: 520px) {
@@ -75,4 +78,5 @@ section { padding: 74px 0; }
   .nav-links { flex-direction:column; align-items:flex-end; }
   .screens { grid-template-columns: 1fr; }
   .shot:first-child { grid-column:auto; }
+  .shot.wide, .shot:has(img[src*="cast-graph-real"]), .shot:has(img[src*="chapter-overview-real"]) { grid-column: auto; }
 }
