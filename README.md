@@ -2,6 +2,16 @@
 
 [简体中文](README_ZH.md) | English
 
+<p align="center">
+  <img src="docs/assets/novel-icon.ico" width="112" alt="Novel app icon">
+</p>
+
+<p align="center"><strong>A quieter way to read Chinese web fiction.</strong><br>Local AI, searchable stories, and reading notes that stay with you.</p>
+
+<p align="center">
+  <a href="https://envymoon.github.io/EdgeNovel/"><strong>Open the project showcase →</strong></a>
+</p>
+
 A local-first novel reader designed for Chinese web fiction, with mobile as its final destination.
 
 The project brings small language models, rule-based retrieval, and reading data onto the user's own device. Its goal is to make AI useful both before and during reading—without turning reading into a permanently connected cloud conversation.
@@ -29,6 +39,22 @@ A small model cannot reliably make unrestricted, book-wide judgments about a ver
 
 The in-reader assistant provides character lookup, chapter overviews, semantic search, and reading-related tools. It is kept separate from the pre-reading report so that choosing a book and reading a book do not become the same workflow.
 
+## See It in the Reader
+
+<p align="center">
+  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and pre-reading report">
+  <img src="docs/assets/android-reader-open.png" width="31%" alt="Mobile reading view">
+  <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="An annotation saved in the novel">
+</p>
+
+The same flow moves from **book choice** to **reading** to **personal annotation**. The screenshots use the app's current mobile UI; novel text is kept local and is never bundled with the public repository.
+
+### A small reading moment
+
+> Rain traced the window. He closed the chapter, left one line for later, and returned to the exact place where the story had paused.
+
+This short English passage is original showcase copy. It represents the kind of local reading context the app is built around, not a bundled test novel.
+
 ## Features
 
 - Local TXT import, encoding handling, chapter detection, and custom shelf categories
@@ -43,6 +69,12 @@ The in-reader assistant provides character lookup, chapter overviews, semantic s
 - Charging, battery, idle-time, and thermal constraints
 - On-demand model downloads, integrity checks, resume support, and version rollback
 - On-demand fonts and mobile-oriented reading interactions
+
+### Core workflows at a glance
+
+| Before reading | While reading | Under the hood |
+| --- | --- | --- |
+| Cast graph, romance structure, pacing, and potential spoiler evidence | Chapter jump, current-position recovery, annotations, and semantic search | On-device models, resumable tasks, workload limits, and model rollback |
 
 ## AI on Edge Devices
 
@@ -60,6 +92,18 @@ Target device tiers (pending broader physical-device testing):
 | High performance | 12GB RAM or more | Fast mode and future enhanced models |
 
 Actual performance depends on the processor, available memory, operating-system background limits, and cooling—not memory capacity alone.
+
+## Edge-first Workload Design
+
+Edge computing is not only about placing a model on the device. Novel continuously adjusts **when** and **how much** work is done so reading stays responsive:
+
+- It combines charging state, battery level, thermal state, idle time, memory pressure, and task priority before starting a slice of work.
+- **Quiet idle** works in small slices, yields to the reader, and unloads the model between longer intervals when possible.
+- **Balanced** keeps a steady background pace for chapter analysis and retrieval.
+- **Finish now** uses the available resources to complete a requested result sooner, while still respecting device safety limits.
+- These modes change scheduling, thread count, intervals, and model residency—not the tuned 8K context or the meaning of the result.
+
+The goal is not to pretend that inference has no cost. It is to make that cost adaptive, visible, and appropriate for a phone that is also being used for reading.
 
 ## Platform Status and Downloads
 

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Novel——面向中文网文、为边缘设备设计的本地优先阅读器。">
+  <title>Novel · 贴近边缘设备的阅读</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="wrap nav">
+    <a class="brand" href="./zh.html"><img src="assets/novel-icon.ico" alt="Novel 图标"><span>Novel</span></a>
+    <nav class="nav-links" aria-label="页面导航"><a href="#layers">产品层次</a><a href="#screens">阅读界面</a><a href="#edge">边缘优化</a><a href="index.html">English</a></nav>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div>
+        <div class="eyebrow">本地优先 · 面向移动端</div>
+        <h1>读进故事。<br>留住上下文。</h1>
+        <p class="lead">Novel 是为中文网文打造的阅读助手：帮你判断一本书值不值得开始，帮你在长篇故事里找回位置，也让有用的标注留在自己手里。</p>
+        <div class="actions"><a class="button primary" href="https://github.com/envymoon/EdgeNovel/releases">查看版本 ↗</a><a class="button" href="https://github.com/envymoon/EdgeNovel">查看代码 ↗</a></div>
+      </div>
+      <div class="hero-art" aria-label="Novel 应用图标与产品理念">
+        <div class="orb"><img src="assets/novel-icon.ico" alt="Novel 应用图标"></div>
+        <div class="floating f-one"><strong>扫书报告</strong>让下一本书更容易选择。</div>
+        <div class="floating f-two"><strong>阅读助手</strong>人物 · 章节 · 搜索</div>
+        <div class="floating f-three"><strong>默认本地</strong>书库留在你的设备里。</div>
+      </div>
+    </section>
+
+    <section id="layers" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">一个阅读器，两个时刻</div><h2>选书更清楚。<br>阅读不中断。</h2></div><p>长篇网文在阅读前和阅读中需要不同的答案，Novel 为这两个时刻分别设计入口。</p></div>
+      <div class="grid">
+        <article class="card"><div class="number">01 / 阅读前</div><h3>扫书报告</h3><p>人物图谱、感情结构、节奏、叙事侧重和排雷片段，并尽量回到原文章节查看依据。</p></article>
+        <article class="card"><div class="number">02 / 阅读中</div><h3>阅读助手</h3><p>章节概览、人物查询、语义搜索、阅读位置恢复，以及不会打断阅读的原文标注。</p></article>
+        <article class="card"><div class="number">03 / 你的设备</div><h3>边缘 AI</h3><p>轻量模型和可复查规则在本地运行，数据、负载和判断依据都交给用户掌控。</p></article>
+      </div>
+    </section>
+
+    <section id="screens" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">打开看看</div><h2>从选书，到留下一行标注。</h2></div><p>移动端共用层同时面向 Android 和 iOS，保持同一套阅读逻辑和数据结构。</p></div>
+      <div class="screens">
+        <figure class="shot tall"><img src="assets/android-book-detail.png" alt="Novel 书籍详情页"><figcaption>01 · 书籍详情与扫书入口</figcaption></figure>
+        <figure class="shot"><img src="assets/android-reader-open.png" alt="Novel 阅读界面"><figcaption>02 · 专注的阅读界面</figcaption></figure>
+        <figure class="shot"><img src="assets/android-test-annotation-saved.png" alt="Novel 章节中的标注"><figcaption>03 · 贴在原文上的一条标注</figcaption></figure>
+      </div>
+      <div style="margin-top:24px" class="quote">“雨声沿着窗棂落下。他合上这一章，留下了一行稍后再看的标注，又回到故事暂停的地方。”</div>
+    </section>
+
+    <section id="edge" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">核心理念</div><h2>动态负载，而不是固定妥协。</h2></div><p>把模型放进手机只是起点，Novel 会围绕读者、剩余电量和设备状态调整工作方式。</p></div>
+      <div class="modes">
+        <div class="mode"><strong>无感空闲</strong><p>切成小片、拉长间隔，并在可能时卸载模型，让手机陪你阅读。</p></div>
+        <div class="mode"><strong>智能平衡</strong><p>以稳定速度后台处理章节分析和检索，同时保持设备响应。</p></div>
+        <div class="mode"><strong>立即完成</strong><p>在温度和电量限制允许的范围内使用更多资源，尽快完成当前请求。</p></div>
+      </div>
+      <div class="card" style="margin-top:16px"><p>每一小段任务开始前都会参考充电状态、电量、温度、空闲时间、内存压力和任务优先级。负载模式调整调度、线程、间隔和模型驻留方式，不改变经过调试的 8K 上下文。</p></div>
+    </section>
+  </main>
+
+  <footer class="wrap footer"><span>Novel · 面向中文网文的本地优先阅读器</span><span><a href="https://github.com/envymoon/EdgeNovel">GitHub</a> · <a href="index.html">English</a></span></footer>
+</body>
+</html>

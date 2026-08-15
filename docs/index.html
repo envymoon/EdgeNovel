@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Novel — a local-first reader for Chinese web fiction, built for edge devices.">
+  <title>Novel · Read closer to the edge</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="wrap nav">
+    <a class="brand" href="./"><img src="assets/novel-icon.ico" alt="Novel icon"><span>Novel</span></a>
+    <nav class="nav-links" aria-label="Site navigation"><a href="#layers">The product</a><a href="#screens">In the reader</a><a href="#edge">Edge-first</a><a href="zh.html">简体中文</a></nav>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div>
+        <div class="eyebrow">Local-first · mobile-minded</div>
+        <h1>Read the story.<br>Keep the context.</h1>
+        <p class="lead">Novel is a reading companion for Chinese web fiction. It helps you decide what to read, find your way back into a long story, and keep useful notes—without sending your library to a cloud.</p>
+        <div class="actions"><a class="button primary" href="https://github.com/envymoon/EdgeNovel/releases">View releases ↗</a><a class="button" href="https://github.com/envymoon/EdgeNovel">Explore the code ↗</a></div>
+      </div>
+      <div class="hero-art" aria-label="Novel app icon and product principles">
+        <div class="orb"><img src="assets/novel-icon.ico" alt="Novel app icon"></div>
+        <div class="floating f-one"><strong>Pre-reading report</strong>Make the next book easier to choose.</div>
+        <div class="floating f-two"><strong>Reading assistant</strong>Characters · chapters · search</div>
+        <div class="floating f-three"><strong>Local by default</strong>Your library stays on your device.</div>
+      </div>
+    </section>
+
+    <section id="layers" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">One reader, two moments</div><h2>Choose with clarity.<br>Read with continuity.</h2></div><p>Long-form web fiction asks different questions before and during a reading session. Novel gives each moment its own place.</p></div>
+      <div class="grid">
+        <article class="card"><div class="number">01 / BEFORE</div><h3>Pre-reading report</h3><p>Cast graph, romance structure, pacing, narrative focus, and potentially sensitive passages—always linked back to source chapters.</p></article>
+        <article class="card"><div class="number">02 / DURING</div><h3>Reading assistant</h3><p>Chapter overviews, character lookup, semantic search, reading-position recovery, and lightweight annotations while you stay in the story.</p></article>
+        <article class="card"><div class="number">03 / YOUR DEVICE</div><h3>Edge AI</h3><p>Small models and inspectable rules run locally. The app keeps the reader in control of data, workload, and evidence.</p></article>
+      </div>
+    </section>
+
+    <section id="screens" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">A look inside</div><h2>From book choice to a saved line.</h2></div><p>The mobile layer is designed to migrate across Android and iOS while keeping the same reading model.</p></div>
+      <div class="screens">
+        <figure class="shot tall"><img src="assets/android-book-detail.png" alt="Novel book detail page"><figcaption>01 · Book detail and pre-reading entry</figcaption></figure>
+        <figure class="shot"><img src="assets/android-reader-open.png" alt="Novel reading page"><figcaption>02 · Focused reading view</figcaption></figure>
+        <figure class="shot"><img src="assets/android-test-annotation-saved.png" alt="Novel annotation saved in a chapter"><figcaption>03 · A note anchored to the original text</figcaption></figure>
+      </div>
+      <div style="margin-top:24px" class="quote">“Rain traced the window. He closed the chapter, left one line for later, and returned to the exact place where the story had paused.”</div>
+    </section>
+
+    <section id="edge" class="wrap">
+      <div class="section-head"><div><div class="eyebrow">The core idea</div><h2>Dynamic load, not a fixed compromise.</h2></div><p>Putting a model on a phone is only the beginning. Novel adapts the work around the reader, the battery, and the device.</p></div>
+      <div class="modes">
+        <div class="mode"><strong>Quiet idle</strong><p>Small slices, long intervals, and model unloading where possible. Let the phone read with you.</p></div>
+        <div class="mode"><strong>Balanced</strong><p>A steady background pace for chapter analysis and retrieval while the device remains responsive.</p></div>
+        <div class="mode"><strong>Finish now</strong><p>Use available resources to complete a requested result sooner, still respecting thermal and battery limits.</p></div>
+      </div>
+      <div class="card" style="margin-top:16px"><p>Charging state, battery, temperature, idle time, memory pressure, and task priority are considered before each slice of work. Workload modes adjust scheduling, thread count, intervals, and model residency—not the tuned 8K context.</p></div>
+    </section>
+  </main>
+
+  <footer class="wrap footer"><span>Novel · local-first reading for Chinese web fiction</span><span><a href="https://github.com/envymoon/EdgeNovel">GitHub</a> · <a href="zh.html">简体中文</a></span></footer>
+</body>
+</html>
