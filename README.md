@@ -58,9 +58,15 @@ This short English passage is original showcase copy. It is not a bundled test n
 ### Inside the scan report
 
 <p align="center">
-  <img src="docs/assets/cast-graph-real.png" width="31%" alt="Cast composition and relationship structure">
-  <img src="docs/assets/chapter-overview-real.png" width="31%" alt="Chapter overview and current reading position">
-  <img src="docs/assets/android-test-ai-runtime-mobile.png" width="31%" alt="Dynamic workload settings">
+  <img src="docs/assets/cast-graph-real.png" width="100%" alt="Cast composition and relationship structure">
+</p>
+
+<p align="center">
+  <img src="docs/assets/chapter-overview-real.png" width="100%" alt="Chapter overview and current reading position">
+</p>
+
+<p align="center">
+  <img src="docs/assets/android-test-ai-runtime-mobile.png" width="48%" alt="Dynamic workload settings">
 </p>
 
 The cast graph and chapter overview above are real captures from the app. The underlying evidence remains tied to Chinese novel chapters.
