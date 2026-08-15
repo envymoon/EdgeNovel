@@ -58,17 +58,12 @@ This short English passage is original showcase copy. It is not a bundled test n
 ### Inside the scan report
 
 <p align="center">
-  <img src="docs/assets/android-test-detail2.png" width="31%" alt="Cast composition and relationship structure">
-  <img src="docs/assets/android-test-toc-open2.png" width="31%" alt="Chapter overview and current reading position">
+  <img src="docs/assets/cast-graph-real.png" width="31%" alt="Cast composition and relationship structure">
+  <img src="docs/assets/chapter-overview-real.png" width="31%" alt="Chapter overview and current reading position">
   <img src="docs/assets/android-test-ai-runtime-mobile.png" width="31%" alt="Dynamic workload settings">
 </p>
 
-<p align="center">
-  <img src="docs/assets/cast-graph.svg" width="47%" alt="Cast relationship graph interface illustration">
-  <img src="docs/assets/mood-chart.svg" width="47%" alt="Chapter mood and pacing chart interface illustration">
-</p>
-
-The cast graph and mood chart are interface illustrations for the planned report surface; the underlying evidence remains tied to Chinese novel chapters.
+The cast graph and chapter overview above are real captures from the app. The underlying evidence remains tied to Chinese novel chapters.
 
 ## Current Content Support
 

@@ -58,17 +58,12 @@
 ### 扫书报告内部界面
 
 <p align="center">
-  <img src="docs/assets/android-test-detail2.png" width="31%" alt="人物构成与感情结构">
-  <img src="docs/assets/android-test-toc-open2.png" width="31%" alt="章节目录与阅读位置">
+  <img src="docs/assets/cast-graph-real.png" width="31%" alt="人物构成与感情结构">
+  <img src="docs/assets/chapter-overview-real.png" width="31%" alt="章节目录与阅读位置">
   <img src="docs/assets/android-test-ai-runtime-mobile.png" width="31%" alt="动态负载设置">
 </p>
 
-<p align="center">
-  <img src="docs/assets/cast-graph.svg" width="47%" alt="人物关系图界面示意">
-  <img src="docs/assets/mood-chart.svg" width="47%" alt="章节氛围与节奏图界面示意">
-</p>
-
-截图来自当前中文阅读流程：书籍详情、阅读界面、标注、人物关系与感情结构、章节概览、阅读位置和动态负载设置。人物关系图与氛围/节奏图为展示用界面示意，具体数据仍以应用实际分析结果为准。
+截图来自当前中文阅读流程：书籍详情、阅读界面、标注、人物关系与感情结构、章节概览、阅读位置和动态负载设置。人物关系图与章节概览均为应用真实截图，具体数据仍以应用实际分析结果为准。
 
 ## 当前内容支持范围
 
