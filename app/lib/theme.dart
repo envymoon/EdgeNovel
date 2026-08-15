@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'tts_remote.dart';
+import 'app_localizations.dart';
 
 /// A reading theme is a background *and* the text colour tuned for it. Pairing a
 /// warm background with pure black text, or an OLED black with pure white, is
@@ -29,6 +30,7 @@ const readingThemes = <ReadingTheme>[
 enum PageMode { scroll, paged }
 
 class ReadingSettings extends ChangeNotifier {
+  AppLanguage language = AppLanguage.simplifiedChinese;
   int themeIndex = 1;
   String fontFamily = '';
   double fontSize = 19;
@@ -97,6 +99,10 @@ class ReadingSettings extends ChangeNotifier {
     s.ttsServerVoice = p.getString('ttsServerVoice') ?? s.ttsServerVoice;
     s.ttsRemote =
         (p.getBool('ttsRemote') ?? false) && s.ttsServerUrl.isNotEmpty;
+    s.language = switch (p.getString('appLanguage')) {
+      'en' => AppLanguage.english,
+      _ => AppLanguage.simplifiedChinese,
+    };
     return s;
   }
 
@@ -118,6 +124,7 @@ class ReadingSettings extends ChangeNotifier {
     p.setString('ttsServerKey', ttsServerKey);
     p.setString('ttsServerModel', ttsServerModel);
     p.setString('ttsServerVoice', ttsServerVoice);
+    p.setString('appLanguage', language.code);
   }
 
   void setTtsLocalVoice(int sid) {
@@ -155,6 +162,13 @@ class ReadingSettings extends ChangeNotifier {
 
   void setTheme(int i) {
     themeIndex = i.clamp(0, readingThemes.length - 1);
+    notifyListeners();
+    _persist();
+  }
+
+  void setLanguage(AppLanguage value) {
+    if (language == value) return;
+    language = value;
     notifyListeners();
     _persist();
   }

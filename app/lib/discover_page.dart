@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'reader_state.dart';
 import 'source_manager_page.dart';
@@ -125,7 +126,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
           style: TextStyle(color: t.text, fontSize: 15),
           cursorColor: t.text,
           decoration: InputDecoration(
-            hintText: '书名或作者',
+            hintText: context.tr('书名或作者'),
             hintStyle: TextStyle(color: t.muted, fontSize: 15),
             border: InputBorder.none,
           ),
@@ -133,13 +134,13 @@ class _DiscoverPageState extends State<DiscoverPage> {
         ),
         actions: [
           IconButton(
-            tooltip: '搜索',
+            tooltip: context.tr('搜索'),
             icon: const Icon(Icons.search),
             color: t.muted,
             onPressed: _search,
           ),
           IconButton(
-            tooltip: '书源',
+            tooltip: context.tr('书源'),
             icon: const Icon(Icons.dns_outlined),
             color: t.muted,
             onPressed: () => Navigator.push(

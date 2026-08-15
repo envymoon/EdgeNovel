@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
@@ -198,7 +199,7 @@ class _SearchPageState extends State<SearchPage> {
     onSubmitted: (_) => _search(),
     decoration: InputDecoration(
       isDense: true,
-      hintText: _mode == _Mode.literal ? '书里的原话' : '用自己的话描述情节或人物',
+      hintText: context.tr(_mode == _Mode.literal ? '书里的原话' : '用自己的话描述情节或人物'),
       hintStyle: TextStyle(color: t.muted, fontSize: 14),
       prefixIcon: Icon(Icons.search, size: 18, color: t.muted),
       suffixIcon: _searching

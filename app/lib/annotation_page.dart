@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
@@ -66,8 +67,8 @@ Future<void> showAnnotationEditor(
               minLines: 3,
               maxLines: 7,
               style: TextStyle(color: t.text),
-              decoration: const InputDecoration(
-                hintText: '写下你的想法',
+              decoration: InputDecoration(
+                hintText: context.tr('写下你的想法'),
                 border: OutlineInputBorder(),
               ),
             ),
@@ -278,7 +279,7 @@ class AnnotationPage extends StatelessWidget {
             title: Text('标注', style: TextStyle(color: t.text, fontSize: 17)),
             actions: [
               IconButton(
-                tooltip: '选择正文',
+                tooltip: context.tr('选择正文'),
                 icon: const Icon(Icons.add_comment_outlined),
                 onPressed: info == null
                     ? null
@@ -331,7 +332,7 @@ class AnnotationPage extends StatelessWidget {
                         ),
                       ),
                       trailing: PopupMenuButton<_AnnotationAction>(
-                        tooltip: '更多',
+                        tooltip: context.tr('更多'),
                         icon: Icon(Icons.more_horiz, color: t.muted, size: 19),
                         onSelected: (action) =>
                             _runAction(context, action, annotation, chapter),

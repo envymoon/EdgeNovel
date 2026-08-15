@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'reader_state.dart';
 import 'theme.dart';
 
@@ -64,7 +65,7 @@ class ReadingAssistantDrawer extends StatelessWidget {
                       ),
                     ),
                     IconButton(
-                      tooltip: '关闭',
+                      tooltip: context.tr('关闭'),
                       onPressed: () => Navigator.pop(context),
                       icon: const Icon(Icons.close),
                       color: t.muted,

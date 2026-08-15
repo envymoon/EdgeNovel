@@ -1,8 +1,9 @@
 // frb 的 Int64List（Web 上可退化为 BigInt 列表），非 dart:typed_data 的同名类型。
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
+import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
 import 'book_detail_page.dart';
@@ -97,7 +98,7 @@ class _ShelfPageState extends State<ShelfPage> {
                     style: TextStyle(color: t.text, fontSize: 15),
                     cursorColor: t.text,
                     decoration: InputDecoration(
-                      hintText: '书名或作者',
+                      hintText: context.tr('书名或作者'),
                       hintStyle: TextStyle(color: t.muted, fontSize: 15),
                       border: InputBorder.none,
                     ),
@@ -106,7 +107,7 @@ class _ShelfPageState extends State<ShelfPage> {
                 : Text('书架', style: TextStyle(color: t.text, fontSize: 17)),
             actions: [
               IconButton(
-                tooltip: _searching ? '关闭搜索' : '搜索',
+                tooltip: context.tr(_searching ? '关闭搜索' : '搜索'),
                 icon: Icon(_searching ? Icons.close : Icons.search),
                 color: t.muted,
                 onPressed: () => setState(() {
@@ -116,19 +117,19 @@ class _ShelfPageState extends State<ShelfPage> {
               ),
               if (!compact)
                 IconButton(
-                  tooltip: '找书',
+                  tooltip: context.tr('找书'),
                   icon: const Icon(Icons.travel_explore),
                   color: t.muted,
                   onPressed: _openDiscover,
                 ),
               IconButton(
-                tooltip: '导入 TXT',
+                tooltip: context.tr('导入 TXT'),
                 icon: const Icon(Icons.add),
                 color: t.muted,
                 onPressed: _import,
               ),
               PopupMenuButton<String>(
-                tooltip: '更多',
+                tooltip: context.tr('更多'),
                 icon: Icon(Icons.more_vert, color: t.muted),
                 onSelected: _handleShelfMenu,
                 itemBuilder: (_) => [
@@ -313,7 +314,7 @@ class _ShelfPageState extends State<ShelfPage> {
         ],
         const SizedBox(width: 8),
         IconButton(
-          tooltip: '管理分类',
+          tooltip: context.tr('管理分类'),
           visualDensity: VisualDensity.compact,
           onPressed: _manageCategories,
           icon: Icon(Icons.add_circle_outline, color: t.muted, size: 21),
@@ -337,7 +338,7 @@ class _ShelfPageState extends State<ShelfPage> {
           controller: controller,
           autofocus: true,
           maxLength: 16,
-          decoration: const InputDecoration(hintText: '例如：正在读、古风、轻松'),
+          decoration: InputDecoration(hintText: context.tr('例如：正在读、古风、轻松')),
           onSubmitted: (value) => Navigator.pop(dialogContext, value),
         ),
         actions: [
@@ -431,7 +432,7 @@ class _ShelfPageState extends State<ShelfPage> {
                     style: TextStyle(color: t.muted, fontSize: 11.5),
                   ),
                   trailing: IconButton(
-                    tooltip: '新建分类',
+                    tooltip: context.tr('新建分类'),
                     onPressed: _createCategory,
                     icon: const Icon(Icons.add),
                   ),
@@ -460,7 +461,7 @@ class _ShelfPageState extends State<ShelfPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 IconButton(
-                                  tooltip: '重命名',
+                                  tooltip: context.tr('重命名'),
                                   icon: const Icon(
                                     Icons.edit_outlined,
                                     size: 20,
@@ -476,7 +477,7 @@ class _ShelfPageState extends State<ShelfPage> {
                                   },
                                 ),
                                 IconButton(
-                                  tooltip: '删除分类',
+                                  tooltip: context.tr('删除分类'),
                                   icon: const Icon(
                                     Icons.delete_outline,
                                     size: 20,
@@ -679,9 +680,9 @@ class _ShelfPageState extends State<ShelfPage> {
                   controller: nameCtl,
                   maxLength: 40,
                   style: TextStyle(color: t.text),
-                  decoration: const InputDecoration(
-                    labelText: '书名',
-                    hintText: '留空恢复原名',
+                  decoration: InputDecoration(
+                    labelText: context.tr('书名'),
+                    hintText: context.tr('留空恢复原名'),
                   ),
                   onChanged: (_) => setLocal(() {}),
                 ),
@@ -689,9 +690,9 @@ class _ShelfPageState extends State<ShelfPage> {
                   controller: authorCtl,
                   maxLength: 30,
                   style: TextStyle(color: t.text),
-                  decoration: const InputDecoration(
-                    labelText: '作者',
-                    hintText: '留空恢复原作者',
+                  decoration: InputDecoration(
+                    labelText: context.tr('作者'),
+                    hintText: context.tr('留空恢复原作者'),
                   ),
                 ),
               ],
@@ -1025,6 +1026,7 @@ class BookCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           item.title,
+                          translate: false,
                           style: TextStyle(
                             color: theme.text,
                             fontSize: 16,

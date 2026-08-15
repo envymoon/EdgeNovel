@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'src/rust/api/source.dart';
 import 'platform_services.dart';
@@ -124,7 +125,7 @@ class _SourceManagerPageState extends State<SourceManagerPage> {
           maxLines: 6,
           style: TextStyle(color: t.text, fontSize: 13),
           decoration: InputDecoration(
-            hintText: '书源 JSON，或一个书源链接',
+            hintText: context.tr('书源 JSON，或一个书源链接'),
             hintStyle: TextStyle(color: t.muted, fontSize: 13),
           ),
         ),
@@ -254,13 +255,13 @@ class _SourceManagerPageState extends State<SourceManagerPage> {
         title: Text('书源', style: TextStyle(color: t.text, fontSize: 17)),
         actions: [
           IconButton(
-            tooltip: '从文件导入',
+            tooltip: context.tr('从文件导入'),
             icon: const Icon(Icons.file_open_outlined),
             color: t.muted,
             onPressed: _importFile,
           ),
           IconButton(
-            tooltip: '粘贴导入',
+            tooltip: context.tr('粘贴导入'),
             icon: const Icon(Icons.content_paste),
             color: t.muted,
             onPressed: _pasteDialog,

@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'font_manager.dart';
 import 'theme.dart';
 
@@ -170,14 +171,14 @@ class _FontPageState extends State<FontPage> {
                     )
                   else if (!installed)
                     IconButton(
-                      tooltip: '下载',
+                      tooltip: context.tr('下载'),
                       visualDensity: VisualDensity.compact,
                       onPressed: () => _select(pack),
                       icon: const Icon(Icons.download_outlined, size: 21),
                     )
                   else if (pack.id != systemFont.id)
                     PopupMenuButton<String>(
-                      tooltip: '字体选项',
+                      tooltip: context.tr('字体选项'),
                       onSelected: (value) {
                         if (value == 'delete') _delete(pack);
                       },

@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';

@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'font_page.dart';
@@ -94,6 +95,15 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.language,
+                      title: '界面语言',
+                      subtitle: settings.language == AppLanguage.english
+                          ? 'English'
+                          : '简体中文',
+                      onTap: () => _chooseLanguage(context, t),
+                    ),
                     _entry(
                       t,
                       icon: Icons.tune,
@@ -200,6 +210,44 @@ class SettingsPage extends StatelessWidget {
       ),
     ),
   );
+
+  Future<void> _chooseLanguage(BuildContext context, ReadingTheme t) async {
+    final selected = await showDialog<AppLanguage>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        backgroundColor: t.background,
+        title: Text('界面语言', style: TextStyle(color: t.text, fontSize: 16)),
+        children: [
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(dialogContext, AppLanguage.simplifiedChinese),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('简体中文', style: TextStyle(color: t.text)),
+                ),
+                if (settings.language == AppLanguage.simplifiedChinese)
+                  Icon(Icons.check, color: t.text, size: 18),
+              ],
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, AppLanguage.english),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('English', style: TextStyle(color: t.text)),
+                ),
+                if (settings.language == AppLanguage.english)
+                  Icon(Icons.check, color: t.text, size: 18),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selected != null) settings.setLanguage(selected);
+  }
 
   Widget _group(ReadingTheme t, {required List<Widget> children}) => Container(
     clipBehavior: Clip.antiAlias,

@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'ai_runtime.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
@@ -401,7 +402,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
           ),
           isThreeLine: d != null,
           trailing: IconButton(
-            tooltip: '重新检测',
+            tooltip: context.tr('重新检测'),
             onPressed: _refresh,
             icon: const Icon(Icons.refresh, size: 19),
           ),

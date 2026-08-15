@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
+import 'app_localizations.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
@@ -113,7 +114,7 @@ class _TocDrawerState extends State<TocDrawer> {
                 cursorColor: t.text,
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: '搜索 ${info.chapters.length} 章',
+                  hintText: context.tr('搜索 ${info.chapters.length} 章'),
                   hintStyle: TextStyle(color: t.muted, fontSize: 14),
                   prefixIcon: Icon(Icons.search, size: 18, color: t.muted),
                   border: OutlineInputBorder(

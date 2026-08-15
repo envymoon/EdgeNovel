@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
 import 'ai_cache_page.dart';
+import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
 import 'model_download.dart';
@@ -864,7 +865,7 @@ class _AiPageState extends State<AiPage> {
                 ),
                 if (hasPendingDownload && onCancel != null)
                   IconButton(
-                    tooltip: '取消下载',
+                    tooltip: context.tr('取消下载'),
                     onPressed: onCancel,
                     icon: const Icon(Icons.close),
                   ),
@@ -873,7 +874,7 @@ class _AiPageState extends State<AiPage> {
                   progress == null &&
                   (onReinstall != null || onRollback != null))
                 PopupMenuButton<String>(
-                  tooltip: '管理版本',
+                  tooltip: context.tr('管理版本'),
                   icon: Icon(Icons.more_horiz, size: 20, color: t.muted),
                   onSelected: (value) {
                     switch (value) {
@@ -913,7 +914,7 @@ class _AiPageState extends State<AiPage> {
                 )
               else if (ok && progress == null && onDelete != null)
                 IconButton(
-                  tooltip: '删除',
+                  tooltip: context.tr('删除'),
                   icon: Icon(Icons.delete_outline, size: 20, color: t.muted),
                   onPressed: onDelete,
                 ),

@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -234,7 +235,7 @@ class _AiCachePageState extends State<AiCachePage> {
             )
           else if (!empty)
             PopupMenuButton<String>(
-              tooltip: '管理 AI 数据',
+              tooltip: context.tr('管理 AI 数据'),
               icon: Icon(Icons.more_horiz, color: t.muted, size: 20),
               color: t.background,
               onSelected: (value) => _clearBook(

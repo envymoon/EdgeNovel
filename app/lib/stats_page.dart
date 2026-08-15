@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'bloom.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';

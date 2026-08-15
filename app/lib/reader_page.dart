@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'annotation_page.dart';
+import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
@@ -105,7 +106,10 @@ class _ReaderPageState extends State<ReaderPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
-            action: SnackBarAction(label: '设置', onPressed: _openTtsSettings),
+            action: SnackBarAction(
+              label: context.tr('设置'),
+              onPressed: _openTtsSettings,
+            ),
           ),
         );
       }
@@ -144,7 +148,10 @@ class _ReaderPageState extends State<ReaderPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$e'),
-          action: SnackBarAction(label: '去设置', onPressed: _openTtsSettings),
+          action: SnackBarAction(
+            label: context.tr('去设置'),
+            onPressed: _openTtsSettings,
+          ),
         ),
       );
     }
@@ -376,7 +383,7 @@ class _ReaderPageState extends State<ReaderPage> {
     builder: (context, _) => SizedBox(
       width: compact ? 40 : 48,
       child: PopupMenuButton<String>(
-        tooltip: '听书',
+        tooltip: context.tr('听书'),
         padding: EdgeInsets.zero,
         icon: Icon(
           _tts.playing
@@ -403,7 +410,7 @@ class _ReaderPageState extends State<ReaderPage> {
     builder: (context, _) => SizedBox(
       width: 40,
       child: PopupMenuButton<String>(
-        tooltip: '更多',
+        tooltip: context.tr('更多'),
         padding: EdgeInsets.zero,
         icon: Icon(Icons.more_horiz, color: t.muted),
         onSelected: (value) {
@@ -494,6 +501,7 @@ class _ReaderPageState extends State<ReaderPage> {
                       ),
                       title: Text(
                         info.chapters[widget.reader.chapterIndex].title,
+                        translate: false,
                         style: TextStyle(
                           color: t.text,
                           fontSize: compact ? 13.5 : 15,
@@ -506,7 +514,7 @@ class _ReaderPageState extends State<ReaderPage> {
                           _narrowReaderMenu(t)
                         else ...[
                           _readerIconButton(
-                            tooltip: '标注',
+                            tooltip: context.tr('标注'),
                             icon: Icons.comment_outlined,
                             color: widget.reader.annotations.isEmpty
                                 ? t.muted
@@ -518,7 +526,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         ],
                         Builder(
                           builder: (ctx) => _readerIconButton(
-                            tooltip: '目录',
+                            tooltip: context.tr('目录'),
                             icon: Icons.list,
                             color: t.muted,
                             onPressed: () => Scaffold.of(ctx).openDrawer(),
@@ -527,7 +535,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         ),
                         Builder(
                           builder: (ctx) => _readerIconButton(
-                            tooltip: '阅读助手',
+                            tooltip: context.tr('阅读助手'),
                             icon: Icons.auto_awesome_outlined,
                             color: t.muted,
                             onPressed: () => Scaffold.of(ctx).openEndDrawer(),
@@ -729,7 +737,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   ),
                 )
               : IconButton(
-                  tooltip: _tts.playing ? '暂停' : '继续',
+                  tooltip: context.tr(_tts.playing ? '暂停' : '继续'),
                   icon: Icon(_tts.playing ? Icons.pause : Icons.play_arrow),
                   color: t.text,
                   onPressed: _tts.toggle,
@@ -780,13 +788,13 @@ class _ReaderPageState extends State<ReaderPage> {
             ),
           ),
           IconButton(
-            tooltip: '听书设置',
+            tooltip: context.tr('听书设置'),
             icon: const Icon(Icons.tune, size: 20),
             color: t.muted,
             onPressed: _openTtsSettings,
           ),
           IconButton(
-            tooltip: '停止朗读',
+            tooltip: context.tr('停止朗读'),
             icon: const Icon(Icons.close),
             color: t.muted,
             onPressed: _tts.stop,
@@ -806,7 +814,7 @@ class _ReaderPageState extends State<ReaderPage> {
       child: Row(
         children: [
           IconButton(
-            tooltip: '上一章',
+            tooltip: context.tr('上一章'),
             icon: const Icon(Icons.chevron_left),
             color: t.muted,
             onPressed: i > 0 ? () => _navChapter(r.prev) : null,
@@ -1020,6 +1028,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           padding: const EdgeInsets.only(bottom: 24, top: 8),
           child: Text(
             para.text,
+            translate: false,
             style: TextStyle(
               color: theme.text,
               fontFamily: settings.fontFamily.isEmpty
@@ -1038,6 +1047,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           child: Center(
             child: Text(
               para.text,
+              translate: false,
               style: TextStyle(
                 color: theme.muted,
                 fontFamily: settings.fontFamily.isEmpty
@@ -1068,6 +1078,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           ),
           child: Text(
             para.text,
+            translate: false,
             style: TextStyle(
               color: theme.muted,
               fontFamily: settings.fontFamily.isEmpty

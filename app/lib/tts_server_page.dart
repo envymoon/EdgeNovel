@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
+import 'app_localizations.dart';
 import 'theme.dart';
 import 'tts_remote.dart';
 import 'tts_text.dart';

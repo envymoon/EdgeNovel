@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'ai_page.dart';
+import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
 import 'cast_graph_page.dart';
@@ -194,6 +195,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
         iconTheme: IconThemeData(color: t.muted),
         title: Text(
           widget.book.title,
+          translate: false,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: t.text, fontSize: 17),

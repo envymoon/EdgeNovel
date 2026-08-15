@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'font_manager.dart';
@@ -16,6 +17,7 @@ import 'src/rust/api/book.dart';
 import 'src/rust/api/tts.dart';
 import 'src/rust/frb_generated.dart';
 import 'theme.dart';
+import 'app_localizations.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -141,8 +143,21 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
       builder: (context, _) {
         final t = settings.theme;
         return MaterialApp(
-          title: '小说阅读器',
+          title: settings.language == AppLanguage.english
+              ? 'Novel Reader'
+              : '小说阅读器',
           debugShowCheckedModeBanner: false,
+          locale: settings.language.locale,
+          supportedLocales: const [Locale('zh'), Locale('en')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          builder: (context, child) => AppLanguageScope(
+            language: settings.language,
+            child: child ?? const SizedBox.shrink(),
+          ),
           theme: ThemeData(
             brightness: t.isDark ? Brightness.dark : Brightness.light,
             scaffoldBackgroundColor: t.background,
