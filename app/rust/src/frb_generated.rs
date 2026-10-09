@@ -4021,6 +4021,7 @@ impl SseDecode for crate::api::book::ShelfItem {
         let mut var_encoding = <String>::sse_decode(deserializer);
         let mut var_coverHue = <u32>::sse_decode(deserializer);
         let mut var_lastChapterTitle = <String>::sse_decode(deserializer);
+        let mut var_lastChapterSummary = <Option<String>>::sse_decode(deserializer);
         let mut var_pinned = <bool>::sse_decode(deserializer);
         let mut var_genreTags = <Vec<String>>::sse_decode(deserializer);
         let mut var_coverPath = <Option<String>>::sse_decode(deserializer);
@@ -4037,6 +4038,7 @@ impl SseDecode for crate::api::book::ShelfItem {
             encoding: var_encoding,
             cover_hue: var_coverHue,
             last_chapter_title: var_lastChapterTitle,
+            last_chapter_summary: var_lastChapterSummary,
             pinned: var_pinned,
             genre_tags: var_genreTags,
             cover_path: var_coverPath,
@@ -5025,6 +5027,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::ShelfItem {
             self.encoding.into_into_dart().into_dart(),
             self.cover_hue.into_into_dart().into_dart(),
             self.last_chapter_title.into_into_dart().into_dart(),
+            self.last_chapter_summary.into_into_dart().into_dart(),
             self.pinned.into_into_dart().into_dart(),
             self.genre_tags.into_into_dart().into_dart(),
             self.cover_path.into_into_dart().into_dart(),
@@ -5981,6 +5984,7 @@ impl SseEncode for crate::api::book::ShelfItem {
         <String>::sse_encode(self.encoding, serializer);
         <u32>::sse_encode(self.cover_hue, serializer);
         <String>::sse_encode(self.last_chapter_title, serializer);
+        <Option<String>>::sse_encode(self.last_chapter_summary, serializer);
         <bool>::sse_encode(self.pinned, serializer);
         <Vec<String>>::sse_encode(self.genre_tags, serializer);
         <Option<String>>::sse_encode(self.cover_path, serializer);

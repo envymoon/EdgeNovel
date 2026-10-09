@@ -113,9 +113,9 @@ class _DiscoverPageState extends State<DiscoverPage> {
       ..sort((a, b) => b.offers.length.compareTo(a.offers.length));
 
     return Scaffold(
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -439,7 +439,7 @@ class _ComparePanelState extends State<_ComparePanel> {
         });
 
     return AlertDialog(
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       title: Text(
         '《${widget.group.name}》· ${offers.length} 个源',
         maxLines: 1,
@@ -627,7 +627,7 @@ class _DownloadDialogState extends State<_DownloadDialog> {
     final total = p?.total ?? 0;
     final failed = p?.failed ?? 0;
     return AlertDialog(
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       title: Text(
         '《${widget.offer.name}》',
         maxLines: 1,

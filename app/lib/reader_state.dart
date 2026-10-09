@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ai_runtime.dart';
+import 'platform_support.dart';
 import 'reading_session_store.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -392,6 +393,11 @@ class ReaderState extends ChangeNotifier {
         if (_activeAiTask != null && !_pauseRequested) {
           await _requestActivePause(aiWaitingReason!);
         }
+        if (AppPlatformSupport.hasBundledAiEngine && !_aiExecutionAllowed) {
+          // Release native model memory as well as pausing the shared queue.
+          // In-flight inference is retried from the last completed chapter.
+          await stopAi();
+        }
         notifyListeners();
         return;
       }
@@ -505,7 +511,7 @@ class ReaderState extends ChangeNotifier {
     if (_activeAiTask != task) return;
     final wasCancelled = !_aiQueue.contains(task);
     final wasPaused = _pauseRequested || task.paused;
-    if (failed) {
+    if (failed && !wasPaused) {
       task.failed = true;
     } else if (!wasPaused) {
       _aiQueue.remove(task);
@@ -514,7 +520,7 @@ class ReaderState extends ChangeNotifier {
     if (task.kind == _AiTaskKind.enrich) {
       _enrichSub = null;
       enrichingTitle = null;
-      if (wasCancelled) {
+      if (wasCancelled || wasPaused) {
         enrichProgress = null;
         enrichError = null;
       }
@@ -525,7 +531,7 @@ class ReaderState extends ChangeNotifier {
     } else {
       _indexSub = null;
       indexingTitle = null;
-      if (wasCancelled) {
+      if (wasCancelled || wasPaused) {
         indexProgress = null;
         indexError = null;
       }

@@ -3772,8 +3772,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ShelfItem dco_decode_shelf_item(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
     return ShelfItem(
       id: dco_decode_i_64(arr[0]),
       path: dco_decode_String(arr[1]),
@@ -3787,9 +3787,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       encoding: dco_decode_String(arr[9]),
       coverHue: dco_decode_u_32(arr[10]),
       lastChapterTitle: dco_decode_String(arr[11]),
-      pinned: dco_decode_bool(arr[12]),
-      genreTags: dco_decode_list_String(arr[13]),
-      coverPath: dco_decode_opt_String(arr[14]),
+      lastChapterSummary: dco_decode_opt_String(arr[12]),
+      pinned: dco_decode_bool(arr[13]),
+      genreTags: dco_decode_list_String(arr[14]),
+      coverPath: dco_decode_opt_String(arr[15]),
     );
   }
 
@@ -4956,6 +4957,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_encoding = sse_decode_String(deserializer);
     var var_coverHue = sse_decode_u_32(deserializer);
     var var_lastChapterTitle = sse_decode_String(deserializer);
+    var var_lastChapterSummary = sse_decode_opt_String(deserializer);
     var var_pinned = sse_decode_bool(deserializer);
     var var_genreTags = sse_decode_list_String(deserializer);
     var var_coverPath = sse_decode_opt_String(deserializer);
@@ -4972,6 +4974,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       encoding: var_encoding,
       coverHue: var_coverHue,
       lastChapterTitle: var_lastChapterTitle,
+      lastChapterSummary: var_lastChapterSummary,
       pinned: var_pinned,
       genreTags: var_genreTags,
       coverPath: var_coverPath,
@@ -6031,6 +6034,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.encoding, serializer);
     sse_encode_u_32(self.coverHue, serializer);
     sse_encode_String(self.lastChapterTitle, serializer);
+    sse_encode_opt_String(self.lastChapterSummary, serializer);
     sse_encode_bool(self.pinned, serializer);
     sse_encode_list_String(self.genreTags, serializer);
     sse_encode_opt_String(self.coverPath, serializer);

@@ -45,6 +45,14 @@ function(apply_cargokit target manifest_dir lib_name any_symbol_name)
     )
 
     if (WIN32)
+        # Flutter's SDK path is defined in its sibling directory, not in this
+        # plugin's scope or necessarily in the user's shell environment.
+        get_directory_property(CARGOKIT_FLUTTER_ROOT
+            DIRECTORY "${CMAKE_SOURCE_DIR}/flutter" DEFINITION FLUTTER_ROOT)
+        if (NOT CARGOKIT_FLUTTER_ROOT)
+            message(FATAL_ERROR "Cargokit requires Flutter's configured SDK path")
+        endif()
+        list(APPEND CARGOKIT_ENV "FLUTTER_ROOT=${CARGOKIT_FLUTTER_ROOT}")
         set(SCRIPT_EXTENSION ".cmd")
         set(IMPORT_LIB_EXTENSION ".lib")
     else()

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -16,6 +15,19 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/tts.dart';
 import 'theme.dart';
 import 'tts_server_page.dart';
+
+// Keep the desktop engine on the same llama.cpp revision as the Android build
+// and the validated Q8-weight/Q8-KV configuration. Following GitHub's
+// `releases/latest` is unsafe: stable releases can contain no Windows assets.
+const _llamaBuild = 'b9957';
+const _llamaVulkanFile = 'llama-$_llamaBuild-bin-win-vulkan-x64.zip';
+const _llamaCpuFile = 'llama-$_llamaBuild-bin-win-cpu-x64.zip';
+const _llamaEngineUrls = [
+  'https://github.com/ggml-org/llama.cpp/releases/download/$_llamaBuild/$_llamaVulkanFile',
+  'https://ghfast.top/https://github.com/ggml-org/llama.cpp/releases/download/$_llamaBuild/$_llamaVulkanFile',
+  'https://github.com/ggml-org/llama.cpp/releases/download/$_llamaBuild/$_llamaCpuFile',
+  'https://ghfast.top/https://github.com/ggml-org/llama.cpp/releases/download/$_llamaBuild/$_llamaCpuFile',
+];
 
 /// Install and inspect the local AI engine: llama.cpp's server binary plus one
 /// small GGUF model, both plain files in one directory. Everything is also
@@ -159,62 +171,40 @@ class _AiPageState extends State<AiPage> {
       _engineProgress = 0;
       _engineError = null;
     });
+    File? zip;
     try {
-      // Release assets carry the build number in the name, so ask the API
-      // which zip is current instead of hardcoding a version.
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 20);
-      String? url;
-      try {
-        final req = await client.getUrl(
-          Uri.parse(
-            'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest',
-          ),
-        );
-        req.headers.set('User-Agent', 'novel-reader');
-        final resp = await req.close();
-        if (resp.statusCode != 200) throw 'HTTP ${resp.statusCode}';
-        final release = jsonDecode(await resp.transform(utf8.decoder).join());
-        // Vulkan build first: it drives NVIDIA/AMD/Intel GPUs alike and falls
-        // back to CPU at runtime when no usable GPU exists. Pure-CPU zip is
-        // the safety net if a release ever ships without a Vulkan asset.
-        String? cpuUrl;
-        for (final a in (release['assets'] as List)) {
-          final name = (a['name'] as String).toLowerCase();
-          if (!name.endsWith('.zip') ||
-              !name.contains('win') ||
-              !name.contains('x64')) {
-            continue;
-          }
-          if (name.contains('vulkan')) {
-            url = a['browser_download_url'] as String;
-            break;
-          }
-          if (name.contains('cpu') || name.contains('avx2')) {
-            cpuUrl ??= a['browser_download_url'] as String;
-          }
-        }
-        url ??= cpuUrl;
-      } finally {
-        client.close();
-      }
-      if (url == null) throw '在发布页没找到 Windows 版本';
-
       final dir = _status!.dir;
-      final zip = File('$dir${Platform.pathSeparator}engine.zip');
-      await _fetch(url, zip, (p) => setState(() => _engineProgress = p));
+      zip = File('$dir${Platform.pathSeparator}engine.zip');
+      await _fetchFirst(
+        _llamaEngineUrls,
+        zip,
+        (p) => setState(() => _engineProgress = p),
+      );
 
       final archive = ZipDecoder().decodeBytes(await zip.readAsBytes());
+      final hasServer = archive.any(
+        (file) =>
+            file.isFile &&
+            file.name.replaceAll('\\', '/').split('/').last.toLowerCase() ==
+                'llama-server.exe',
+      );
+      if (!hasServer) throw '引擎压缩包不完整（缺少 llama-server.exe）';
+
+      await stopAi();
       for (final f in archive) {
         if (!f.isFile) continue;
-        final out = File('$dir${Platform.pathSeparator}${f.name}');
+        final safeName = f.name.replaceAll('\\', '/');
+        if (safeName.startsWith('/') || safeName.split('/').contains('..')) {
+          throw '引擎压缩包包含非法路径';
+        }
+        final out = File('$dir${Platform.pathSeparator}$safeName');
         await out.create(recursive: true);
         await out.writeAsBytes(f.content as List<int>);
       }
-      await zip.delete();
     } catch (e) {
       _engineError = '$e';
     } finally {
+      if (zip != null && await zip.exists()) await zip.delete();
       _engineProgress = null;
       await _refresh();
     }
@@ -427,7 +417,7 @@ class _AiPageState extends State<AiPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('恢复旧版$label？'),
         content: const Text('当前版本会被保留，之后仍可再次切换回来。'),
         actions: [
@@ -477,7 +467,7 @@ class _AiPageState extends State<AiPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -523,7 +513,23 @@ class _AiPageState extends State<AiPage> {
                         ),
                       ),
                       const SizedBox(height: 20),
-                      if (AppPlatformSupport.usesExternalAiProcess)
+                      if (AppPlatformSupport.hasBundledAiEngine)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            s.engine
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            color: t.muted,
+                          ),
+                          title: const Text('推理引擎 · llama.cpp'),
+                          subtitle: Text(
+                            s.engine
+                                ? '应用内置 · CPU · 默认 Q8 KV / 8K'
+                                : '内置引擎缺失，请重新安装应用',
+                          ),
+                        ),
+                      if (AppPlatformSupport.canDownloadAiEngine)
                         _item(
                           t,
                           ok: s.engine,
@@ -765,7 +771,7 @@ class _AiPageState extends State<AiPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('删除$what？', style: TextStyle(color: t.text, fontSize: 16)),
         actions: [
           TextButton(

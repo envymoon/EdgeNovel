@@ -118,7 +118,7 @@ class _SourceManagerPageState extends State<SourceManagerPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('粘贴书源', style: TextStyle(color: t.text, fontSize: 16)),
         content: TextField(
           controller: ctl,
@@ -207,7 +207,7 @@ class _SourceManagerPageState extends State<SourceManagerPage> {
     final go = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text(
           all ? '删除全部书源？' : '删除这 ${doomed.length} 个书源？',
           style: TextStyle(color: t.text, fontSize: 16),
@@ -248,7 +248,7 @@ class _SourceManagerPageState extends State<SourceManagerPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),

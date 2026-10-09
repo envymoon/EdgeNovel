@@ -90,7 +90,7 @@ class _TtsServerPageState extends State<TtsServerPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         foregroundColor: t.text,
         elevation: 0,
         title: const Text('听书服务'),

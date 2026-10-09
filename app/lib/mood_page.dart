@@ -66,7 +66,7 @@ class _MoodPageState extends State<MoodPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),

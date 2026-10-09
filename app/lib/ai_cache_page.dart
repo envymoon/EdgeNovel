@@ -49,7 +49,7 @@ class _AiCachePageState extends State<AiCachePage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text(title, style: TextStyle(color: t.text, fontSize: 16)),
         content: Text(
           '只会删除可重新生成的 AI 数据，不会删除小说文件或阅读记录。',
@@ -106,7 +106,7 @@ class _AiCachePageState extends State<AiCachePage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),

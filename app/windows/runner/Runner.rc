@@ -95,6 +95,9 @@ BEGIN
             VALUE "InternalName", "novel" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.novel. All rights reserved." "\0"
             VALUE "OriginalFilename", "novel.exe" "\0"
+            // path_provider_windows uses ProductName as part of the persistent
+            // AppData path. Keep this storage identity stable even when the
+            // user-facing name or icon changes.
             VALUE "ProductName", "novel" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

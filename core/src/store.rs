@@ -1551,6 +1551,26 @@ mod tests {
     }
 
     #[test]
+    fn shelf_summary_is_scoped_to_one_book_and_one_chapter() {
+        let mut s = mem();
+        let a = s
+            .upsert_book(&book("a.txt"), &[chapter(0, 11), chapter(1, 22)])
+            .unwrap();
+        let b = s.upsert_book(&book("b.txt"), &[chapter(0, 11)]).unwrap();
+        s.set_chapter_ai(a, 1, Some("第二章的介绍"), None, "test")
+            .unwrap();
+        assert_eq!(
+            s.chapter_summary(a, 1).unwrap().as_deref(),
+            Some("第二章的介绍")
+        );
+        assert_eq!(s.chapter_summary(a, 0).unwrap(), None);
+        assert_eq!(s.chapter_summary(b, 0).unwrap(), None);
+        assert_eq!(s.chapter_summary(a, 99).unwrap(), None);
+        s.drop_summaries(a).unwrap();
+        assert_eq!(s.chapter_summary(a, 1).unwrap(), None);
+    }
+
+    #[test]
     fn drag_order_rules_the_pinned_zone() {
         let mut s = mem();
         let a = s.upsert_book(&book("a.txt"), &[]).unwrap();

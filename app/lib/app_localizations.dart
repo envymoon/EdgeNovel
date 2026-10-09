@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart' as material;
+import 'interface_typography.dart';
 
 /// Languages supported by the application chrome. Book text is never
 /// translated; this only changes menus, controls, status messages and help.
@@ -14,6 +15,27 @@ extension AppLanguageInfo on AppLanguage {
 }
 
 const _english = <String, String>{
+  '书评': 'Book reviews',
+  '优书网': 'Youshu',
+  '优书网书评': 'Youshu reviews',
+  '登录与书评更新': 'Login and review updates',
+  '登录优书网': 'Log in to Youshu',
+  '退出登录': 'Log out',
+  '完成登录': 'Finish login',
+  '验证中…': 'Checking…',
+  '重新检查书评': 'Check for reviews again',
+  '暂无书评 · 手动检查': 'No reviews found · Check manually',
+  '暂无书评': 'No reviews found',
+  '加载更多': 'Load more',
+  '原站摘要': 'Source excerpt',
+  '包含旧站存档和新评论，可能涉及剧透。已加载内容保存在本地，仅手动更新。':
+      'Includes archived and recent reviews. May contain spoilers. Downloaded reviews are saved locally; updates are manual.',
+  '在优书网网页中登录；阅读器不保存账号密码。仅主动打开书评或手动更新时查询该书。':
+      'Sign in on Youshu. The reader does not store your password. Books are queried only when you open reviews or update manually.',
+  '封面模式': 'Cover view',
+  '详情模式': 'Detail view',
+  '应用内置 · CPU · 默认 Q8 KV / 8K': 'Bundled · CPU · Default Q8 KV / 8K',
+  '内置引擎缺失，请重新安装应用': 'Bundled engine missing. Please reinstall the app.',
   '小说阅读器': 'Novel Reader',
   '书架': 'Library',
   '设置': 'Settings',
@@ -56,6 +78,27 @@ const _english = <String, String>{
   '导入 TXT': 'Import TXT',
   '阅读数据': 'Reading insights',
   '主题色': 'Theme',
+  '外观': 'Appearance',
+  '读到': 'Reading',
+  '界面字体与配色': 'Interface fonts and colors',
+  '界面字体': 'Interface font',
+  '下载或导入界面字体': 'Download or import an interface font',
+  '微软雅黑（默认）': 'Microsoft YaHei (default)',
+  '宋体': 'SimSun',
+  '楷体': 'KaiTi',
+  '统一界面字重': 'Uniform interface weight',
+  '菜单和标题使用常规粗细': 'Use regular weight for menus and headings',
+  '强调色': 'Accent color',
+  '暖棕': 'Warm brown',
+  '青绿': 'Teal',
+  '雾蓝': 'Dusty blue',
+  '梅紫': 'Plum',
+  '陶红': 'Terracotta',
+  '雾青': 'Mist',
+  '暮紫': 'Lavender',
+  '深海': 'Deep sea',
+  '故事从这一页开始': 'The story begins on this page',
+  '界面与阅读字体分别设置': 'Interface and reading fonts are set separately',
   '书架分类': 'Library categories',
   '管理分类': 'Manage categories',
   '例如：正在读、古风、轻松': 'For example: Reading, Historical, Lighthearted',
@@ -601,10 +644,27 @@ class Text extends material.StatelessWidget {
 
   @override
   material.Widget build(material.BuildContext context) {
+    final typography = material.Theme.of(
+      context,
+    ).extension<InterfaceTypography>();
+    final inheritedStyle = material.DefaultTextStyle.of(context).style;
+    final effectiveStyle = inheritedStyle.merge(style);
+    // Explicit font families belong to book content or font previews.
+    final displayStyle = typography != null && style?.fontFamily == null
+        ? effectiveStyle.copyWith(
+            fontWeight: typography.uniform
+                ? material.FontWeight.w400
+                : ((effectiveStyle.fontWeight ?? material.FontWeight.w400)
+                              .value >
+                          material.FontWeight.w500.value
+                      ? material.FontWeight.w500
+                      : effectiveStyle.fontWeight),
+          )
+        : style;
     if (textSpan != null) {
       return material.Text.rich(
         textSpan!,
-        style: style,
+        style: displayStyle,
         strutStyle: strutStyle,
         textAlign: textAlign,
         textDirection: textDirection,
@@ -622,7 +682,7 @@ class Text extends material.StatelessWidget {
     final value = translate ? context.tr(data!) : data!;
     return material.Text(
       value,
-      style: style,
+      style: displayStyle,
       strutStyle: strutStyle,
       textAlign: textAlign,
       textDirection: textDirection,

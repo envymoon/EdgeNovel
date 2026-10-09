@@ -922,6 +922,9 @@ class ShelfItem {
   /// The chapter the reader stopped in. Empty for a book never opened.
   final String lastChapterTitle;
 
+  /// Existing summary for the exact last-read chapter; never starts AI work.
+  final String? lastChapterSummary;
+
   /// Pinned books hold the top of the shelf, above recency.
   final bool pinned;
 
@@ -946,6 +949,7 @@ class ShelfItem {
     required this.encoding,
     required this.coverHue,
     required this.lastChapterTitle,
+    this.lastChapterSummary,
     required this.pinned,
     required this.genreTags,
     this.coverPath,
@@ -965,6 +969,7 @@ class ShelfItem {
       encoding.hashCode ^
       coverHue.hashCode ^
       lastChapterTitle.hashCode ^
+      lastChapterSummary.hashCode ^
       pinned.hashCode ^
       genreTags.hashCode ^
       coverPath.hashCode;
@@ -986,6 +991,7 @@ class ShelfItem {
           encoding == other.encoding &&
           coverHue == other.coverHue &&
           lastChapterTitle == other.lastChapterTitle &&
+          lastChapterSummary == other.lastChapterSummary &&
           pinned == other.pinned &&
           genreTags == other.genreTags &&
           coverPath == other.coverPath;

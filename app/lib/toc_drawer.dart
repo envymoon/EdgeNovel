@@ -103,7 +103,7 @@ class _TocDrawerState extends State<TocDrawer> {
     );
 
     return Drawer(
-      backgroundColor: t.background,
+      backgroundColor: t.surface,
       child: SafeArea(
         child: Column(
           children: [

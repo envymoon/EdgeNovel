@@ -208,6 +208,8 @@ pub struct ShelfItem {
     pub cover_hue: u32,
     /// The chapter the reader stopped in. Empty for a book never opened.
     pub last_chapter_title: String,
+    /// Existing summary for the exact last-read chapter; never starts AI work.
+    pub last_chapter_summary: Option<String>,
     /// Pinned books hold the top of the shelf, above recency.
     pub pinned: bool,
     /// 类型标签 (玄幻, 都市…), at most two. Empty when the text does not say, or
@@ -540,6 +542,11 @@ pub fn list_books() -> Result<Vec<ShelfItem>, String> {
         .into_iter()
         .map(|b| ShelfItem {
             cover_hue: meta::cover_hue(&b.title) as u32,
+            last_chapter_summary: if b.last_opened_at.is_some() {
+                s.chapter_summary(b.id, b.last_chapter).ok().flatten()
+            } else {
+                None
+            },
             last_chapter_title: s
                 .chapter_title(b.id, b.last_chapter)
                 .ok()

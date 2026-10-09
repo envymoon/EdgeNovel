@@ -115,7 +115,7 @@ class _StatsPageState extends State<StatsPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -182,9 +182,9 @@ class _StatsPageState extends State<StatsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: t.muted.withValues(alpha: 0.06),
-        border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-        borderRadius: BorderRadius.circular(12),
+        color: t.surface,
+        border: Border.all(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

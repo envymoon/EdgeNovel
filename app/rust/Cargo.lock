@@ -1016,6 +1016,7 @@ version = "0.1.0"
 dependencies = [
  "bzip2-rs",
  "flutter_rust_bridge",
+ "libc",
  "novel-core",
  "serde_json",
  "tar",

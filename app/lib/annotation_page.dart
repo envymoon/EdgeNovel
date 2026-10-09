@@ -34,7 +34,7 @@ Future<void> showAnnotationEditor(
   final action = await showDialog<String>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       title: Text(
         annotation == null ? '添加标注' : '编辑标注',
         style: TextStyle(color: t.text, fontSize: 17),
@@ -134,7 +134,7 @@ Future<void> showAnnotationComments(
   final t = settings.theme;
   await showModalBottomSheet<void>(
     context: context,
-    backgroundColor: t.background,
+    backgroundColor: t.raisedSurface,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
       child: FractionallySizedBox(
@@ -272,7 +272,7 @@ class AnnotationPage extends StatelessWidget {
         return Scaffold(
           backgroundColor: t.background,
           appBar: AppBar(
-            backgroundColor: t.background,
+            backgroundColor: t.topBar,
             surfaceTintColor: Colors.transparent,
             elevation: 0,
             iconTheme: IconThemeData(color: t.muted),

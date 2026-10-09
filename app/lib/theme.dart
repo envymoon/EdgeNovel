@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart' hide Text;
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'tts_remote.dart';
 import 'app_localizations.dart';
+import 'interface_typography.dart';
+export 'interface_typography.dart';
 
 /// A reading theme is a background *and* the text colour tuned for it. Pairing a
 /// warm background with pure black text, or an OLED black with pure white, is
@@ -17,6 +20,26 @@ class ReadingTheme {
   const ReadingTheme(this.name, this.background, this.text, this.muted);
 
   bool get isDark => background.computeLuminance() < 0.4;
+
+  /// Static tonal layers derived from the selected reading palette. Keeping
+  /// them computed here means every platform gets the same hierarchy without
+  /// translucent blur, animated shaders, or extra image assets.
+  Color get surface => Color.alphaBlend(
+    (isDark ? text : Colors.white).withValues(alpha: isDark ? 0.065 : 0.56),
+    background,
+  );
+
+  Color get raisedSurface => Color.alphaBlend(
+    (isDark ? text : Colors.white).withValues(alpha: isDark ? 0.105 : 0.82),
+    background,
+  );
+
+  Color get topBar => Color.alphaBlend(
+    text.withValues(alpha: isDark ? 0.045 : 0.025),
+    background,
+  );
+
+  Color get outline => muted.withValues(alpha: isDark ? 0.24 : 0.18);
 }
 
 const readingThemes = <ReadingTheme>[
@@ -25,7 +48,150 @@ const readingThemes = <ReadingTheme>[
   ReadingTheme('护眼绿', Color(0xFFCCE8CF), Color(0xFF2C3A2E), Color(0xFF6B7D6E)),
   ReadingTheme('夜间', Color(0xFF1C1C1E), Color(0xFFC9C9CE), Color(0xFF6E6E73)),
   ReadingTheme('纯黑', Color(0xFF000000), Color(0xFFB0B0B5), Color(0xFF5A5A5F)),
+  ReadingTheme('雾青', Color(0xFFEDF3F1), Color(0xFF243D38), Color(0xFF667C75)),
+  ReadingTheme('暮紫', Color(0xFFF2EFF6), Color(0xFF393146), Color(0xFF797082)),
+  ReadingTheme('深海', Color(0xFF17272D), Color(0xFFD0DFE3), Color(0xFF8FA6AF)),
 ];
+
+const interfaceAccents = <Color>[
+  Color(0xFF7B6A52),
+  Color(0xFF246D65),
+  Color(0xFF596D99),
+  Color(0xFF805C85),
+  Color(0xFF996154),
+];
+
+/// Only Windows opts into the new appearance until mobile validation.
+bool get windowsAppearance => defaultTargetPlatform == TargetPlatform.windows;
+
+/// The shared, deliberately static visual system. It gives backgrounds, bars,
+/// cards, controls and icons one rhythm while remaining as cheap to render as
+/// the previous flat UI.
+ThemeData buildAppTheme(ReadingSettings settings) {
+  final t = settings.theme;
+  final accent = windowsAppearance
+      ? interfaceAccents[settings.accentIndex]
+      : const Color(0xFF7B6A52);
+  final brightness = t.isDark ? Brightness.dark : Brightness.light;
+  final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness)
+      .copyWith(
+        surface: t.surface,
+        surfaceContainerLow: t.surface,
+        surfaceContainer: t.raisedSurface,
+        outline: t.outline,
+      );
+  const cardRadius = 14.0;
+  const controlRadius = 12.0;
+
+  return ThemeData(
+    useMaterial3: true,
+    fontFamily: windowsAppearance ? settings.resolvedInterfaceFont : null,
+    fontFamilyFallback: windowsAppearance
+        ? const ['Microsoft YaHei', 'Segoe UI', 'Segoe UI Emoji']
+        : null,
+    extensions: [
+      if (windowsAppearance)
+        InterfaceTypography(uniform: settings.uniformInterfaceWeight),
+    ],
+    brightness: brightness,
+    scaffoldBackgroundColor: t.background,
+    colorScheme: scheme,
+    appBarTheme: AppBarTheme(
+      backgroundColor: t.topBar,
+      foregroundColor: t.text,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      toolbarHeight: 60,
+      iconTheme: IconThemeData(color: t.muted, size: 22, weight: 400),
+      actionsIconTheme: IconThemeData(color: t.muted, size: 22, weight: 400),
+      titleTextStyle: TextStyle(
+        color: t.text,
+        fontFamily: windowsAppearance ? settings.resolvedInterfaceFont : null,
+        fontSize: 17,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+    iconTheme: IconThemeData(color: t.muted, size: 22, weight: 400),
+    cardTheme: CardThemeData(
+      color: t.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(cardRadius),
+        side: BorderSide(color: t.outline),
+      ),
+    ),
+    listTileTheme: ListTileThemeData(
+      iconColor: t.muted,
+      textColor: t.text,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      minVerticalPadding: 10,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(controlRadius),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        foregroundColor: t.muted,
+        iconSize: 21,
+        minimumSize: const Size(40, 40),
+        padding: const EdgeInsets.all(9.5),
+      ),
+    ),
+    dividerTheme: DividerThemeData(color: t.outline, space: 1, thickness: 1),
+    dialogTheme: DialogThemeData(
+      backgroundColor: t.raisedSurface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(cardRadius),
+      ),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: t.raisedSurface,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: t.surface,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(controlRadius),
+        borderSide: BorderSide(color: t.outline),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(controlRadius),
+        borderSide: BorderSide(color: t.outline),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(controlRadius),
+        borderSide: BorderSide(color: accent.withValues(alpha: 0.72)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(controlRadius),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(controlRadius),
+        ),
+        side: BorderSide(color: t.outline),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+      ),
+    ),
+  );
+}
 
 enum PageMode { scroll, paged }
 
@@ -33,6 +199,20 @@ class ReadingSettings extends ChangeNotifier {
   AppLanguage language = AppLanguage.simplifiedChinese;
   int themeIndex = 1;
   String fontFamily = '';
+  String interfaceFontFamily = '';
+  bool uniformInterfaceWeight = true;
+  bool shelfCoverMode = false;
+  int accentIndex = 0;
+
+  String get resolvedInterfaceFont => interfaceFontFamily.isEmpty
+      ? 'Microsoft YaHei'
+      : interfaceFontFamily.replaceFirst('system:', '');
+
+  // Explicit body family prevents interface font inheritance and keeps page
+  // measurement identical to rendering when the interface font changes.
+  String? get resolvedReadingFont => fontFamily.isNotEmpty
+      ? fontFamily
+      : (windowsAppearance ? 'Microsoft YaHei' : null);
   double fontSize = 19;
   double lineHeight = 1.9;
   double paragraphSpacing = 14;
@@ -81,6 +261,13 @@ class ReadingSettings extends ChangeNotifier {
       readingThemes.length - 1,
     );
     s.fontFamily = p.getString('fontFamily') ?? s.fontFamily;
+    s.interfaceFontFamily = p.getString('interfaceFontFamily') ?? '';
+    s.uniformInterfaceWeight = p.getBool('uniformInterfaceWeight') ?? true;
+    s.shelfCoverMode = p.getBool('shelfCoverMode') ?? false;
+    s.accentIndex = (p.getInt('accentIndex') ?? 0).clamp(
+      0,
+      interfaceAccents.length - 1,
+    );
     s.fontSize = p.getDouble('fontSize') ?? s.fontSize;
     s.lineHeight = p.getDouble('lineHeight') ?? s.lineHeight;
     s.paragraphSpacing = p.getDouble('paragraphSpacing') ?? s.paragraphSpacing;
@@ -111,6 +298,9 @@ class ReadingSettings extends ChangeNotifier {
     if (p == null) return;
     p.setInt('themeIndex', themeIndex);
     p.setString('fontFamily', fontFamily);
+    p.setString('interfaceFontFamily', interfaceFontFamily);
+    p.setBool('uniformInterfaceWeight', uniformInterfaceWeight);
+    p.setInt('accentIndex', accentIndex);
     p.setDouble('fontSize', fontSize);
     p.setDouble('lineHeight', lineHeight);
     p.setDouble('paragraphSpacing', paragraphSpacing);
@@ -131,6 +321,12 @@ class ReadingSettings extends ChangeNotifier {
     ttsLocalVoice = sid;
     notifyListeners();
     _persist();
+  }
+
+  void setShelfCoverMode(bool value) {
+    shelfCoverMode = value;
+    _prefs?.setBool('shelfCoverMode', value);
+    notifyListeners();
   }
 
   void setTtsRemote(bool on) {
@@ -181,6 +377,24 @@ class ReadingSettings extends ChangeNotifier {
 
   void setFontFamily(String family) {
     fontFamily = family;
+    notifyListeners();
+    _persist();
+  }
+
+  void setInterfaceFontFamily(String family) {
+    interfaceFontFamily = family;
+    notifyListeners();
+    _persist();
+  }
+
+  void setUniformInterfaceWeight(bool value) {
+    uniformInterfaceWeight = value;
+    notifyListeners();
+    _persist();
+  }
+
+  void setAccent(int value) {
+    accentIndex = value.clamp(0, interfaceAccents.length - 1);
     notifyListeners();
     _persist();
   }
@@ -236,7 +450,11 @@ class ThemeSwatches extends StatelessWidget {
           spacing: 12,
           runSpacing: 12,
           children: [
-            for (var i = 0; i < readingThemes.length; i++)
+            for (
+              var i = 0;
+              i < (windowsAppearance ? readingThemes.length : 5);
+              i++
+            )
               GestureDetector(
                 onTap: () => settings.setTheme(i),
                 child: Container(

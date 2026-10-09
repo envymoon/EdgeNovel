@@ -14,6 +14,7 @@ import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
+import 'youshu_reviews.dart';
 
 /// The decision layer before the reader.
 ///
@@ -189,7 +190,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -221,6 +222,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         _bookHeader(t, info, compact: compact),
                         const SizedBox(height: 18),
                         _readButton(t),
+                        YoushuReviewEntry(
+                          title: widget.book.title,
+                          author: widget.book.author,
+                          settings: widget.settings,
+                        ),
                         const SizedBox(height: 28),
                         _reportHeader(t),
                         const SizedBox(height: 12),
@@ -412,8 +418,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: t.text.withValues(alpha: 0.035),
-        borderRadius: BorderRadius.circular(10),
+        color: t.surface,
+        border: Border.all(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
@@ -450,8 +457,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
   Widget _narrativeFocus(ReadingTheme t, BookInfo info) => Container(
     padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
     decoration: BoxDecoration(
-      border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-      borderRadius: BorderRadius.circular(10),
+      color: t.surface,
+      border: Border.all(color: t.outline),
+      borderRadius: BorderRadius.circular(14),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -514,8 +522,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
       return Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-          borderRadius: BorderRadius.circular(10),
+          color: t.surface,
+          border: Border.all(color: t.outline),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           children: [
@@ -563,8 +572,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
       decoration: BoxDecoration(
-        border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-        borderRadius: BorderRadius.circular(10),
+        color: t.surface,
+        border: Border.all(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -648,10 +658,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final moodCount = info.chapters
         .where((c) => (c.mood ?? '').trim().isNotEmpty)
         .length;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-        borderRadius: BorderRadius.circular(10),
+    return Material(
+      clipBehavior: Clip.antiAlias,
+      color: t.surface,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         children: [
@@ -902,7 +914,7 @@ class _RelationshipEvidencePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -1050,7 +1062,7 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),

@@ -11,6 +11,8 @@
   iOS/Android 原生调度器授予后台运行时间时才重新放行。
 - Rust `LocalInferenceBackend`：章节摘要、人物分析、排雷、语义搜索继续使用原来的
   规则和提示词；Windows 走 `llama-server`，iOS 将在这里接入内嵌 llama.cpp。
+- Android 随 APK 打包原生 llama.cpp，由 Rust 从系统安装目录启动；当前为 CPU 后端，
+  Q8 权重 + 默认 Q8 KV、固定 8K。接入与设备验收状态见 [android-q8-kv.md](android-q8-kv.md)。
 - `model_manager.dart`：模型清单记录版本和 SHA-256。新文件校验通过后才替换当前
   模型，并保留一个旧版本用于恢复；校验或切换失败不会破坏正在使用的模型。
 - `model_download.dart`：模型下载支持暂停、取消、断点续传、网络失败后继续；应用

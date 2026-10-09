@@ -173,7 +173,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final t = widget.settings.theme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       isScrollControlled: true,
       builder: (_) => SafeArea(
         child: FractionallySizedBox(
@@ -491,7 +491,7 @@ class _ReaderPageState extends State<ReaderPage> {
               key: _scaffoldKey,
               appBar: showControls
                   ? AppBar(
-                      backgroundColor: t.background,
+                      backgroundColor: t.topBar,
                       surfaceTintColor: Colors.transparent,
                       elevation: 0,
                       titleSpacing: compact ? 0 : null,
@@ -1031,9 +1031,7 @@ class _ParagraphViewState extends State<ParagraphView> {
             translate: false,
             style: TextStyle(
               color: theme.text,
-              fontFamily: settings.fontFamily.isEmpty
-                  ? null
-                  : settings.fontFamily,
+              fontFamily: settings.resolvedReadingFont,
               fontSize: settings.fontSize + 4,
               fontWeight: FontWeight.w600,
               height: 1.5,
@@ -1050,9 +1048,7 @@ class _ParagraphViewState extends State<ParagraphView> {
               translate: false,
               style: TextStyle(
                 color: theme.muted,
-                fontFamily: settings.fontFamily.isEmpty
-                    ? null
-                    : settings.fontFamily,
+                fontFamily: settings.resolvedReadingFont,
                 fontSize: settings.fontSize + 1,
                 letterSpacing: 3,
               ),
@@ -1081,9 +1077,7 @@ class _ParagraphViewState extends State<ParagraphView> {
             translate: false,
             style: TextStyle(
               color: theme.muted,
-              fontFamily: settings.fontFamily.isEmpty
-                  ? null
-                  : settings.fontFamily,
+              fontFamily: settings.resolvedReadingFont,
               fontSize: settings.fontSize - 2,
               fontStyle: FontStyle.italic,
               height: settings.lineHeight,
@@ -1094,7 +1088,7 @@ class _ParagraphViewState extends State<ParagraphView> {
       case ParaKind.body:
         final textStyle = TextStyle(
           color: theme.text,
-          fontFamily: settings.fontFamily.isEmpty ? null : settings.fontFamily,
+          fontFamily: settings.resolvedReadingFont,
           fontSize: settings.fontSize,
           height: settings.lineHeight,
         );

@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   desktop_drop
+  flutter_inappwebview_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

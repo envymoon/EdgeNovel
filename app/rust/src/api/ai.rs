@@ -233,8 +233,14 @@ fn engine_child() -> &'static Mutex<Option<Child>> {
     C.get_or_init(Default::default)
 }
 
-fn engine_context() -> &'static Mutex<Option<u32>> {
-    static C: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChatEngineState {
+    context: u32,
+    kv_cache: &'static str,
+}
+
+fn engine_state() -> &'static Mutex<Option<ChatEngineState>> {
+    static C: OnceLock<Mutex<Option<ChatEngineState>>> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
@@ -262,24 +268,32 @@ fn ai_dir() -> Result<&'static Path, String> {
 /// The engine zip extracts with its own layout; search shallowly instead of
 /// assuming one.
 fn find_engine(dir: &Path) -> Option<PathBuf> {
-    fn walk(dir: &Path, depth: u32) -> Option<PathBuf> {
-        let entries = std::fs::read_dir(dir).ok()?;
-        let mut dirs = Vec::new();
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_file() && p.file_name().is_some_and(|n| n == ENGINE_EXE) {
-                return Some(p);
-            }
-            if p.is_dir() {
-                dirs.push(p);
-            }
-        }
-        if depth == 0 {
-            return None;
-        }
-        dirs.into_iter().find_map(|d| walk(&d, depth - 1))
+    #[cfg(target_os = "android")]
+    {
+        let _ = dir;
+        return crate::android_engine::executable();
     }
-    walk(dir, 2)
+    #[cfg(not(target_os = "android"))]
+    {
+        fn walk(dir: &Path, depth: u32) -> Option<PathBuf> {
+            let entries = std::fs::read_dir(dir).ok()?;
+            let mut dirs = Vec::new();
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_file() && p.file_name().is_some_and(|n| n == ENGINE_EXE) {
+                    return Some(p);
+                }
+                if p.is_dir() {
+                    dirs.push(p);
+                }
+            }
+            if depth == 0 {
+                return None;
+            }
+            dirs.into_iter().find_map(|d| walk(&d, depth - 1))
+        }
+        walk(dir, 2)
+    }
 }
 
 /// Which .gguf is which. The embedder names itself (bge / embed / gte / e5) —
@@ -422,21 +436,33 @@ pub fn delete_model(embed: bool) -> Result<(), String> {
 /// Delete the engine: the binary and everything that shipped with it, but never
 /// a model — those are separate downloads with separate delete buttons.
 pub fn delete_engine() -> Result<(), String> {
-    let dir = ai_dir()?;
-    stop_ai();
-    for p in engine_files(dir) {
-        let r = if p.is_dir() {
-            std::fs::remove_dir_all(&p)
-        } else {
-            std::fs::remove_file(&p)
-        };
-        r.map_err(|e| format!("删除失败: {e}"))?;
+    #[cfg(target_os = "android")]
+    return Err("安卓推理引擎随应用安装，不能单独删除".into());
+    #[cfg(not(target_os = "android"))]
+    {
+        let dir = ai_dir()?;
+        stop_ai();
+        for p in engine_files(dir) {
+            let r = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+            r.map_err(|e| format!("删除失败: {e}"))?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn health(port: u16) -> bool {
-    matches!(http(port, "GET", "/health", None, 2), Ok((200, _)))
+    // /health and /v1/models are public in llama.cpp. Use a protected endpoint
+    // on Android so a different llama-server instance cannot be reused.
+    let path = if cfg!(target_os = "android") {
+        "/props"
+    } else {
+        "/health"
+    };
+    matches!(http(port, "GET", path, None, 2), Ok((200, _)))
 }
 
 /// Bring an engine up if it is not already answering. An orphan from a previous
@@ -453,8 +479,13 @@ fn ensure(
     slot: &'static Mutex<Option<Child>>,
     model: PathBuf,
     extra: &[&str],
+    #[cfg(target_os = "android")] startup_generation: u64,
     mut waiting: impl FnMut(u32),
 ) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    if crate::android_engine::generation() != startup_generation {
+        return Err("引擎启动已取消".into());
+    }
     if health(port) {
         return Ok(());
     }
@@ -484,7 +515,12 @@ fn ensure(
             threads = threads.min(2);
         }
     }
+    #[cfg(not(target_os = "android"))]
     let gpu_layers = if config.backend == 1 { "0" } else { "99" };
+    // The bundled portable Android engine is CPU-only, including when a saved
+    // preference came from a desktop GPU profile.
+    #[cfg(target_os = "android")]
+    let gpu_layers = "0";
     let priority = match config.mode {
         0 => "-1",
         1 => "0",
@@ -530,6 +566,21 @@ fn ensure(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(target_os = "android")]
+    {
+        cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
+            .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
+            .args(["--threads-http", "2"]);
+        // Startup diagnostics only; prompts and model responses are not logged.
+        let cache = extra
+            .windows(2)
+            .find(|pair| pair[0] == "--cache-type-k")
+            .map(|pair| pair[1])
+            .unwrap_or("embed");
+        let log = std::fs::File::create(dir.join(format!(".novel-engine-{port}-{cache}.log")))
+            .map_err(|e| format!("无法创建引擎日志: {e}"))?;
+        cmd.stderr(Stdio::from(log));
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -543,8 +594,24 @@ fn ensure(
     *slot.lock().unwrap() = Some(child);
 
     // Model load is disk-bound; a large one on a cold disk takes a while.
-    for tick in 0..240 {
+    let load_ticks = if cfg!(target_os = "android") {
+        1200
+    } else {
+        240
+    };
+    for tick in 0..load_ticks {
         std::thread::sleep(Duration::from_millis(250));
+        #[cfg(target_os = "android")]
+        if crate::android_engine::generation() != startup_generation {
+            if let Some(mut child) = slot.lock().unwrap().take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            return Err("引擎启动已取消".into());
+        }
+        if slot.lock().unwrap().is_none() {
+            return Err("引擎已停止".into());
+        }
         if health(port) {
             return Ok(());
         }
@@ -557,6 +624,10 @@ fn ensure(
             waiting(tick as u32 / 4 + 1);
         }
     }
+    if let Some(mut child) = slot.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
     Err("引擎启动超时".into())
 }
 
@@ -568,15 +639,47 @@ fn stop_chat_engine() {
     if health(PORT) {
         kill_port_holder(PORT);
     }
-    *engine_context().lock().unwrap() = None;
+    *engine_state().lock().unwrap() = None;
+}
+
+fn chat_engine_args<'a>(context: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
+    let mut args = vec![
+        "-c",
+        context,
+        "--jinja",
+        "--cache-type-k",
+        kv_cache,
+        "--cache-type-v",
+        kv_cache,
+    ];
+    // This is the exact Q8 KV configuration used by the regression suite.
+    // `auto` retains a safe backend choice when Flash Attention is absent.
+    if kv_cache == "q8_0" {
+        args.extend(["--flash-attn", "auto"]);
+    }
+    args
 }
 
 /// The tuned generation features depend on the full 8K evidence window.
 /// Runtime profiles may change scheduling pressure, never the information the
 /// model can read.
 fn ensure_engine() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    let startup_generation = crate::android_engine::generation();
+    #[cfg(target_os = "android")]
+    let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
     const CONTEXT: u32 = 8192;
-    if health(PORT) && *engine_context().lock().unwrap() == Some(CONTEXT) {
+    const F16_KV: &str = "f16";
+    #[cfg(any(windows, target_os = "android"))]
+    const PREFERRED_KV: &str = "q8_0";
+    #[cfg(not(any(windows, target_os = "android")))]
+    const PREFERRED_KV: &str = F16_KV;
+
+    if health(PORT)
+        && engine_state().lock().unwrap().is_some_and(|state| {
+            state.context == CONTEXT && matches!(state.kv_cache, "q8_0" | "f16")
+        })
+    {
         return Ok(());
     }
     if health(PORT) || engine_child().lock().unwrap().is_some() {
@@ -584,14 +687,41 @@ fn ensure_engine() -> Result<(), String> {
     }
     let model = find_model(ai_dir()?).ok_or("模型未安装（缺 .gguf 文件）")?;
     let context_arg = CONTEXT.to_string();
-    ensure(
-        PORT,
-        engine_child(),
-        model,
-        &["-c", &context_arg, "--jinja"],
-        |_| {},
-    )?;
-    *engine_context().lock().unwrap() = Some(CONTEXT);
+    let start = |kv_cache: &'static str| {
+        let args = chat_engine_args(&context_arg, kv_cache);
+        ensure(
+            PORT,
+            engine_child(),
+            model.clone(),
+            &args,
+            #[cfg(target_os = "android")]
+            startup_generation,
+            |_| {},
+        )
+    };
+
+    let active_kv = match start(PREFERRED_KV) {
+        Ok(()) => PREFERRED_KV,
+        Err(q8_error) if PREFERRED_KV != F16_KV => {
+            #[cfg(target_os = "android")]
+            if crate::android_engine::generation() != startup_generation {
+                return Err(q8_error);
+            }
+            // Older or unsupported backends must not make existing AI features
+            // unavailable. Clean the failed process before restoring the former
+            // F16 cache configuration.
+            stop_chat_engine();
+            start(F16_KV).map_err(|f16_error| {
+                format!("Q8 KV 启动失败：{q8_error}；F16 KV 回退也失败：{f16_error}")
+            })?;
+            F16_KV
+        }
+        Err(error) => return Err(error),
+    };
+    *engine_state().lock().unwrap() = Some(ChatEngineState {
+        context: CONTEXT,
+        kv_cache: active_kv,
+    });
     Ok(())
 }
 
@@ -603,6 +733,10 @@ fn ensure_embedder() -> Result<(), String> {
 }
 
 fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    let startup_generation = crate::android_engine::generation();
+    #[cfg(target_os = "android")]
+    let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
     ensure(
         EMBED_PORT,
@@ -619,6 +753,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
             "-ub",
             "512",
         ],
+        #[cfg(target_os = "android")]
+        startup_generation,
         waiting,
     )
 }
@@ -641,6 +777,8 @@ fn background_rest(base_quiet_ms: u64, base_balanced_ms: u64) {
 }
 
 pub fn stop_ai() {
+    #[cfg(target_os = "android")]
+    crate::android_engine::cancel_startup();
     stop_chat_engine();
     for (port, slot) in [(EMBED_PORT, embed_child())] {
         if let Some(mut c) = slot.lock().unwrap().take() {
@@ -704,8 +842,15 @@ fn http(
         .ok();
 
     let body_s = body.map(|b| b.to_string()).unwrap_or_default();
+    #[cfg(target_os = "android")]
+    let authorization = format!(
+        "Authorization: Bearer {}\r\n",
+        crate::android_engine::api_key()?
+    );
+    #[cfg(not(target_os = "android"))]
+    let authorization = "";
     let req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_s}",
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_s}",
         body_s.len(),
     );
     s.write_all(req.as_bytes())
@@ -757,15 +902,22 @@ fn dechunk(mut b: &[u8]) -> Vec<u8> {
 /// The tuned novel logic above this boundary is platform-independent. Windows
 /// currently talks to a managed llama-server process; iOS will provide an
 /// in-process llama.cpp implementation behind the same four operations.
+#[flutter_rust_bridge::frb(ignore)]
 trait LocalInferenceBackend: Sync {
+    #[flutter_rust_bridge::frb(ignore)]
     fn prepare_chat(&self) -> Result<(), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn prepare_embeddings(&self) -> Result<(), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn chat_completion(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn embeddings(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
 }
 
 struct LlamaServerBackend;
 
+// Internal engine plumbing is not part of the Dart API.
+#[flutter_rust_bridge::frb(ignore)]
 impl LocalInferenceBackend for LlamaServerBackend {
     fn prepare_chat(&self) -> Result<(), String> {
         ensure_engine()
@@ -1909,6 +2061,40 @@ pub fn scan_landmine(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn q8_kv_uses_both_quantized_caches_and_flash_attention() {
+        assert_eq!(
+            chat_engine_args("8192", "q8_0"),
+            vec![
+                "-c",
+                "8192",
+                "--jinja",
+                "--cache-type-k",
+                "q8_0",
+                "--cache-type-v",
+                "q8_0",
+                "--flash-attn",
+                "auto",
+            ]
+        );
+    }
+
+    #[test]
+    fn f16_fallback_keeps_the_previous_cache_configuration() {
+        assert_eq!(
+            chat_engine_args("8192", "f16"),
+            vec![
+                "-c",
+                "8192",
+                "--jinja",
+                "--cache-type-k",
+                "f16",
+                "--cache-type-v",
+                "f16",
+            ]
+        );
+    }
 
     #[test]
     fn clean_summary_strips_residue() {

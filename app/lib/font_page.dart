@@ -6,8 +6,13 @@ import 'theme.dart';
 
 class FontPage extends StatefulWidget {
   final ReadingSettings settings;
+  final bool forInterface;
 
-  const FontPage({super.key, required this.settings});
+  const FontPage({
+    super.key,
+    required this.settings,
+    this.forInterface = false,
+  });
 
   @override
   State<FontPage> createState() => _FontPageState();
@@ -15,6 +20,17 @@ class FontPage extends StatefulWidget {
 
 class _FontPageState extends State<FontPage> {
   FontManager get manager => FontManager.instance;
+  String get selectedFamily => widget.forInterface
+      ? widget.settings.interfaceFontFamily
+      : widget.settings.fontFamily;
+
+  void selectFamily(String family) {
+    if (widget.forInterface) {
+      widget.settings.setInterfaceFontFamily(family);
+    } else {
+      widget.settings.setFontFamily(family);
+    }
+  }
 
   @override
   void initState() {
@@ -26,7 +42,7 @@ class _FontPageState extends State<FontPage> {
     try {
       if (!manager.isInstalled(pack)) await manager.download(pack);
       await manager.ensureLoaded(pack);
-      widget.settings.setFontFamily(pack.family);
+      selectFamily(pack.family);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -38,7 +54,7 @@ class _FontPageState extends State<FontPage> {
   Future<void> _import() async {
     try {
       final pack = await manager.importLocalFont();
-      if (pack != null) widget.settings.setFontFamily(pack.family);
+      if (pack != null) selectFamily(pack.family);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -52,7 +68,7 @@ class _FontPageState extends State<FontPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('删除“${pack.name}”？', style: TextStyle(color: t.text)),
         content: Text(
           '以后仍可重新下载。小说和阅读设置不会被删除。',
@@ -74,6 +90,9 @@ class _FontPageState extends State<FontPage> {
     if (widget.settings.fontFamily == pack.family) {
       widget.settings.setFontFamily('');
     }
+    if (widget.settings.interfaceFontFamily == pack.family) {
+      widget.settings.setInterfaceFontFamily('');
+    }
     await manager.delete(pack);
   }
 
@@ -86,9 +105,12 @@ class _FontPageState extends State<FontPage> {
         return Scaffold(
           backgroundColor: t.background,
           appBar: AppBar(
-            backgroundColor: t.background,
+            backgroundColor: t.topBar,
             surfaceTintColor: Colors.transparent,
-            title: Text('阅读字体', style: TextStyle(color: t.text, fontSize: 17)),
+            title: Text(
+              widget.forInterface ? '界面字体' : '阅读字体',
+              style: TextStyle(color: t.text, fontSize: 17),
+            ),
             iconTheme: IconThemeData(color: t.muted),
             actions: [
               TextButton.icon(
@@ -119,7 +141,7 @@ class _FontPageState extends State<FontPage> {
   }
 
   Widget _fontCard(FontPack pack, ReadingTheme t) {
-    final selected = widget.settings.fontFamily == pack.family;
+    final selected = selectedFamily == pack.family;
     final installed = manager.isInstalled(pack);
     final downloading = manager.isDownloading(pack);
     final progress = manager.progressFor(pack);
@@ -127,16 +149,12 @@ class _FontPageState extends State<FontPage> {
     final previewFamily = installed ? pack.family : null;
 
     return Material(
-      color: selected
-          ? t.text.withValues(alpha: 0.07)
-          : t.muted.withValues(alpha: 0.035),
+      color: selected ? t.text.withValues(alpha: 0.07) : t.surface,
       shape: RoundedRectangleBorder(
         side: BorderSide(
-          color: selected
-              ? t.text.withValues(alpha: 0.45)
-              : t.muted.withValues(alpha: 0.16),
+          color: selected ? t.text.withValues(alpha: 0.45) : t.outline,
         ),
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: BorderRadius.circular(14),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

@@ -20,6 +20,11 @@ if not exist .dart_tool (
 SET BUILD_TOOL_PKG_DIR=%BASEDIR%build_tool
 SET DART=%FLUTTER_ROOT%\bin\cache\dart-sdk\bin\dart
 
+if not exist "%DART%.exe" (
+    echo ERROR: Cargokit cannot find Dart at "%DART%.exe". 1>&2
+    exit /b 1
+)
+
 set BUILD_TOOL_PKG_DIR_POSIX=%BUILD_TOOL_PKG_DIR:\=/%
 
 (
@@ -89,15 +94,23 @@ if not exist "%PRECOMPILED%" (
     REM Android build cannot appear frozen while Pub waits on the network.
     "%DART%" pub get --offline --no-precompile
     if errorlevel 1 "%DART%" pub get --no-precompile
+    if errorlevel 1 exit /b 1
     "%DART%" compile kernel bin/build_tool_runner.dart
+    if errorlevel 1 exit /b 1
 )
 
 "%DART%" "%PRECOMPILED%" %*
+SET BUILD_RESULT=%ERRORLEVEL%
 
 REM 253 means invalid snapshot version.
-If %ERRORLEVEL% equ 253 (
+If %BUILD_RESULT% equ 253 (
     "%DART%" pub get --offline --no-precompile
     if errorlevel 1 "%DART%" pub get --no-precompile
+    if errorlevel 1 exit /b 1
     "%DART%" compile kernel bin/build_tool_runner.dart
+    if errorlevel 1 exit /b 1
     "%DART%" "%PRECOMPILED%" %*
+    exit /b !ERRORLEVEL!
 )
+
+exit /b %BUILD_RESULT%

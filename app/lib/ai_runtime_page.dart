@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'app_localizations.dart';
 import 'ai_runtime.dart';
 import 'reader_state.dart';
+import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
 import 'theme.dart';
 
@@ -55,7 +56,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -191,8 +192,8 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
   Widget _queueCard(ReadingTheme t, ReaderState reader) => Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: t.text.withValues(alpha: 0.035),
-      border: Border.all(color: t.muted.withValues(alpha: 0.18)),
+      color: t.surface,
+      border: Border.all(color: t.outline),
       borderRadius: BorderRadius.circular(14),
     ),
     child: Column(
@@ -273,7 +274,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('取消暂停的任务？', style: TextStyle(color: t.text)),
         content: Text(
           '任务会从后台队列中移除，已经生成的章节内容会保留，以后可以重新开始。',
@@ -463,16 +464,20 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
           ListTile(
             title: Text('处理器', style: TextStyle(color: t.text, fontSize: 13)),
             trailing: DropdownButton<AiBackend>(
-              value: runtime.backend,
+              value: AppPlatformSupport.hasBundledAiEngine
+                  ? AiBackend.cpu
+                  : runtime.backend,
               underline: const SizedBox.shrink(),
               items: const [
                 DropdownMenuItem(value: AiBackend.auto, child: Text('自动')),
                 DropdownMenuItem(value: AiBackend.cpu, child: Text('仅 CPU')),
                 DropdownMenuItem(value: AiBackend.gpu, child: Text('优先 GPU')),
               ],
-              onChanged: (value) {
-                if (value != null) runtime.setBackend(value);
-              },
+              onChanged: AppPlatformSupport.hasBundledAiEngine
+                  ? null
+                  : (value) {
+                      if (value != null) runtime.setBackend(value);
+                    },
             ),
           ),
           _sliderTile(
@@ -575,11 +580,12 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
     ),
   );
 
-  Widget _panel(ReadingTheme t, {required List<Widget> children}) => Container(
+  Widget _panel(ReadingTheme t, {required List<Widget> children}) => Material(
     clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-      borderRadius: BorderRadius.circular(12),
+    color: t.surface,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: t.outline),
+      borderRadius: BorderRadius.circular(14),
     ),
     child: Column(children: children),
   );

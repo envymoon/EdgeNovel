@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
+import 'appearance_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'font_page.dart';
@@ -8,6 +9,7 @@ import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
+import 'youshu_login_page.dart';
 
 /// Lightweight entry points for app-wide preferences and data controls.
 ///
@@ -29,7 +31,7 @@ class SettingsPage extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('清空全部阅读记录？', style: TextStyle(color: t.text, fontSize: 16)),
         content: Text(
           '阅读时长、连续阅读天数和阅读画像所依据的数据都会被删除，且无法恢复。'
@@ -72,7 +74,7 @@ class SettingsPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -91,10 +93,37 @@ class SettingsPage extends StatelessWidget {
                 40,
               ),
               children: [
+                if (windowsAppearance) ...[
+                  _entry(
+                    t,
+                    icon: Icons.palette_outlined,
+                    title: '外观',
+                    subtitle: '界面字体与配色',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AppearancePage(settings: settings),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _sectionLabel(t, '阅读'),
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.rate_review_outlined,
+                      title: '优书网书评',
+                      subtitle: '登录与书评更新',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => YoushuLoginPage(settings: settings),
+                        ),
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.language,
@@ -215,7 +244,7 @@ class SettingsPage extends StatelessWidget {
     final selected = await showDialog<AppLanguage>(
       context: context,
       builder: (dialogContext) => SimpleDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('界面语言', style: TextStyle(color: t.text, fontSize: 16)),
         children: [
           SimpleDialogOption(
@@ -249,11 +278,12 @@ class SettingsPage extends StatelessWidget {
     if (selected != null) settings.setLanguage(selected);
   }
 
-  Widget _group(ReadingTheme t, {required List<Widget> children}) => Container(
+  Widget _group(ReadingTheme t, {required List<Widget> children}) => Material(
     clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      border: Border.all(color: t.muted.withValues(alpha: 0.16)),
-      borderRadius: BorderRadius.circular(12),
+    color: t.surface,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: t.outline),
+      borderRadius: BorderRadius.circular(14),
     ),
     child: Column(children: children),
   );

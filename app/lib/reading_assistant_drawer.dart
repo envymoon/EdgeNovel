@@ -33,7 +33,7 @@ class ReadingAssistantDrawer extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width.clamp(300, 390).toDouble();
     return Drawer(
       width: width,
-      backgroundColor: t.background,
+      backgroundColor: t.surface,
       child: SafeArea(
         child: ListenableBuilder(
           listenable: reader,

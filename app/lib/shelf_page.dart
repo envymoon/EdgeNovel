@@ -70,7 +70,11 @@ class _ShelfPageState extends State<ShelfPage> {
         AppPlatformSupport.layoutForWidth(MediaQuery.sizeOf(context).width) ==
         AppLayoutClass.compact;
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.reader, _categories]),
+      listenable: Listenable.merge([
+        widget.reader,
+        _categories,
+        widget.settings,
+      ]),
       builder: (context, _) {
         if (_selectedCategory != null &&
             !_categories.names.contains(_selectedCategory)) {
@@ -89,7 +93,7 @@ class _ShelfPageState extends State<ShelfPage> {
         }).toList();
         return Scaffold(
           appBar: AppBar(
-            backgroundColor: t.background,
+            backgroundColor: t.topBar,
             surfaceTintColor: Colors.transparent,
             elevation: 0,
             title: _searching
@@ -106,6 +110,20 @@ class _ShelfPageState extends State<ShelfPage> {
                   )
                 : Text('书架', style: TextStyle(color: t.text, fontSize: 17)),
             actions: [
+              IconButton(
+                tooltip: context.tr(
+                  widget.settings.shelfCoverMode ? '详情模式' : '封面模式',
+                ),
+                icon: Icon(
+                  widget.settings.shelfCoverMode
+                      ? Icons.view_list_outlined
+                      : Icons.grid_view_outlined,
+                ),
+                color: t.muted,
+                onPressed: () => widget.settings.setShelfCoverMode(
+                  !widget.settings.shelfCoverMode,
+                ),
+              ),
               IconButton(
                 tooltip: context.tr(_searching ? '关闭搜索' : '搜索'),
                 icon: Icon(_searching ? Icons.close : Icons.search),
@@ -215,6 +233,26 @@ class _ShelfPageState extends State<ShelfPage> {
                           ? Center(child: Bloom(color: t.muted, size: 34))
                           : books.isEmpty
                           ? _empty(t)
+                          : widget.settings.shelfCoverMode
+                          ? LayoutBuilder(
+                              builder: (context, constraints) {
+                                final columns = (constraints.maxWidth / 140)
+                                    .floor()
+                                    .clamp(2, 12);
+                                return GridView.builder(
+                                  padding: const EdgeInsets.all(16),
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: columns,
+                                        mainAxisExtent: 208,
+                                        crossAxisSpacing: 12,
+                                        mainAxisSpacing: 16,
+                                      ),
+                                  itemCount: books.length,
+                                  itemBuilder: (_, i) => _coverCard(books[i]),
+                                );
+                              },
+                            )
                           : q.isNotEmpty
                           ? ListView.separated(
                               padding: const EdgeInsets.all(16),
@@ -329,7 +367,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text(
           initial.isEmpty ? '新建分类' : '重命名分类',
           style: TextStyle(color: t.text, fontSize: 16),
@@ -377,7 +415,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text(
           '删除分类“$name”？',
           style: TextStyle(color: t.text, fontSize: 16),
@@ -408,7 +446,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final t = widget.settings.theme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: ListenableBuilder(
@@ -604,7 +642,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final t = widget.settings.theme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       builder: (_) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         child: Column(
@@ -626,7 +664,7 @@ class _ShelfPageState extends State<ShelfPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
-          backgroundColor: t.background,
+          backgroundColor: t.raisedSurface,
           title: Text('编辑信息', style: TextStyle(color: t.text, fontSize: 16)),
           content: SingleChildScrollView(
             child: Column(
@@ -730,7 +768,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text(
           '删除《${b.title}》？',
           maxLines: 1,
@@ -772,6 +810,83 @@ class _ShelfPageState extends State<ShelfPage> {
     onCategory: () => _chooseCategory(b),
   );
 
+  Widget _coverCard(ShelfItem book) {
+    final t = widget.settings.theme;
+    void showActions() => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final action in <(String, VoidCallback)>[
+                (book.pinned ? '取消置顶' : '置顶', () => _togglePin(book)),
+                ('加入分类', () => _chooseCategory(book)),
+                ('编辑信息', () => _editInfo(book)),
+                ('重新指定编码', () => _pickEncoding(book)),
+                (
+                  '删除',
+                  () async {
+                    await widget.reader.delete(book.id);
+                    _categories.removeBook(book.id);
+                  },
+                ),
+                ('彻底删除', () => _deleteForever(book)),
+              ])
+                ListTile(
+                  title: Text(action.$1),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    action.$2();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return Tooltip(
+      message: book.title,
+      child: Material(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _openBookDetail(book),
+          onLongPress: showActions,
+          onSecondaryTap: showActions,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              children: [
+                TextCover(
+                  title: book.title,
+                  hue: book.coverHue,
+                  coverPath: book.coverPath,
+                  width: 96,
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      book.title,
+                      translate: false,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: t.text, fontSize: 13),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openBookDetail(ShelfItem book) {
     Navigator.push(
       context,
@@ -803,7 +918,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final current = _categories.categoryFor(book.id);
     final choice = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: t.background,
+      backgroundColor: t.raisedSurface,
       builder: (sheetContext) => SafeArea(
         child: SingleChildScrollView(
           child: Column(
@@ -908,7 +1023,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        backgroundColor: t.background,
+        backgroundColor: t.raisedSurface,
         title: Text('重新指定编码', style: TextStyle(color: t.text, fontSize: 16)),
         children: [
           Padding(
@@ -999,278 +1114,305 @@ class BookCard extends StatelessWidget {
         ? (item.lastChapter + 1) / item.chapterCount
         : 0.0;
     final started = item.lastOpenedAt != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextCover(
-              title: item.title,
-              hue: item.coverHue,
-              coverPath: item.coverPath,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      if (item.pinned) ...[
-                        Icon(Icons.push_pin, size: 13, color: theme.muted),
-                        const SizedBox(width: 4),
-                      ],
-                      Expanded(
-                        child: Text(
-                          item.title,
-                          translate: false,
-                          style: TextStyle(
-                            color: theme.text,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        '${item.author ?? '佚名'} · ${item.chapterCount} 章',
-                        style: TextStyle(color: theme.muted, fontSize: 12),
-                      ),
-                      // Two tags at most, and often none. They come from a word
-                      // count over the text — no model, no download, no wait —
-                      // so they are already there the moment a book is imported.
-                      for (final g in item.genreTags)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: theme.muted.withValues(alpha: 0.35),
-                            ),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
+    final radius = BorderRadius.circular(14);
+    return Material(
+      color: theme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: theme.outline),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: radius,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextCover(
+                title: item.title,
+                hue: item.coverHue,
+                coverPath: item.coverPath,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (item.pinned) ...[
+                          Icon(Icons.push_pin, size: 13, color: theme.muted),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
                           child: Text(
-                            g,
-                            style: TextStyle(color: theme.muted, fontSize: 10),
+                            item.title,
+                            translate: false,
+                            style: TextStyle(
+                              color: theme.text,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      if (category != null)
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 100),
-                          child: Container(
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '${item.author ?? '佚名'} · ${item.chapterCount} 章',
+                          style: TextStyle(color: theme.muted, fontSize: 12),
+                        ),
+                        // Two tags at most, and often none. They come from a word
+                        // count over the text — no model, no download, no wait —
+                        // so they are already there the moment a book is imported.
+                        for (final g in item.genreTags)
+                          Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
                               vertical: 1,
                             ),
                             decoration: BoxDecoration(
-                              color: theme.muted.withValues(alpha: 0.1),
+                              border: Border.all(
+                                color: theme.muted.withValues(alpha: 0.35),
+                              ),
                               borderRadius: BorderRadius.circular(3),
                             ),
                             child: Text(
-                              category!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              g,
                               style: TextStyle(
                                 color: theme.muted,
                                 fontSize: 10,
                               ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // This line is where a chapter summary will go once the
-                  // enrichment pass exists. Until then it says where you were,
-                  // which is already the thing a returning reader wants. The
-                  // progress ring is deliberately tiny: progress is a glance,
-                  // not a feature.
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (started) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 3),
-                          child: SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              value: read,
-                              strokeWidth: 2,
-                              backgroundColor: theme.muted.withValues(
-                                alpha: 0.2,
+                        if (category != null)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 100),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1,
                               ),
-                              valueColor: AlwaysStoppedAnimation(theme.muted),
+                              decoration: BoxDecoration(
+                                color: theme.muted.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                category!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: theme.muted,
+                                  fontSize: 10,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${(read * 100).toStringAsFixed(0)}%',
-                          style: TextStyle(
-                            color: theme.muted,
-                            fontSize: 11,
-                            height: 1.6,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
                       ],
-                      Expanded(
-                        child: Text(
-                          started ? '读到 ${item.lastChapterTitle}' : '尚未开始',
-                          style: TextStyle(
-                            color: theme.muted,
-                            fontSize: 13,
-                            height: 1.4,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // The location is the latest stop, not the furthest chapter.
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (started) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                value: read,
+                                strokeWidth: 2,
+                                backgroundColor: theme.muted.withValues(
+                                  alpha: 0.2,
+                                ),
+                                valueColor: AlwaysStoppedAnimation(theme.muted),
+                              ),
+                            ),
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                          const SizedBox(width: 6),
+                          Text(
+                            '${(read * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              color: theme.muted,
+                              fontSize: 11,
+                              height: 1.6,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Expanded(
+                          child: Text(
+                            started
+                                ? '${context.tr('读到')} ${item.lastChapterTitle.trim().isEmpty ? context.tr('第 ${item.lastChapter + 1} 章') : item.lastChapterTitle}'
+                                : context.tr('尚未开始'),
+                            translate: false,
+                            style: TextStyle(
+                              color: theme.muted,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (windowsAppearance &&
+                        started &&
+                        (item.lastChapterSummary ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        item.lastChapterSummary!.trim(),
+                        translate: false,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: theme.muted,
+                          fontSize: 12,
+                          height: 1.5,
                         ),
                       ),
                     ],
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.more_horiz),
-              color: theme.muted,
-              // This menu has outgrown the default sheet, which is capped at
-              // nine sixteenths of the window and does not scroll: the last
-              // items were being clipped clean off — present in the code,
-              // unreachable on screen, which is how 删除 "disappeared". It
-              // scrolls now, and it may use most of the window if it needs to.
-              onPressed: () => showModalBottomSheet(
-                context: context,
-                backgroundColor: theme.background,
-                isScrollControlled: true,
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.85,
+                  ],
                 ),
-                builder: (ctx) => SafeArea(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ListTile(
-                          leading: Icon(
-                            item.pinned
-                                ? Icons.push_pin_outlined
-                                : Icons.push_pin,
-                            color: theme.text,
+              ),
+              IconButton(
+                icon: const Icon(Icons.more_horiz),
+                color: theme.muted,
+                // This menu has outgrown the default sheet, which is capped at
+                // nine sixteenths of the window and does not scroll: the last
+                // items were being clipped clean off — present in the code,
+                // unreachable on screen, which is how 删除 "disappeared". It
+                // scrolls now, and it may use most of the window if it needs to.
+                onPressed: () => showModalBottomSheet(
+                  context: context,
+                  backgroundColor: theme.raisedSurface,
+                  isScrollControlled: true,
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.85,
+                  ),
+                  builder: (ctx) => SafeArea(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ListTile(
+                            leading: Icon(
+                              item.pinned
+                                  ? Icons.push_pin_outlined
+                                  : Icons.push_pin,
+                              color: theme.text,
+                            ),
+                            title: Text(
+                              item.pinned ? '取消置顶' : '置顶',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onPin();
+                            },
                           ),
-                          title: Text(
-                            item.pinned ? '取消置顶' : '置顶',
-                            style: TextStyle(color: theme.text),
+                          ListTile(
+                            leading: Icon(
+                              Icons.folder_outlined,
+                              color: theme.text,
+                            ),
+                            title: Text(
+                              category == null ? '加入分类' : '分类 · $category',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onCategory();
+                            },
                           ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onPin();
-                          },
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.folder_outlined,
-                            color: theme.text,
+                          ListTile(
+                            leading: Icon(
+                              Icons.drive_file_rename_outline,
+                              color: theme.text,
+                            ),
+                            title: Text(
+                              '编辑信息',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onRename();
+                            },
                           ),
-                          title: Text(
-                            category == null ? '加入分类' : '分类 · $category',
-                            style: TextStyle(color: theme.text),
+                          ListTile(
+                            leading: Icon(Icons.translate, color: theme.text),
+                            title: Text(
+                              '重新指定编码',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onEncoding();
+                            },
                           ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onCategory();
-                          },
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.drive_file_rename_outline,
-                            color: theme.text,
+                          ListTile(
+                            leading: Icon(
+                              Icons.fact_check_outlined,
+                              color: theme.text,
+                            ),
+                            title: Text(
+                              '扫书报告',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onReport();
+                            },
                           ),
-                          title: Text(
-                            '编辑信息',
-                            style: TextStyle(color: theme.text),
+                          ListTile(
+                            leading: Icon(
+                              Icons.delete_outline,
+                              color: theme.text,
+                            ),
+                            title: Text(
+                              '从书架移除',
+                              style: TextStyle(color: theme.text),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onDelete();
+                            },
                           ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onRename();
-                          },
-                        ),
-                        ListTile(
-                          leading: Icon(Icons.translate, color: theme.text),
-                          title: Text(
-                            '重新指定编码',
-                            style: TextStyle(color: theme.text),
+                          ListTile(
+                            leading: const Icon(
+                              Icons.delete_forever_outlined,
+                              color: Color(0xFFB3574D),
+                            ),
+                            title: const Text(
+                              '删除',
+                              style: TextStyle(color: Color(0xFFB3574D)),
+                            ),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              onDeleteForever();
+                            },
                           ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onEncoding();
-                          },
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.fact_check_outlined,
-                            color: theme.text,
-                          ),
-                          title: Text(
-                            '扫书报告',
-                            style: TextStyle(color: theme.text),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onReport();
-                          },
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.delete_outline,
-                            color: theme.text,
-                          ),
-                          title: Text(
-                            '从书架移除',
-                            style: TextStyle(color: theme.text),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onDelete();
-                          },
-                        ),
-                        ListTile(
-                          leading: const Icon(
-                            Icons.delete_forever_outlined,
-                            color: Color(0xFFB3574D),
-                          ),
-                          title: const Text(
-                            '删除',
-                            style: TextStyle(color: Color(0xFFB3574D)),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            onDeleteForever();
-                          },
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

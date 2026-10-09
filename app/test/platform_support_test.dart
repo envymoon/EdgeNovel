@@ -1,9 +1,24 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:novel/platform_support.dart';
 import 'package:novel/platform_services.dart';
 
 void main() {
+  test('only Android bundles an engine; mobile stays foreground-only', () {
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
+    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+    expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
+    expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
+    expect(AppPlatformSupport.usesExternalAiProcess, isFalse);
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
+    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+  });
   test('mobile and desktop capabilities stay separate', () {
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.iOS), isTrue);
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.android), isTrue);

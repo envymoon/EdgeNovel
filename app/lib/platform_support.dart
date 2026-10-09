@@ -12,7 +12,12 @@ abstract final class AppPlatformSupport {
 
   static bool get supportsBookDrop => isDesktop;
 
-  static bool get usesExternalAiProcess => isDesktop;
+  static bool get usesExternalAiProcess => isDesktop || hasBundledAiEngine;
+
+  static bool get canDownloadAiEngine => isDesktop;
+
+  static bool get hasBundledAiEngine =>
+      defaultTargetPlatform == TargetPlatform.android;
 
   /// Mobile document pickers grant access to the selected files themselves;
   /// the app must never request permission to browse all user storage.

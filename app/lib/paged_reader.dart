@@ -52,28 +52,28 @@ class _Typography {
   TextStyle style(ParaKind kind) => switch (kind) {
     ParaKind.title => TextStyle(
       color: t.text,
-      fontFamily: s.fontFamily.isEmpty ? null : s.fontFamily,
+      fontFamily: s.resolvedReadingFont,
       fontSize: s.fontSize + 4,
       fontWeight: FontWeight.w600,
       height: 1.5,
     ),
     ParaKind.volume => TextStyle(
       color: t.muted,
-      fontFamily: s.fontFamily.isEmpty ? null : s.fontFamily,
+      fontFamily: s.resolvedReadingFont,
       fontSize: s.fontSize + 1,
       letterSpacing: 3,
       height: 1.5,
     ),
     ParaKind.interstitial => TextStyle(
       color: t.muted,
-      fontFamily: s.fontFamily.isEmpty ? null : s.fontFamily,
+      fontFamily: s.resolvedReadingFont,
       fontSize: s.fontSize - 2,
       fontStyle: FontStyle.italic,
       height: s.lineHeight,
     ),
     ParaKind.body => TextStyle(
       color: t.text,
-      fontFamily: s.fontFamily.isEmpty ? null : s.fontFamily,
+      fontFamily: s.resolvedReadingFont,
       fontSize: s.fontSize,
       height: s.lineHeight,
     ),

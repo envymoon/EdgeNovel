@@ -123,7 +123,7 @@ class _LandminePageState extends State<LandminePage> {
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
-        backgroundColor: t.background,
+        backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
@@ -207,8 +207,9 @@ class _LandminePageState extends State<LandminePage> {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: t.muted.withValues(alpha: 0.18)),
-        borderRadius: BorderRadius.circular(10),
+        color: t.surface,
+        border: Border.all(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

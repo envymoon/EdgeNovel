@@ -54,6 +54,22 @@ Future<void> main() async {
   if (!FontManager.instance.hasFamily(settings.fontFamily)) {
     settings.setFontFamily('');
   }
+  if (windowsAppearance &&
+      settings.interfaceFontFamily.isNotEmpty &&
+      !settings.interfaceFontFamily.startsWith('system:')) {
+    final pack = FontManager.instance.packs
+        .where((p) => p.family == settings.interfaceFontFamily)
+        .firstOrNull;
+    try {
+      if (pack == null || !FontManager.instance.isInstalled(pack)) {
+        settings.setInterfaceFontFamily('');
+      } else {
+        await FontManager.instance.ensureLoaded(pack);
+      }
+    } catch (_) {
+      settings.setInterfaceFontFamily('');
+    }
+  }
   await ShelfCategories.instance.initialize();
   await AiRuntimeSettings.instance.initialize(
     deviceStatus: services.deviceStatus,
@@ -141,7 +157,6 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     return ListenableBuilder(
       listenable: settings,
       builder: (context, _) {
-        final t = settings.theme;
         return MaterialApp(
           title: settings.language == AppLanguage.english
               ? 'Novel Reader'
@@ -158,14 +173,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
             language: settings.language,
             child: child ?? const SizedBox.shrink(),
           ),
-          theme: ThemeData(
-            brightness: t.isDark ? Brightness.dark : Brightness.light,
-            scaffoldBackgroundColor: t.background,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF7B6A52),
-              brightness: t.isDark ? Brightness.dark : Brightness.light,
-            ),
-          ),
+          theme: buildAppTheme(settings),
           home: _reading
               ? ReaderPage(
                   reader: reader,
