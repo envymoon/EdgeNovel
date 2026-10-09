@@ -48,6 +48,7 @@ local.properties
 /bad/
 /bad-synth/
 /releases/
+/output/
 /*.txt
 /android-*.png
 /android-*.xml
