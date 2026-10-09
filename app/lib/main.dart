@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import 'data_guard.dart';
 import 'font_manager.dart';
 import 'ai_runtime.dart';
 import 'reader_page.dart';
@@ -36,6 +37,9 @@ Future<void> main() async {
   // Rust must not guess where an app may write; the platform decides.
   final services = await AppServices.initialize();
   final storage = services.storage;
+  // Before this build's code opens anything: if it is a new build, keep a copy
+  // of the library it is about to run against.
+  await DataGuard.snapshotIfNewBuild(storage.support);
   await initStore(dir: storage.support.path);
   await initAi(dir: storage.supportChild('ai').path);
   await initTts(dir: storage.supportChild('tts').path);
