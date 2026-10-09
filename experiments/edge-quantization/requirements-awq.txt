@@ -1,0 +1,4 @@
+# AutoAWQ's final tested stack. Kept in an isolated virtual environment.
+autoawq==0.2.9
+transformers==4.51.3
+
