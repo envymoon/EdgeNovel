@@ -23,6 +23,7 @@ import 'toc_drawer.dart';
 import 'tts_controller.dart';
 import 'tts_text.dart';
 import 'tts_server_page.dart';
+import 'wheel_glide.dart';
 
 class ReaderPage extends StatefulWidget {
   final ReaderState reader;
@@ -290,6 +291,13 @@ class _ReaderPageState extends State<ReaderPage> {
         .reduce((a, b) => a.itemLeadingEdge < b.itemLeadingEdge ? a : b);
     widget.reader.onVisibleParagraph(top.index);
   }
+
+  /// Page margins for paragraph [i] of the scrolling list. They belong to the
+  /// items rather than the list so the wheel glides wherever the pointer rests.
+  EdgeInsets _itemPadding(EdgeInsets page, int i) => page.copyWith(
+    top: i == 0 ? null : 0,
+    bottom: i == widget.reader.paragraphs.length - 1 ? 60 : 0,
+  );
 
   /// Scroll by 90% of a viewport — the 10% overlap keeps one line of context,
   /// which is what lets the eye pick up where it left off. Expressed as an
@@ -601,38 +609,45 @@ class _ReaderPageState extends State<ReaderPage> {
                                         widget.reader.initialParagraph,
                                     itemScrollController: _itemScroll,
                                     itemPositionsListener: _positions,
-                                    padding: readerPadding.copyWith(bottom: 60),
                                     itemCount: widget.reader.paragraphs.length,
-                                    itemBuilder: (context, i) => ParagraphView(
-                                      para: widget.reader.paragraphs[i],
-                                      settings: widget.settings,
-                                      theme: t,
-                                      active: _tts.activeParagraph == i,
-                                      activeStart: _tts.activeParagraph == i
-                                          ? _tts.activeStart
-                                          : -1,
-                                      onTapSentence: compact
-                                          ? null
-                                          : (start) =>
-                                                _tts.seekToSentence(i, start),
-                                      annotations: widget.reader
-                                          .annotationsForParagraph(
-                                            widget.reader.paragraphs[i],
-                                          ),
-                                      onShowAnnotations: (annotations) =>
-                                          showAnnotationComments(
-                                            context,
-                                            reader: widget.reader,
-                                            settings: widget.settings,
-                                            paragraph:
+                                    itemBuilder: (context, i) => WheelGlide(
+                                      scale: widget.settings.wheelScale,
+                                      child: Padding(
+                                        padding: _itemPadding(readerPadding, i),
+                                        child: ParagraphView(
+                                          para: widget.reader.paragraphs[i],
+                                          settings: widget.settings,
+                                          theme: t,
+                                          active: _tts.activeParagraph == i,
+                                          activeStart: _tts.activeParagraph == i
+                                              ? _tts.activeStart
+                                              : -1,
+                                          onTapSentence: compact
+                                              ? null
+                                              : (start) => _tts.seekToSentence(
+                                                  i,
+                                                  start,
+                                                ),
+                                          annotations: widget.reader
+                                              .annotationsForParagraph(
                                                 widget.reader.paragraphs[i],
-                                            annotations: annotations,
-                                          ),
-                                      annotationMode: _annotationMode,
-                                      annotationChapter:
-                                          widget.reader.chapterIndex,
-                                      onAnnotationSelection:
-                                          _setAnnotationDraft,
+                                              ),
+                                          onShowAnnotations: (annotations) =>
+                                              showAnnotationComments(
+                                                context,
+                                                reader: widget.reader,
+                                                settings: widget.settings,
+                                                paragraph:
+                                                    widget.reader.paragraphs[i],
+                                                annotations: annotations,
+                                              ),
+                                          annotationMode: _annotationMode,
+                                          annotationChapter:
+                                              widget.reader.chapterIndex,
+                                          onAnnotationSelection:
+                                              _setAnnotationDraft,
+                                        ),
+                                      ),
                                     ),
                                   ),
                             ),
@@ -1262,6 +1277,20 @@ class SettingsSheet extends StatelessWidget {
                 divisions: 14,
                 onChanged: settings.setPageWidth,
               ),
+              if (AppPlatformSupport.isDesktop &&
+                  settings.pageMode == PageMode.scroll) ...[
+                Text(
+                  '滚轮幅度 ${(settings.wheelScale * 100).round()}%',
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+                Slider(
+                  value: settings.wheelScale,
+                  min: 0.2,
+                  max: 1.0,
+                  divisions: 8,
+                  onChanged: settings.setWheelScale,
+                ),
+              ],
               Text(
                 '段距 ${settings.paragraphSpacing.toInt()}',
                 style: TextStyle(color: t.muted, fontSize: 12),

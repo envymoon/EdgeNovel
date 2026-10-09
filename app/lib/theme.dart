@@ -220,6 +220,10 @@ class ReadingSettings extends ChangeNotifier {
   PageMode pageMode = PageMode.scroll;
   double pageWidth = 720;
 
+  /// Fraction of the platform's per-notch wheel distance the scroll mode
+  /// travels. Windows' own step is about three lines at once.
+  double wheelScale = 0.5;
+
   /// Read-aloud pace, 1.0 = the voice's natural speed. Persisted so a chosen
   /// pace survives across books and sessions.
   double ttsSpeed = 1.0;
@@ -278,6 +282,7 @@ class ReadingSettings extends ChangeNotifier {
           PageMode.values.length - 1,
         )];
     s.pageWidth = p.getDouble('pageWidth') ?? s.pageWidth;
+    s.wheelScale = p.getDouble('wheelScale') ?? s.wheelScale;
     s.ttsSpeed = p.getDouble('ttsSpeed') ?? s.ttsSpeed;
     s.ttsLocalVoice = p.getInt('ttsVoice') ?? s.ttsLocalVoice;
     s.ttsServerUrl = p.getString('ttsServerUrl') ?? s.ttsServerUrl;
@@ -307,6 +312,7 @@ class ReadingSettings extends ChangeNotifier {
     p.setBool('firstLineIndent', firstLineIndent);
     p.setInt('pageMode', pageMode.index);
     p.setDouble('pageWidth', pageWidth);
+    p.setDouble('wheelScale', wheelScale);
     p.setDouble('ttsSpeed', ttsSpeed);
     p.setInt('ttsVoice', ttsLocalVoice);
     p.setBool('ttsRemote', ttsRemote);
@@ -425,6 +431,12 @@ class ReadingSettings extends ChangeNotifier {
 
   void setPageWidth(double v) {
     pageWidth = v.clamp(520, 1080);
+    notifyListeners();
+    _persist();
+  }
+
+  void setWheelScale(double v) {
+    wheelScale = v.clamp(0.2, 1.0);
     notifyListeners();
     _persist();
   }
