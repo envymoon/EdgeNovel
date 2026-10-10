@@ -197,10 +197,21 @@ const COMPOUND_SURNAMES: &[&str] = &[
 /// Honorifics that attach to a surname to name a person indirectly (齐先生,
 /// 苏姑娘). A candidate ending in one of these, whose surname matches exactly one
 /// full name, is that person under a courtesy title — not a separate character.
+///
+/// 老师/叔/姨 stay out: 徐老师 in 冬日重现 is 徐芷若's mother, and the
+/// uniqueness guard cannot see a parent who is never named in full.
 const TITLES: &[&str] = &[
     "先生", "公子", "姑娘", "老爷", "少爷", "大人", "前辈", "夫人", "娘子", "道长", "真人", "大师",
     "掌柜", "师傅", "老板", "老祖", "宗主", "掌门",
 ];
+
+/// Affectionate suffixes that follow the last character of a given name (觉哥,
+/// 树兄). Longest first so 哥哥 is stripped whole.
+const KIN_SUFFIXES: &[&str] = &["哥哥", "姐姐", "哥", "兄", "姐", "弟", "妹"];
+
+/// Characters that make X哥/X姐 a kinship or rank word (大哥, 表姐, 师兄)
+/// rather than a nickname cut from someone's given name.
+const NOT_A_GIVEN_CHAR: &str = "大小老阿表堂师学二三四五六七八九十";
 
 /// 苏如雪 is shaped like a full name; 请继续 is not — and only something
 /// shaped like a full name may claim a shorter candidate's occurrences.
@@ -1616,6 +1627,48 @@ fn select(cands: &[(String, Stat)]) -> Vec<Member> {
         }
     }
 
+    // Fold a 末字+亲昵 nickname (觉哥 → 封不觉, 树兄 → 吕树) into the one name
+    // that ends in the same character. Unlike 齐先生 this shares ink with the
+    // name it stands for — a given-name character, which a family does not
+    // share the way it shares a surname — so it can be trusted where a bare
+    // surname form cannot: across the corpus 徐老师 is 徐芷若's mother and 徐叔
+    // is not 徐婉, while every 末字+亲昵 form found was its host. The count adds
+    // whole, as with titles: 树兄 and 吕树 are separate strings.
+    for &t in &alive {
+        if taken.contains(&t) {
+            continue;
+        }
+        let name = cands[t].0.as_str();
+        let Some(x) = KIN_SUFFIXES.iter().find_map(|k| {
+            let stem = name.strip_suffix(k)?;
+            let mut cs = stem.chars();
+            match (cs.next(), cs.next()) {
+                (Some(c), None) if !NOT_A_GIVEN_CHAR.contains(c) => Some(c),
+                _ => None,
+            }
+        }) else {
+            continue;
+        };
+        let mut hosts = alive.iter().copied().filter(|&f| {
+            let host = cands[f].0.as_str();
+            let n = host.chars().count();
+            f != t
+                && !taken.contains(&f)
+                && host.ends_with(x)
+                // The final char must be a given-name char: 吕树 (surname-led)
+                // or any three-plus name — never a two-char word like 大王,
+                // whose 王 is the 王 of 王哥, a surname form.
+                && (n >= 3 || host.chars().next().is_some_and(|c| SURNAMES.contains(c)))
+                && n <= 4
+                && !KIN_SUFFIXES.iter().any(|k| host.ends_with(k))
+                && !TITLES.iter().any(|k| host.ends_with(k))
+        });
+        if let (Some(f), None) = (hosts.next(), hosts.next()) {
+            titled.entry(f).or_default().push(t);
+            taken.insert(t);
+        }
+    }
+
     let mut members: Vec<Member> = alive
         .iter()
         .copied()
@@ -2152,6 +2205,57 @@ mod tests {
         ]);
         assert!(by_name(&members, "陈歌").is_some());
         assert!(by_name(&members, "陈歌看").is_none());
+    }
+
+    #[test]
+    fn a_nickname_on_the_last_given_char_folds_into_its_name() {
+        // 大王饶命: 陈祖安 calls 吕树 树兄, 成秋巧 calls him 树哥.
+        let members = select(&[
+            cand("吕树", 32150, 0.6, 0.1, 0.05),
+            cand("树兄", 817, 0.6, 0.3, 0.05),
+            cand("树哥", 138, 0.6, 0.3, 0.05),
+        ]);
+        let lv = by_name(&members, "吕树").expect("吕树");
+        assert!(lv.aliases.contains(&"树兄".to_string()), "{:?}", lv.aliases);
+        assert!(lv.aliases.contains(&"树哥".to_string()), "{:?}", lv.aliases);
+        assert_eq!(lv.mentions, 32150 + 817 + 138);
+    }
+
+    #[test]
+    fn a_nickname_two_names_could_claim_stays_apart() {
+        // 惊悚乐园: 觉哥 is 封不觉, but so is the pun 疯不觉 — two names end in
+        // 觉, and the rule does not guess between them.
+        let members = select(&[
+            cand("封不觉", 21104, 0.6, 0.1, 0.05),
+            cand("疯不觉", 460, 0.6, 0.1, 0.05),
+            cand("觉哥", 7638, 0.6, 0.3, 0.05),
+        ]);
+        assert!(by_name(&members, "觉哥").is_some());
+    }
+
+    #[test]
+    fn kinship_words_are_not_nicknames() {
+        // 大哥 is an elder brother or a gang boss, not a cut of 张大's name;
+        // and a two-char word like 大王 has no given-name char to be cut from.
+        let members = select(&[
+            cand("张大", 3000, 0.6, 0.1, 0.05),
+            cand("大哥", 900, 0.6, 0.3, 0.05),
+            cand("大王", 2600, 0.6, 0.1, 0.05),
+            cand("王哥", 300, 0.6, 0.3, 0.05),
+        ]);
+        assert!(by_name(&members, "大哥").is_some());
+        assert!(by_name(&members, "王哥").is_some());
+    }
+
+    #[test]
+    fn a_surname_and_a_title_do_not_make_one_person() {
+        // 冬日重现: 徐老师 is 徐芷若's mother. A surname form names a family, so
+        // it is never folded on the surname alone.
+        let members = select(&[
+            cand("徐芷若", 551, 0.6, 0.1, 0.05),
+            cand("徐老师", 185, 0.6, 0.3, 0.05),
+        ]);
+        assert!(by_name(&members, "徐老师").is_some());
     }
 }
 
