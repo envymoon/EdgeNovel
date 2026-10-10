@@ -8,6 +8,12 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
 
+/// 排雷 is parked until it is reliable enough to put in front of readers (see
+/// experiments/landmine-pipeline/RESULTS.md). The page and its Rust side stay
+/// intact and compiled; only the entry on the book page is withheld. Flip this
+/// to bring it back.
+const bool landmineEntryVisible = false;
+
 /// 排雷 — the pre-reading content scan.
 ///
 /// This page shows passages. It does not show a verdict, and there is no code

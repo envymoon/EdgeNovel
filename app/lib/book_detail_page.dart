@@ -695,20 +695,22 @@ class _BookDetailPageState extends State<BookDetailPage> {
               CastGraphPage(book: widget.book, settings: widget.settings),
             ),
           ),
-          _line(t),
-          _entry(
-            t,
-            icon: Icons.report_gmailerrorred_outlined,
-            title: '排雷原文',
-            subtitle: '查看候选原文',
-            onTap: () => _open(
-              LandminePage(
-                book: widget.book,
-                reader: widget.reader,
-                settings: widget.settings,
+          if (landmineEntryVisible) ...[
+            _line(t),
+            _entry(
+              t,
+              icon: Icons.report_gmailerrorred_outlined,
+              title: '排雷原文',
+              subtitle: '查看候选原文',
+              onTap: () => _open(
+                LandminePage(
+                  book: widget.book,
+                  reader: widget.reader,
+                  settings: widget.settings,
+                ),
               ),
             ),
-          ),
+          ],
           _line(t),
           _entry(
             t,
