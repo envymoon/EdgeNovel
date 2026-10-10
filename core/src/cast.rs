@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 10;
+pub const SCAN_VERSION: u32 = 11;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -1331,17 +1331,17 @@ struct Member {
     mentions: u32,
 }
 
-fn select(cands: &[(String, Stat)]) -> Vec<Member> {
-    let frequent: Vec<usize> = (0..cands.len())
-        .filter(|&i| cands[i].1.count >= MIN_MENTIONS)
-        .collect();
-    let island = |st: &Stat, standalone: u32| st.boundary * 5 >= standalone * 2;
-    // How much of a candidate's ink is really a longer candidate's (如雪
-    // inside 苏如雪). Those occurrences never touch a boundary — the surname
-    // is glued to their left — so the island test must not count them. Only a
-    // full-name-shaped island may claim ink: otherwise any frequent fragment
-    // (想继续, 请继续) quietly rescues the common word it ends with.
-    let overlap: Vec<u32> = frequent
+fn island(st: &Stat, standalone: u32) -> bool {
+    st.boundary * 5 >= standalone * 2
+}
+
+/// How much of each frequent candidate's ink is really a longer candidate's
+/// (如雪 inside 苏如雪). Those occurrences never touch a boundary — the surname
+/// is glued to their left — so the island test must not count them. Only a
+/// full-name-shaped island may claim ink: otherwise any frequent fragment
+/// (想继续, 请继续) quietly rescues the common word it ends with.
+fn overlaps(cands: &[(String, Stat)], frequent: &[usize]) -> Vec<u32> {
+    frequent
         .iter()
         .map(|&i| {
             frequent
@@ -1361,43 +1361,161 @@ fn select(cands: &[(String, Stat)]) -> Vec<Member> {
                 .max()
                 .unwrap_or(0)
         })
-        .collect();
+        .collect()
+}
 
+/// The tests [`select`] puts one frequent candidate through, kept apart so a
+/// probe can see which one decided — see [`verdicts`].
+struct Verdict {
+    standalone: u32,
+    variety: bool,
+    island: bool,
+    acted_upon: bool,
+}
+
+impl Verdict {
+    fn alive(&self) -> bool {
+        self.variety && self.island && self.acted_upon
+    }
+}
+
+fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
     // Accessor variety: a name is met in varied company on both sides; a
     // crossing fragment (树笑) is stuck to the same neighbour forever.
-    let alive: Vec<usize> = frequent
+    let need = if st.count >= 15 { 3 } else { 2 };
+    // Frequency and accessor variety admit any common word; what they
+    // cannot fake is being a referential island: standing against
+    // punctuation, a quote, or a paragraph start instead of glued into
+    // prose (一口气, 的同学, 就可以). Measured on 大王饶命 and
+    // 异兽迷城: real names 42–77%, common words at most 37% — even
+    // 继续, which anchors 继续道： constantly, stays at 35%.
+    let standalone = st.count.saturating_sub(over);
+    // A frequent word nobody ever acts upon is a gesture, not a person.
+    // Judged on standalone ink only: a given name living inside a full
+    // name (静春 in 齐静春, 烈阳 in 风烈阳) is rarely addressed alone, and
+    // killing it here would cost the full name its alias.
+    // Seeding from the cue means junk arrives pre-supplied with a few
+    // hits (对整个, 和真正), so the bar is a rate, not a single hit —
+    // and both halves must hold. Being acted upon says a person is
+    // meant; ending a clause says a whole referent is meant, not the
+    // head of a phrase. Junk fails one or the other every time (年轻
+    // 受事 5% but 右边界 1%; 今日 右边界 26% but 受事 1%), while every
+    // real name in the corpus clears 受事 ≥ 2.6% and 右边界 ≥ 3%.
+    let acted_upon = standalone < OBJECT_FLOOR
+        || (st.object * 50 >= standalone && st.boundary_r * 33 >= standalone);
+    Verdict {
+        standalone,
+        variety: st.count >= MIN_MENTIONS && st.left.len() >= need && st.right.len() >= need,
+        island: island(st, standalone) || strong_two_char_name(name, st, standalone),
+        acted_upon,
+    }
+}
+
+/// A full name the acted-upon test killed although one of its own fragments
+/// survived on ink this name lent it. 冬日重现's lead 张述桐 (18749 mentions)
+/// is nearly always a sentence subject — 张述桐想、张述桐看 — so it ends a
+/// clause 1.7% of the time and fails the right-edge half; meanwhile 张述 and
+/// 述桐 passed on the standalone remainder and split him into two people. The
+/// same shape killed 宋南山 (南山 lived) and 玄鉴仙族's 李渊平 (渊平 lived).
+///
+/// What separates these from the 名+动词 junk that test exists to stop (吕树看,
+/// 陈歌不, 周元感 — measured across the corpus, it is most of what it kills) is
+/// whose ink the fragment is. 张述桐 accounts for 100% of 张述 and 96% of 述桐;
+/// 陈歌看 accounts for 3% of 陈歌. A fragment that almost never appears outside
+/// one longer name is that name — the rule [`select`] already applies when
+/// folding 许不 into 许不令 — so the longer name, not the fragment, is the unit.
+/// The fragment must still pass every test on its own standalone ink, and the
+/// host must still pass variety and island on its full count.
+fn welded_host(cands: &[(String, Stat)], i: usize, v: &Verdict, survived: &[usize]) -> bool {
+    let (name, st) = &cands[i];
+    v.variety
+        && v.island
+        && !v.acted_upon
+        && full_name_shaped(name)
+        && survived.iter().any(|&s| {
+            let frag = cands[s].0.as_str();
+            s != i
+                && frag.chars().count() >= 2
+                && frag.chars().count() < name.chars().count()
+                && (name.starts_with(frag) || name.ends_with(frag))
+                && st.count * 4 >= cands[s].1.count * 3
+        })
+}
+
+/// Diagnostic: every frequent candidate with the raw counts and the verdict of
+/// each test in [`select`], so a threshold change can be judged across a
+/// corpus by who it kills and who it saves, not by one book.
+pub struct VerdictRow {
+    pub name: String,
+    pub count: u32,
+    pub standalone: u32,
+    pub boundary: u32,
+    pub boundary_r: u32,
+    pub object: u32,
+    pub full_name_shaped: bool,
+    pub variety: bool,
+    pub island: bool,
+    pub acted_upon: bool,
+}
+
+pub fn verdicts(text: &str, chapters: &[Chapter], upto: usize) -> Vec<VerdictRow> {
+    let n = upto.min(chapters.len());
+    let mut paras: Vec<(usize, &str)> = Vec::new();
+    for ch in chapters.iter().take(n) {
+        for line in text[ch.body_start..ch.span.end].split('\n') {
+            let line = line.trim();
+            if !line.is_empty() {
+                paras.push((ch.index, line));
+            }
+        }
+    }
+    let cands = candidates(&paras);
+    let frequent: Vec<usize> = (0..cands.len())
+        .filter(|&i| cands[i].1.count >= MIN_MENTIONS)
+        .collect();
+    let overlap = overlaps(&cands, &frequent);
+    frequent
         .iter()
         .zip(&overlap)
-        .filter(|&(&i, &over)| {
-            let st = &cands[i].1;
-            let need = if st.count >= 15 { 3 } else { 2 };
-            // Frequency and accessor variety admit any common word; what they
-            // cannot fake is being a referential island: standing against
-            // punctuation, a quote, or a paragraph start instead of glued into
-            // prose (一口气, 的同学, 就可以). Measured on 大王饶命 and
-            // 异兽迷城: real names 42–77%, common words at most 37% — even
-            // 继续, which anchors 继续道： constantly, stays at 35%.
-            let standalone = st.count.saturating_sub(over);
-            let ok = island(st, standalone) || strong_two_char_name(&cands[i].0, st, standalone);
-            // A frequent word nobody ever acts upon is a gesture, not a person.
-            // Judged on standalone ink only: a given name living inside a full
-            // name (静春 in 齐静春, 烈阳 in 风烈阳) is rarely addressed alone, and
-            // killing it here would cost the full name its alias.
-            // Seeding from the cue means junk arrives pre-supplied with a few
-            // hits (对整个, 和真正), so the bar is a rate, not a single hit —
-            // and both halves must hold. Being acted upon says a person is
-            // meant; ending a clause says a whole referent is meant, not the
-            // head of a phrase. Junk fails one or the other every time (年轻
-            // 受事 5% but 右边界 1%; 今日 右边界 26% but 受事 1%), while every
-            // real name in the corpus clears 受事 ≥ 2.6% and 右边界 ≥ 3%.
-            let acted_upon = standalone < OBJECT_FLOOR
-                || (st.object * 50 >= standalone && st.boundary_r * 33 >= standalone);
-            st.count >= MIN_MENTIONS
-                && st.left.len() >= need
-                && st.right.len() >= need
-                && ok
-                && acted_upon
+        .map(|(&i, &over)| {
+            let (name, st) = &cands[i];
+            let v = verdict(name, st, over);
+            VerdictRow {
+                name: name.clone(),
+                count: st.count,
+                standalone: v.standalone,
+                boundary: st.boundary,
+                boundary_r: st.boundary_r,
+                object: st.object,
+                full_name_shaped: full_name_shaped(name),
+                variety: v.variety,
+                island: v.island,
+                acted_upon: v.acted_upon,
+            }
         })
+        .collect()
+}
+
+fn select(cands: &[(String, Stat)]) -> Vec<Member> {
+    let frequent: Vec<usize> = (0..cands.len())
+        .filter(|&i| cands[i].1.count >= MIN_MENTIONS)
+        .collect();
+    let overlap = overlaps(cands, &frequent);
+    let verdicts: Vec<Verdict> = frequent
+        .iter()
+        .zip(&overlap)
+        .map(|(&i, &over)| verdict(&cands[i].0, &cands[i].1, over))
+        .collect();
+    let survived: Vec<usize> = frequent
+        .iter()
+        .zip(&verdicts)
+        .filter(|(_, v)| v.alive())
+        .map(|(&i, _)| i)
+        .collect();
+    let alive: Vec<usize> = frequent
+        .iter()
+        .zip(&verdicts)
+        .filter(|&(&i, v)| v.alive() || welded_host(cands, i, v, &survived))
         .map(|(&i, _)| i)
         .collect();
     // 吕树笑 out of 吕树笑道: an extension far rarer than the name it extends
@@ -1974,6 +2092,66 @@ mod tests {
             ..Stat::default()
         };
         assert!(!strong_two_char_name("张开", &prose_fragment, 1000));
+    }
+
+    /// A candidate with varied neighbours on both sides and the given rates,
+    /// as fractions of `count`.
+    fn cand(name: &str, count: u32, left: f32, right: f32, object: f32) -> (String, Stat) {
+        let pct = |f: f32| (count as f32 * f) as u32;
+        (
+            name.to_string(),
+            Stat {
+                count,
+                left: "，。「」".chars().collect(),
+                right: "看说想，".chars().collect(),
+                boundary: pct(left),
+                boundary_r: pct(right),
+                object: pct(object),
+                ..Stat::default()
+            },
+        )
+    }
+
+    fn by_name<'a>(members: &'a [Member], name: &str) -> Option<&'a Member> {
+        members.iter().find(|m| m.name == name)
+    }
+
+    #[test]
+    fn a_full_name_its_fragments_lean_on_is_not_lost() {
+        // 冬日重现, measured: 张述桐 almost never ends a clause (张述桐想、
+        // 张述桐看), so the right-edge test killed him while 张述 and 述桐
+        // lived on his ink and became two people.
+        let members = select(&[
+            cand("张述桐", 18749, 0.841, 0.017, 0.014),
+            cand("张述", 18753, 0.841, 0.0, 0.014),
+            // 述桐 stands alone 808 times, as a vocative.
+            ("述桐".to_string(), Stat {
+                count: 19557,
+                left: "，。「」".chars().collect(),
+                right: "看说想，".chars().collect(),
+                boundary: 430,
+                boundary_r: 625,
+                object: 54,
+                ..Stat::default()
+            }),
+        ]);
+        let zhang = by_name(&members, "张述桐").expect("张述桐 should be a person");
+        assert!(zhang.aliases.contains(&"述桐".to_string()), "{:?}", zhang.aliases);
+        assert!(zhang.aliases.contains(&"张述".to_string()), "{:?}", zhang.aliases);
+        assert!(by_name(&members, "述桐").is_none());
+        assert!(by_name(&members, "张述").is_none());
+    }
+
+    #[test]
+    fn a_name_with_a_verb_stuck_to_it_is_not_rescued() {
+        // 陈歌看 accounts for 3% of 陈歌: the verb is stuck to the name, not
+        // part of it. This is what the right-edge test exists to stop.
+        let members = select(&[
+            cand("陈歌", 28563, 0.6, 0.1, 0.05),
+            cand("陈歌看", 858, 0.838, 0.0, 0.029),
+        ]);
+        assert!(by_name(&members, "陈歌").is_some());
+        assert!(by_name(&members, "陈歌看").is_none());
     }
 }
 
