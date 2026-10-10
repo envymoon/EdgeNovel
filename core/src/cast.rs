@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 11;
+pub const SCAN_VERSION: u32 = 12;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -1043,10 +1043,11 @@ fn has_background(sent: &str) -> bool {
 /// Only three positions carry a bond, and everything else is dropped.
 /// `crowd` is how many of the cast share this sentence — direct address only
 /// speaks about a pair when the pair is alone in it.
+/// `pair` holds each member's name and aliases.
 fn bound_hints(
     sent: &str,
     present: &[&'static str],
-    names: &[&str],
+    pair: [&[&str]; 2],
     crowd: usize,
 ) -> Vec<&'static str> {
     present
@@ -1054,22 +1055,21 @@ fn bound_hints(
         .copied()
         .filter(|w| {
             sent.match_indices(w)
-                .any(|(s, _)| bound_here(sent, s, w, names, crowd))
+                .any(|(s, _)| bound_here(sent, s, w, pair, crowd))
         })
         .collect()
 }
 
-fn bound_here(sent: &str, s: usize, w: &str, names: &[&str], crowd: usize) -> bool {
+fn bound_here(sent: &str, s: usize, w: &str, pair: [&[&str]; 2], crowd: usize) -> bool {
     // A possessive hands the appellation to whoever owns it — 崔瀺的爷爷 is the
     // grandfather, not 崔瀺 — and Chinese drops the 的 freely (宁姚爹娘), so a
     // name sitting immediately to the left is a possessive too, not an
     // apposition. Either way it only speaks about the pair when a copula makes
     // the other member that person: 郑大风是杨老头的嫡传弟子.
-    if let Some(p) = possessive_before(sent, s) {
-        return copula_rescue(sent, p, names);
-    }
-    if let Some(n) = names.iter().find(|n| sent[..s].ends_with(*n)) {
-        return copula_rescue(sent, s - n.len(), names);
+    if possessive_before(sent, s).is_some()
+        || pair.iter().flat_map(|m| m.iter()).any(|n| sent[..s].ends_with(n))
+    {
+        return copula_rescue(sent, s, pair);
     }
     // Apposition (大徒弟刘羡阳) is deliberately not accepted. It does establish
     // that 刘羡阳 is a 徒弟 — but of 老姚, who is not in the pair. A role word
@@ -1098,7 +1098,7 @@ fn bound_here(sent: &str, s: usize, w: &str, names: &[&str], crowd: usize) -> bo
     // his own father, who is not in the cast at all, while 陈平安 is merely
     // mentioned. Read as address, that labelled the two of them 亲子.
     match sent[..s].rfind(['「', '“', '"']) {
-        Some(q) => !names.iter().any(|n| sent[q..].contains(n)),
+        Some(q) => !pair.iter().flat_map(|m| m.iter()).any(|n| sent[q..].contains(n)),
         None => true,
     }
 }
@@ -1117,20 +1117,120 @@ fn possessive_before(sent: &str, s: usize) -> Option<usize> {
     None
 }
 
-/// `<other member>是 … <owner>的<appellation>` — the copula makes the possessive
-/// a statement about the pair after all. Kept to the clause so a stray 是 from
-/// earlier narration cannot rescue an unrelated possessive.
-fn copula_rescue(sent: &str, p: usize, names: &[&str]) -> bool {
-    let head = &sent[..p];
-    let clause = match head.rfind(['，', ',', '：', '“', '「']) {
-        Some(i) => &head[i..],
+/// Words that may stand between a subject and its 是 without changing what the
+/// 是 says (裴钱终究是, 陈平安毕竟是). Negations stay out — 宋集薪从来不是我的朋友
+/// denies the bond — and so does every verb: in 张述桐知道是…路青怜父亲 the 是
+/// belongs to what he knows, not to him.
+const COPULA_ADVERBS: &[&str] = &[
+    "终究", "毕竟", "其实", "确实", "的确", "本来", "本身", "原本", "原来", "果然", "竟然",
+    "居然", "当然", "自然", "已经", "早就", "早已", "依然", "仍然", "显然", "明显", "分明",
+    "好像", "似乎", "大概", "可能", "肯定", "一定", "必然", "好歹", "总归", "应该", "也", "又",
+    "就", "便", "才", "正", "都", "还", "倒", "却", "可", "真", "仍", "本", "算", "乃", "会",
+    "能",
+];
+
+/// Does `text` end with one of `names`, bare or under a courtesy title or a
+/// nickname suffix (郗菁大人, 红鸾姐)? Either way it is that person.
+fn ends_with_name(text: &str, names: &[&str]) -> bool {
+    let bare = |t: &str| names.iter().any(|n| t.ends_with(n));
+    bare(text)
+        || TITLES
+            .iter()
+            .chain(KIN_SUFFIXES)
+            .any(|s| text.strip_suffix(s).is_some_and(bare))
+}
+
+/// Pronouns that may own the appellation in place of the other member's name:
+/// 高阳是他最好的朋友 said of 王子凯, 陈平安其实是我的小师叔 said by 李槐.
+/// Plurals (他们) own it jointly with people outside the pair.
+const COPULA_PRONOUNS: &[&str] = &["自己", "他", "她", "我", "你"];
+
+/// How much may sit between the owner and the appellation: 的 plus modifiers,
+/// as in 他最好的也是唯一的朋友.
+const OWNER_TAIL: usize = 8;
+
+/// `<one member>是<the other>的<appellation>` — the copula makes the possessive
+/// a statement about the pair after all: 郑大风是杨老头的嫡传弟子. `s` is where
+/// the appellation starts.
+///
+/// Each part is checked, because a 是 anywhere in the clause used to do: 冬日
+/// 重现 labelled both heroines 亲子 off 路青怜是怎么说服了她的奶奶 and 张述桐
+/// 知道是…路青怜父亲. So, inside the clause:
+///   · right before the 是, give or take an adverb, stands one member;
+///   · right after it stands the owner — the other member by name (你李槐 is
+///     still 李槐), or a pronoun standing for them — not 圈子 or 龙泉剑宗;
+///   · from the owner to the appellation there is only a short 的 phrase.
+///
+/// A pronoun is taken on trust. It is right far more often than not (高阳是他
+/// 最好的朋友, 陈平安其实是我的小师叔); the miss it lets through is 路青怜是他的
+/// 亲生女儿, where 他 is her father — one hint, which [`relation::from_hints`]
+/// will not label on alone.
+fn copula_rescue(sent: &str, s: usize, pair: [&[&str]; 2]) -> bool {
+    let head = &sent[..s];
+    let clause = match head.rfind(|c: char| "，,。！？!?：:；;「」“”\"、—".contains(c)) {
+        Some(i) => &head[i + head[i..].chars().next().map_or(0, char::len_utf8)..],
         None => head,
     };
-    names.iter().any(|n| {
-        clause
-            .match_indices(n)
-            .any(|(i, _)| clause[i + n.len()..].contains('是'))
+    clause.match_indices('是').any(|(i, _)| {
+        let after = &clause[i + '是'.len_utf8()..];
+        let Some((owner, rest)) = owner_after(after, pair) else {
+            return false;
+        };
+        let tail = rest.chars().count();
+        if tail > OWNER_TAIL || (tail > 0 && !rest.contains('的')) {
+            return false;
+        }
+        // A named owner needs the other member as subject; a pronoun owner
+        // needs either one, and stands for the other.
+        let is_subject = |sub: &str| match owner {
+            Some(m) => ends_with_name(sub, pair[1 - m]),
+            None => pair.iter().any(|names| ends_with_name(sub, names)),
+        };
+        // Peel adverbs one at a time, checking for the name first so one
+        // ending in an adverb's character (李正) is not eaten.
+        let mut subject = &clause[..i];
+        loop {
+            if is_subject(subject) {
+                return true;
+            }
+            match COPULA_ADVERBS.iter().find(|a| subject.ends_with(*a)) {
+                Some(a) => subject = &subject[..subject.len() - a.len()],
+                None => return false,
+            }
+        }
     })
+}
+
+/// The owner standing right after a 是: `Some(member)` for a name (optionally
+/// introduced by 你/我), `None` for a pronoun; and what follows it.
+fn owner_after<'a>(after: &'a str, pair: [&[&str]; 2]) -> Option<(Option<usize>, &'a str)> {
+    let named = |t: &'a str| {
+        (0..2)
+            .flat_map(|m| pair[m].iter().map(move |n| (m, *n)))
+            .filter(|(_, n)| t.starts_with(n))
+            .max_by_key(|(_, n)| n.len())
+            .map(|(m, n)| (Some(m), &t[n.len()..]))
+    };
+    if let Some(hit) = named(after) {
+        return Some(hit);
+    }
+    // 是你陈平安的, 是小师弟陈平安的: a pronoun or a title set before the name.
+    for p in ["你", "我"] {
+        if let Some(hit) = after.strip_prefix(p).and_then(named) {
+            return Some(hit);
+        }
+    }
+    let titled = after.strip_prefix(['小', '大']).unwrap_or(after);
+    if let Some(hit) = APPELLATION
+        .iter()
+        .find_map(|t| titled.strip_prefix(t))
+        .and_then(named)
+    {
+        return Some(hit);
+    }
+    let p = COPULA_PRONOUNS.iter().find(|p| after.starts_with(*p))?;
+    let rest = &after[p.len()..];
+    (!rest.starts_with('们')).then_some((None, rest))
 }
 
 /// The raw candidate table, for probes: (candidate, count, anchored, boundary).
@@ -1828,12 +1928,13 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
                     let hinted = if present.is_empty() {
                         Vec::new()
                     } else {
-                        let mut names: Vec<&str> = Vec::new();
-                        for &pid in &[pa, pb] {
-                            names.push(members[pid].name.as_str());
-                            names.extend(members[pid].aliases.iter().map(String::as_str));
-                        }
-                        bound_hints(sent, &present, &names, pids.len())
+                        let names = |pid: usize| -> Vec<&str> {
+                            std::iter::once(members[pid].name.as_str())
+                                .chain(members[pid].aliases.iter().map(String::as_str))
+                                .collect()
+                        };
+                        let (na, nb) = (names(pa), names(pb));
+                        bound_hints(sent, &present, [&na, &nb], pids.len())
                     };
                     let acc = edges.entry((pa, pb)).or_default();
                     acc.weight += 2;
@@ -2267,13 +2368,14 @@ mod binding {
         bind_n(sent, names, 2)
     }
 
+    /// `names` is the pair, one name each.
     fn bind_n(sent: &str, names: &[&str], crowd: usize) -> Vec<&'static str> {
         let present: Vec<&'static str> = APPELLATION
             .iter()
             .copied()
             .filter(|w| sent.contains(w))
             .collect();
-        bound_hints(sent, &present, names, crowd)
+        bound_hints(sent, &present, [&names[..1], &names[1..]], crowd)
     }
 
     #[test]
@@ -2299,6 +2401,62 @@ mod binding {
         // about the two of them, and this is a correct 师徒.
         let s = "郑大风是杨老头的嫡传弟子！";
         assert_eq!(bind(s, &["郑大风", "杨老头"]), vec!["弟子"]);
+    }
+
+    #[test]
+    fn an_adverb_may_sit_between_the_subject_and_its_copula() {
+        // 剑来 — true 师徒 statements with 终究 and a title before the owner.
+        let s = "小姑娘裴钱终究是陈平安的拳法弟子";
+        assert_eq!(bind(s, &["陈平安", "裴钱"]), vec!["弟子"]);
+        let s = "而曹晴朗又是小师弟陈平安的嫡传弟子。";
+        assert_eq!(bind(s, &["陈平安", "曹晴朗"]), vec!["弟子"]);
+    }
+
+    #[test]
+    fn a_titled_subject_is_still_that_person() {
+        // 元尊 — 郗菁 is 苍渊's second disciple, said under her title.
+        let s = "郗菁大人是苍渊大尊所收的二弟子，大弟子是颛烛大人";
+        assert_eq!(bind(s, &["郗菁", "苍渊"]), vec!["弟子"]);
+    }
+
+    #[test]
+    fn a_pronoun_owner_stands_for_the_other_member() {
+        // 异兽迷城 — 他 is 王子凯. Dropping pronoun owners lost these, the 朋友
+        // label with them, and 王子凯 slapping 高阳's shoulder became romance.
+        let s = "王子凯曾不止一次强调过：高阳是他最好的也是唯一的朋友。";
+        assert_eq!(bind(s, &["高阳", "王子凯"]), vec!["朋友"]);
+        let s = "“好朋友本来就可以不止一个呀，你看，王子凯也是我的好朋友";
+        assert!(bind(s, &["高阳", "王子凯"]).contains(&"朋友"));
+        // The price, pinned so it stays visible: here 他 is 路青怜's father.
+        let s = "张述桐一直想不通那个男人为什么要这么做，路青怜是他的亲生女儿";
+        assert_eq!(bind(s, &["张述桐", "路青怜"]), vec!["女儿"]);
+    }
+
+    #[test]
+    fn a_copula_must_stand_right_before_the_owner() {
+        // 冬日重现 — the 是 of 是怎么 is no copula; this and the 父亲 below
+        // labelled both heroines 亲子.
+        let s = "张述桐其实一直好奇路青怜是怎么说服了她的奶奶";
+        assert!(bind(s, &["张述桐", "路青怜"]).is_empty());
+        // 冬日重现 — 圈子 owns the 主人, not 张述桐.
+        let s = "顾秋绵当然是圈子的主人，她们冷场的时候，张述桐也正好走回座位上";
+        assert!(bind(s, &["张述桐", "顾秋绵"]).is_empty());
+    }
+
+    #[test]
+    fn the_owner_must_be_the_other_member() {
+        // 剑来 — the 弟子 is 齐先生's, and 崔东山 is only the one being contrasted.
+        let s = "崔东山怎么样，我管不着，但是你李槐是齐先生的弟子";
+        assert!(bind(s, &["崔东山", "李槐"]).is_empty());
+        // 冬日重现 — 是 belongs to what 张述桐 knows, not to 张述桐.
+        let s = "张述桐知道是另一具无名的棺材里装着路青怜父亲的骨灰";
+        assert!(bind(s, &["张述桐", "路青怜"]).is_empty());
+    }
+
+    #[test]
+    fn a_denied_bond_is_not_a_bond() {
+        let s = "这句话的意思是——张述桐依然不是路青怜的对手，特指体能。";
+        assert!(bind(s, &["张述桐", "路青怜"]).is_empty());
     }
 
     #[test]
