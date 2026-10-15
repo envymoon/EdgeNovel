@@ -1410,6 +1410,7 @@ mod tests {
     /// The whole of 章间立绘 on a real book and the real engine, in a library of
     /// its own: plan, draw, keep, and a second run that finds nothing to do.
     /// `PLATE_BOOK=<txt> cargo test --release --lib plates_end_to_end -- --ignored --nocapture`
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn plates_end_to_end() {
@@ -1452,6 +1453,7 @@ mod tests {
     /// Draws every cover-only tag and every scene once, on a girl (scenery for
     /// places and skies), into a folder, to look at before tags go in:
     /// `COVER_OUT=<dir> cargo test --release --lib draws_cover_tags -- --ignored --nocapture`
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn draws_cover_tags() {
@@ -1495,6 +1497,7 @@ mod tests {
     /// Draws a book's first plates into a folder, to look at:
     /// `PLATE_BOOK=<txt> PLATE_OUT=<dir> [PLATE_EVERY=50] [PLATE_MAX=12]
     ///  cargo test --release --lib draws_book_plates -- --ignored --nocapture`
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn draws_book_plates() {
