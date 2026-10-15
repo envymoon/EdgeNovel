@@ -1,0 +1,68 @@
+# iOS has no Mac of its own here: every push to the ios branch builds the app
+# on a GitHub macOS runner, photographs it running in the simulator, and leaves
+# an unsigned .ipa to sign and sideload from Windows.
+#
+# Logs and artifacts of this public repo are public: only build from what is
+# in the repo, never a user's books.
+name: iOS
+
+on:
+  push:
+    branches: [ios]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.5
+          channel: stable
+          cache: true
+
+      - name: Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - run: flutter pub get
+
+      - name: Build for the simulator
+        run: flutter build ios --simulator --debug
+
+      - name: Screenshot in the simulator
+        run: |
+          mkdir -p ../shots
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          print(next(x["udid"] for r in sorted(d, reverse=True) for x in d[r] if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/ios/iphonesimulator/Runner.app
+          xcrun simctl launch "$UDID" com.novel.novel
+          sleep 30
+          xcrun simctl io "$UDID" screenshot ../shots/launch.png
+          xcrun simctl spawn "$UDID" log show --last 2m --predicate 'process == "Runner"' > ../shots/runner.log || true
+
+      - name: Build the unsigned ipa
+        run: |
+          flutter build ios --release --no-codesign
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qry ../Zhiyue-iOS-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-build
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            shots/
+            Zhiyue-iOS-unsigned.ipa
