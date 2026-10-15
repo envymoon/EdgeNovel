@@ -2642,7 +2642,30 @@ mod engine_bench {
         start(SUMMARY_CONTEXT);
         summary(&excerpts[1], SUMMARY_CONTEXT);
         memory("重启后");
+
+        // The app stops the engine whenever it leaves the screen, often with a
+        // request still running. That stop once never ended, and every AI call
+        // after it waited behind it.
+        start(FULL_CONTEXT);
+        let body = summary_request(&long);
+        let request =
+            std::thread::spawn(move || inference_backend().chat_completion(&body, 300));
+        std::thread::sleep(Duration::from_secs(2));
+        let t = Instant::now();
         stop_ai();
+        let stopped = t.elapsed().as_secs_f64();
+        let answer = request.join().unwrap();
+        println!(
+            "[请求中停止] {stopped:.1} 秒 · 请求得到 {}",
+            match &answer {
+                Ok((status, _)) => status.to_string(),
+                Err(e) => e.clone(),
+            }
+        );
+        // The request's own timeout is what used to end it.
+        assert!(stopped < 120.0);
+        assert!(!matches!(answer, Ok((200, _))));
+        assert!(!health(PORT));
         memory("结束");
     }
 }

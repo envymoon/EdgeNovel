@@ -12,7 +12,9 @@ set(CMAKE_MACOSX_BUNDLE OFF)
 
 # Same upstream revision as the validated Windows b9957 engine and the Android
 # one. The patch lets several servers share the process, each stopped by port,
-# and makes a model that gets no context fail its load instead of crashing.
+# answers a request still waiting when its server stops (or the stop never
+# ends), and makes a model that gets no context fail its load instead of
+# crashing.
 set(EDGE_LLAMA_COMMIT c4ae9a88f8884ee5a155c8349ace9ea31a58007f)
 include(FetchContent)
 FetchContent_Declare(edge_llama

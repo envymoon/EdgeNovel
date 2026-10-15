@@ -68,3 +68,94 @@
              SRV_ERR("failed to load model, '%s'\n", params_base.model.path.c_str());
              return false;
          }
+@@ -3923,6 +3925,10 @@
+ 
+ void server_context::terminate() {
+     impl->queue_tasks.terminate();
++    // A request still waiting would wait for good, and the HTTP server waits
++    // for it before it stops: in an app the engine never ends, and nothing
++    // after it starts.
++    impl->queue_results.fail_waiting();
+ }
+ 
+ llama_context * server_context::get_llama_context() const {
+--- a/tools/server/server-queue.h
++++ b/tools/server/server-queue.h
+@@ -120,6 +120,9 @@
+ private:
+     bool running = true;
+ 
++    // set by fail_waiting(): the server is going away and answers no more tasks
++    bool stopping = false;
++
+     // for keeping track of all tasks waiting for the result
+     std::unordered_set<int> waiting_task_ids;
+ 
+@@ -160,6 +163,11 @@
+ 
+     // terminate the waiting loop
+     void terminate();
++
++    // answer every task waiting now, and every one that waits from now on,
++    // with an error: a server stopped without its process (one thread of an
++    // app) must not leave a request waiting for a result that never comes
++    void fail_waiting();
+ };
+ 
+ // RAII wrapper to make working with server_queue and server_response easier
+--- a/tools/server/server-queue.cpp
++++ b/tools/server/server-queue.cpp
+@@ -225,11 +225,24 @@
+ // server_response
+ //
+ 
++// the answer to a task the server will never process (see fail_waiting)
++static server_task_result_ptr stopping_error(int id_task) {
++    auto res = std::make_unique<server_task_result_error>();
++    res->id       = id_task;
++    res->err_type = ERROR_TYPE_UNAVAILABLE;
++    res->err_msg  = "server is stopping";
++    return res;
++}
++
+ void server_response::add_waiting_task_id(int id_task) {
+     RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
+ 
+     std::unique_lock<std::mutex> lock(mutex_results);
+     waiting_task_ids.insert(id_task);
++    if (stopping) {
++        queue_results.emplace_back(stopping_error(id_task));
++        condition_results.notify_all();
++    }
+ }
+ 
+ void server_response::add_waiting_task_ids(const std::unordered_set<int> & id_tasks) {
+@@ -238,6 +251,12 @@
+     for (const auto & id_task : id_tasks) {
+         RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
+         waiting_task_ids.insert(id_task);
++        if (stopping) {
++            queue_results.emplace_back(stopping_error(id_task));
++        }
++    }
++    if (stopping) {
++        condition_results.notify_all();
+     }
+ }
+ 
+@@ -347,6 +366,15 @@
+     condition_results.notify_all();
+ }
+ 
++void server_response::fail_waiting() {
++    std::unique_lock<std::mutex> lock(mutex_results);
++    stopping = true;
++    for (const auto & id_task : waiting_task_ids) {
++        queue_results.emplace_back(stopping_error(id_task));
++    }
++    condition_results.notify_all();
++}
++
+ //
+ // server_response_reader
+ //
