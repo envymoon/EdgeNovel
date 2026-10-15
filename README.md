@@ -1,9 +1,9 @@
-# EdgeNovel
+# Zhiyue 挚阅
 
 [简体中文](README_ZH.md) | English
 
 <p align="center">
-  <img src="docs/assets/novel-icon.ico" width="112" alt="Novel app icon">
+  <img src="docs/assets/novel-icon.ico" width="112" alt="Zhiyue app icon">
 </p>
 
 <p align="center"><strong>A quieter way to read Chinese web fiction.</strong><br>Local AI, searchable stories, and reading notes that stay with you.</p>
@@ -85,6 +85,7 @@ The interface can be switched to English in the current source, but an English i
 - Chapter overviews, a whole-book pacing curve (also under the reader), and full-text semantic search
 - Reading statistics computed from the reader's own reading log
 - AI covers drawn by an on-device image model, and illustrations placed between chapters
+- Read-aloud on Windows with an on-device Qwen3-TTS voice: play while it speaks, or prepare chapters ahead, at an adjustable pace
 - Optional Youshu (优书网) reviews, fetched only when the reader opens them
 - Themes, accent colors, backgrounds, interface fonts, and a Chinese/English interface
 - A snapshot of the library and settings before a new build first opens them
@@ -121,7 +122,7 @@ Actual performance depends on the processor, available memory, operating-system 
 
 ## Edge-first Workload Design
 
-Edge computing is not only about placing a model on the device. Novel continuously adjusts **when** and **how much** work is done so reading stays responsive:
+Edge computing is not only about placing a model on the device. Zhiyue continuously adjusts **when** and **how much** work is done so reading stays responsive:
 
 - It combines charging state, battery level, thermal state, idle time, memory pressure, and task priority before starting a slice of work.
 - **Quiet idle** works in small slices, yields to the reader, and unloads the model between longer intervals when possible.
@@ -137,8 +138,8 @@ Windows and Android use separate GitHub Releases. Their packages and release tag
 
 ### Windows
 
-**Release tag:** [`windows-v1.1.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.1.0)  
-**Download:** `Novel-Windows-x64-1.1.0.zip`
+**Release tag:** [`windows-v1.2.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0)  
+**Download:** `Zhiyue-Windows-x64-1.2.0.zip`
 
 Windows is currently the most complete version. The `novel.exe` file must remain beside the bundled `data` directory and DLL files; copying or downloading the executable alone will not work.
 
@@ -164,7 +165,7 @@ See the [release guide](docs/RELEASING.md) for platform-specific packaging rules
 - `app/`: Flutter UI, platform projects, application state, and shared mobile layer
 - `app/rust/`: Rust data and AI bridge used by the application
 - `core/`: novel parsing, cast, relationship, romance, and diagnostic algorithms
-- `tts-server/`: optional text-to-speech service
+- `tts-server/`: optional remote text-to-speech service
 - `app/docs/`: mobile migration and implementation notes
 
 ## Current Limitations

@@ -27,10 +27,9 @@ abstract final class AppPlatformSupport {
   /// then mobile AI is intentionally foreground-only.
   static bool get supportsBackgroundAi => isDesktop;
 
-  /// 听书 is hidden until it is worth using: the voices it can run today are
-  /// too poor to read a book by. The code and any installed voice stay; this
-  /// brings every entry back.
-  static const hasReadAloud = false;
+  /// 听书 runs Qwen3-TTS locally, and its engine is built for Windows only so
+  /// far. Elsewhere every entry stays hidden.
+  static bool get hasReadAloud => defaultTargetPlatform == TargetPlatform.windows;
 
   static bool isMobilePlatform(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.iOS;

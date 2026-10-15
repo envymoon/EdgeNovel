@@ -15,12 +15,14 @@ import 'tts_text.dart';
 ///
 /// Synthesis happens sentence by sentence, a few sentences ahead of the voice,
 /// so the wait is paid once at the start and never again mid-chapter. Where that
-/// synthesis happens is the user's choice: on a server they run (the good case —
-/// see `tts_remote.dart`) or on the small engine bundled with the app.
+/// synthesis happens is the user's choice: on a server they run (see
+/// `tts_remote.dart`) or on this machine's own engine (Qwen3-TTS, see
+/// `app/rust/src/api/tts.rs`).
 ///
-/// Nothing is kept. Audio lives in memory until it has been spoken and then it
-/// is gone; the only thing on disk is one scratch file per in-flight clip,
-/// because the audio backends want a path.
+/// Nothing is kept here. Audio lives in memory until it has been spoken and
+/// then it is gone; the only thing on disk is one scratch file per in-flight
+/// clip, because the audio backends want a path. Sentences spoken ahead of time
+/// (`tts_prepare.dart`) come back from the local engine's own cache.
 class TtsController extends ChangeNotifier {
   final ReaderState reader;
   final ReadingSettings settings;
@@ -191,6 +193,15 @@ class TtsController extends ChangeNotifier {
     }
   }
 
+  /// Pace changed. The local engine has no pace of its own — playback is
+  /// stretched instead — so nothing buffered goes stale; a server is asked for
+  /// the pace, and what it already made is made at the old one.
+  Future<void> onSpeedChanged() async {
+    if (usingRemote) return onVoiceOrSpeedChanged();
+    await _player?.setPlaybackRate(speed);
+    notifyListeners();
+  }
+
   /// Voice, pace or server changed: what is buffered was made with the old
   /// settings, so throw it away and re-synthesize from where we are.
   Future<void> onVoiceOrSpeedChanged() async {
@@ -232,11 +243,7 @@ class TtsController extends ChangeNotifier {
         speed: settings.ttsSpeed,
       );
     }
-    return _localSpeech.synthesize(
-      text: text,
-      speed: settings.ttsSpeed,
-      voice: settings.ttsLocalVoice,
-    );
+    return _localSpeech.synthesize(text: text, voice: settings.ttsLocalVoice);
   }
 
   /// Keeps the look-ahead window full, two sentences in flight at a time. Runs
@@ -375,7 +382,9 @@ class TtsController extends ChangeNotifier {
     final player = _player;
     if (player == null) return;
     final complete = player.onPlayerComplete.first;
-    await player.play(DeviceFileSource(path));
+    await player.setSource(DeviceFileSource(path));
+    await player.setPlaybackRate(usingRemote ? 1.0 : speed);
+    await player.resume();
     if (gen != _gen) return;
     await Future.any([complete, if (_stop != null) _stop!.future]);
   }

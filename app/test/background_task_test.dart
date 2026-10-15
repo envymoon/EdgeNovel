@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:novel/analysis_run_card.dart';
+import 'package:novel/background_task_bar.dart';
 import 'package:novel/reader_state.dart';
 import 'package:novel/theme.dart';
+import 'package:novel/tts_prepare.dart';
 
 void main() {
   test('time left rounds up and never reads zero while work remains', () {
@@ -94,6 +96,42 @@ void main() {
     expect(find.textContaining('引擎返回 500'), findsOneWidget);
     await tester.tap(find.text('重试'));
     expect(pressed, ['start']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('提前合成 gets the task bar and its progress', (tester) async {
+    await phoneWidth(tester);
+    final reader = ReaderState();
+    final job = TtsPrepare.instance
+      ..bookId = 1
+      ..title = '诡秘之主'
+      ..chapterCount = 5
+      ..total = 800
+      ..done = 200
+      ..remaining = const Duration(minutes: 6);
+    addTearDown(job.cancel);
+    expect(BackgroundTaskBar.shows(reader), isTrue);
+
+    final opened = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BackgroundTaskBar(
+            reader: reader,
+            settings: ReadingSettings(),
+            onOpen: () => opened.add('queue'),
+            onOpenSpeech: () => opened.add('speech'),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('《诡秘之主》提前合成 5 章 · 200 / 800 · 约 6 分钟'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, 0.25);
+    await tester.tap(find.byType(TaskLine));
+    expect(opened, ['speech']);
     expect(tester.takeException(), isNull);
   });
 }

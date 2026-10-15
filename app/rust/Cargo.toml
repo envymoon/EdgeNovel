@@ -12,11 +12,6 @@ novel-core = { path = "../../core" }
 # Talking to the local llama-server. The HTTP itself is a hand-rolled loopback
 # TcpStream client (no TLS, no proxy — nothing a full HTTP crate is for).
 serde_json = "1"
-# Unpacking the sherpa-onnx (TTS) downloads, which ship as .tar.bz2. bzip2-rs is
-# a pure-Rust, decode-only bzip2 — no C toolchain, and far faster than doing the
-# ~160 MB model decompress on the Dart isolate.
-tar = "0.4"
-bzip2-rs = "0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"

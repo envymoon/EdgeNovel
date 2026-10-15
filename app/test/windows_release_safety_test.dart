@@ -5,15 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('Windows branding keeps the legacy persistent-data identity', () {
     final resource = File('windows/runner/Runner.rc').readAsStringSync();
-    final runner = File('windows/runner/main.cpp').readAsStringSync();
 
     // path_provider_windows derives the AppData folder from CompanyName and
     // ProductName (%APPDATA%\com.novel\novel). Changing either makes an
-    // existing library appear to disappear.
+    // existing library appear to disappear. The window title and
+    // FileDescription are only what the user sees, so they carry the name.
     expect(resource, contains('VALUE "CompanyName", "com.novel"'));
     expect(resource, contains('VALUE "ProductName", "novel"'));
-    expect(resource, contains('VALUE "FileDescription", "novel"'));
-    expect(runner, contains('window.Create(L"novel"'));
   });
 
   test('Android keeps the application id its data is stored under', () {

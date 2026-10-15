@@ -41,7 +41,7 @@ class F5Backend:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         if self.device == "cpu":
             print("警告：没检测到 CUDA，F5 在 CPU 上合成一句要好几秒，"
-                  "听起来会一直在缓冲。这台机器没有显卡的话建议改用 kokoro 后端。",
+                  "听起来会一直在缓冲。这台机器没有显卡的话建议改用 edge 后端。",
                   flush=True)
         self._tts = F5TTS(device=self.device)
         self._dir = Path(voices_dir)

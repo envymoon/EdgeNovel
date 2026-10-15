@@ -249,8 +249,9 @@ class ReadingSettings extends ChangeNotifier {
   /// the server's business, not ours.
   String ttsServerVoice = '';
 
-  /// Speaker id for the bundled local engine, used when [ttsRemote] is off.
-  int ttsLocalVoice = 49;
+  /// Speaker of the local engine, by the model's own name for it (see
+  /// `localVoices`), used when [ttsRemote] is off.
+  String ttsLocalVoice = 'uncle_fu';
 
   TtsServer get ttsServer => TtsServer(
     baseUrl: ttsServerUrl,
@@ -293,7 +294,7 @@ class ReadingSettings extends ChangeNotifier {
     s.pageWidth = p.getDouble('pageWidth') ?? s.pageWidth;
     s.wheelScale = p.getDouble('wheelScale') ?? s.wheelScale;
     s.ttsSpeed = p.getDouble('ttsSpeed') ?? s.ttsSpeed;
-    s.ttsLocalVoice = p.getInt('ttsVoice') ?? s.ttsLocalVoice;
+    s.ttsLocalVoice = p.getString('ttsLocalSpeaker') ?? s.ttsLocalVoice;
     s.ttsServerUrl = p.getString('ttsServerUrl') ?? s.ttsServerUrl;
     s.ttsServerKey = p.getString('ttsServerKey') ?? s.ttsServerKey;
     s.ttsServerModel = p.getString('ttsServerModel') ?? s.ttsServerModel;
@@ -324,7 +325,7 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('pageWidth', pageWidth);
     p.setDouble('wheelScale', wheelScale);
     p.setDouble('ttsSpeed', ttsSpeed);
-    p.setInt('ttsVoice', ttsLocalVoice);
+    p.setString('ttsLocalSpeaker', ttsLocalVoice);
     p.setBool('ttsRemote', ttsRemote);
     p.setString('ttsServerUrl', ttsServerUrl);
     p.setString('ttsServerKey', ttsServerKey);
@@ -333,8 +334,8 @@ class ReadingSettings extends ChangeNotifier {
     p.setString('appLanguage', language.code);
   }
 
-  void setTtsLocalVoice(int sid) {
-    ttsLocalVoice = sid;
+  void setTtsLocalVoice(String id) {
+    ttsLocalVoice = id;
     notifyListeners();
     _persist();
   }

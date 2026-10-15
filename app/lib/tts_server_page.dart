@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
+import 'background_task_bar.dart';
+import 'bloom.dart';
+import 'platform_services.dart';
 import 'theme.dart';
+import 'tts_prepare.dart';
 import 'tts_remote.dart';
 import 'tts_text.dart';
 
-/// Where read-aloud gets its voice from.
-///
-/// The honest framing, which this page states rather than hides: a phone cannot
-/// produce speech worth listening to for hours. So listening is set up as a link
-/// to a machine that can — one the user already owns and can leave running — and
-/// the bundled engine stays only as the thing that works with no setup at all.
+/// Where read-aloud gets its voice from: this machine's own engine, or a
+/// server the user runs elsewhere — and which voice, at what pace.
 class TtsServerPage extends StatefulWidget {
   final ReadingSettings settings;
   const TtsServerPage({super.key, required this.settings});
@@ -35,14 +35,20 @@ class _TtsServerPageState extends State<TtsServerPage> {
   String? _status;
   bool _testing = false;
 
+  /// Bytes of speech prepared ahead and waiting in the cache.
+  int _cached = 0;
+
   @override
   void initState() {
     super.initState();
     if (widget.settings.ttsServerUrl.isNotEmpty) _loadVoices();
+    TtsPrepare.instance.addListener(_loadCached);
+    _loadCached();
   }
 
   @override
   void dispose() {
+    TtsPrepare.instance.removeListener(_loadCached);
     _client.close();
     _url.dispose();
     _key.dispose();
@@ -57,6 +63,24 @@ class _TtsServerPageState extends State<TtsServerPage> {
     model: _model.text,
     voice: _voice.text,
   );
+
+  Future<void> _loadCached() async {
+    int n;
+    try {
+      n = await AppServices.instance.localSpeech.cacheBytes();
+    } catch (_) {
+      n = 0;
+    }
+    if (mounted) setState(() => _cached = n);
+  }
+
+  Future<void> _clearCached() async {
+    TtsPrepare.instance.cancel();
+    try {
+      await AppServices.instance.localSpeech.clearCache();
+    } catch (_) {}
+    await _loadCached();
+  }
 
   Future<void> _loadVoices() async {
     final vs = await _client.voices(widget.settings.ttsServer);
@@ -117,7 +141,7 @@ class _TtsServerPageState extends State<TtsServerPage> {
                 style: TextStyle(color: t.text, fontSize: 15),
               ),
               subtitle: Text(
-                widget.settings.ttsRemote ? '朗读走远程合成' : '朗读走本机 Kokoro',
+                widget.settings.ttsRemote ? '朗读走远程合成' : '朗读走本机',
                 style: TextStyle(color: t.muted, fontSize: 12),
               ),
             ),
@@ -178,12 +202,14 @@ class _TtsServerPageState extends State<TtsServerPage> {
                   for (final v in localVoices)
                     ChoiceChip(
                       label: Text(v.label),
-                      selected: widget.settings.ttsLocalVoice == v.sid,
-                      onSelected: (_) =>
-                          widget.settings.setTtsLocalVoice(v.sid),
+                      selected: widget.settings.ttsLocalVoice == v.id,
+                      onSelected: (_) => widget.settings.setTtsLocalVoice(v.id),
                     ),
                 ],
               ),
+            if (!widget.settings.ttsRemote &&
+                (TtsPrepare.instance.running || _cached > 0))
+              _cacheRow(t),
             const SizedBox(height: 24),
             Text(
               '语速 · ${widget.settings.ttsSpeed.toStringAsFixed(2)}×',
@@ -200,6 +226,38 @@ class _TtsServerPageState extends State<TtsServerPage> {
           ],
         ),
       ),
+    );
+  }
+
+  /// What is prepared, how far a running job has got, and the way to stop it
+  /// or let the space go.
+  Widget _cacheRow(ReadingTheme t) {
+    final job = TtsPrepare.instance;
+    final mb = (_cached / (1 << 20)).round();
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: switch (job.activity) {
+        final a? => BloomProgress(
+          label: describeActivity(a),
+          value: a.fraction,
+          detail: '已合成 · $mb MB',
+          color: t.muted,
+          textColor: t.text,
+          trailing: TextButton(onPressed: job.cancel, child: const Text('停止')),
+        ),
+        null => Row(
+          children: [
+            Expanded(
+              child: Text(
+                '已合成 · $mb MB',
+                style: TextStyle(color: t.muted, fontSize: 13),
+              ),
+            ),
+            if (_cached > 0)
+              TextButton(onPressed: _clearCached, child: const Text('清空')),
+          ],
+        ),
+      },
     );
   }
 

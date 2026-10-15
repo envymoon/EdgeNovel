@@ -6,7 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `books_dir`, `load`, `parse`, `with_store`, `write_book`
+// These functions are ignored because they are not marked as `pub`: `books_dir`, `fetch_into`, `load`, `match_chapters`, `parse`, `repeats_title`, `with_store`, `write_book`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Job`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Import a legado export — one sheet or a thousand. Returns how many landed.
@@ -95,16 +96,25 @@ Future<void> cancelDownload() =>
 /// time — enough to not take an hour, few enough to not hammer a stranger's
 /// server — and written strictly in order, because the file *is* the book and
 /// its byte offsets are what every other feature anchors to.
+///
+/// `alternates` are the other sites offering the same book, best first. Any
+/// chapter the chosen site will not give us whole — a hole, a teaser, a first
+/// page with no second — is looked up by title on the next site and taken from
+/// there. Most books need none of this, some need it for a handful of chapters,
+/// and a site that serves teasers throughout simply turns into a download from
+/// one that does not.
 Stream<DownloadProgress> downloadBook({
   required String sourceUrl,
   required String bookUrl,
   required String title,
   required String author,
+  required List<Offer> alternates,
 }) => RustLib.instance.api.crateApiSourceDownloadBook(
   sourceUrl: sourceUrl,
   bookUrl: bookUrl,
   title: title,
   author: author,
+  alternates: alternates,
 );
 
 class DownloadProgress {
@@ -112,9 +122,9 @@ class DownloadProgress {
   final int done;
   final int total;
 
-  /// Chapters the site would not give us. A handful is normal; a lot means the
-  /// source is bad and the book will have holes — the UI says so rather than
-  /// pretending the download succeeded.
+  /// Chapters no site would give us whole — missing, or only part of them. A
+  /// handful is normal; a lot means the book will have holes, and the UI says
+  /// so rather than pretending the download succeeded.
   final int failed;
 
   /// Set exactly once, on the final event: the TXT that is now on disk.

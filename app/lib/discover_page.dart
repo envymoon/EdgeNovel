@@ -344,16 +344,18 @@ class _DiscoverPageState extends State<DiscoverPage> {
   Future<void> _compare(_Group g) async {
     final t = widget.settings.theme;
     final messenger = ScaffoldMessenger.of(context);
-    final chosen = await showDialog<FoundBookItem>(
+    final picked = await showDialog<List<FoundBookItem>>(
       context: context,
       builder: (_) => _ComparePanel(group: g, theme: t),
     );
-    if (chosen == null || !mounted) return;
+    if (picked == null || picked.isEmpty || !mounted) return;
+    final chosen = picked.first;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _DownloadDialog(
         offer: chosen,
+        alternates: picked.skip(1).toList(),
         theme: t,
         onDone: (path) async {
           await widget.reader.importPaths([path]);
@@ -478,11 +480,21 @@ class _ComparePanelState extends State<_ComparePanel> {
     );
   }
 
+  /// The one you picked, then the others worth asking for the chapters it will
+  /// not give whole — best first, the ones already measured broken left out.
+  List<FoundBookItem> _withBackups(FoundBookItem o) {
+    final rest = [...widget.group.offers]
+      ..remove(o)
+      ..removeWhere((x) => _probes[x.sourceUrl]?.readable == false)
+      ..sort((a, b) => _rank(a).compareTo(_rank(b)));
+    return [o, ...rest];
+  }
+
   Widget _row(ReadingTheme t, FoundBookItem o, bool best) {
     final p = _probes[o.sourceUrl];
     final broken = p != null && !p.readable;
     return InkWell(
-      onTap: () => Navigator.pop(context, o),
+      onTap: () => Navigator.pop(context, _withBackups(o)),
       borderRadius: BorderRadius.circular(4),
       child: Container(
         margin: const EdgeInsets.only(bottom: 6),
@@ -568,11 +580,13 @@ class _ComparePanelState extends State<_ComparePanel> {
 /// denominator — the table of contents told us how many chapters there are.
 class _DownloadDialog extends StatefulWidget {
   final FoundBookItem offer;
+  final List<FoundBookItem> alternates;
   final ReadingTheme theme;
   final Future<void> Function(String path) onDone;
 
   const _DownloadDialog({
     required this.offer,
+    required this.alternates,
     required this.theme,
     required this.onDone,
   });
@@ -600,6 +614,9 @@ class _DownloadDialogState extends State<_DownloadDialog> {
         bookUrl: o.bookUrl,
         title: o.name,
         author: o.author,
+        alternates: widget.alternates
+            .map((a) => Offer(sourceUrl: a.sourceUrl, bookUrl: a.bookUrl))
+            .toList(),
       )) {
         if (!mounted) return;
         setState(() => _p = p);

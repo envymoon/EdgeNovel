@@ -36,7 +36,6 @@ const _english = <String, String>{
   '详情模式': 'Detail view',
   '应用内置 · CPU · 默认 Q8 KV / 8K': 'Bundled · CPU · Default Q8 KV / 8K',
   '内置引擎缺失，请重新安装应用': 'Bundled engine missing. Please reinstall the app.',
-  '小说阅读器': 'Novel Reader',
   '书架': 'Library',
   '设置': 'Settings',
   '阅读': 'Reading',
@@ -285,7 +284,6 @@ const _english = <String, String>{
   '已隐藏全书节奏': 'Book pacing hidden',
   '听书': 'Read aloud',
   '暂停朗读': 'Pause narration',
-  '收听本章': 'Read this chapter aloud',
   '听书设置': 'Read-aloud settings',
   '听书设置…': 'Read-aloud settings…',
   '继续朗读': 'Resume narration',
@@ -433,9 +431,8 @@ const _english = <String, String>{
       'Model · Qwen3 0.6B (Q8) — summaries / characters',
   '嵌入模型 · BGE small 中文 — 语义搜索':
       'Embedding model · BGE small Chinese — semantic search',
-  '朗读引擎 · sherpa-onnx': 'Narration engine · sherpa-onnx',
-  '中文语音 · Kokoro（8 音色，含男声旁白）':
-      'Chinese voices · Kokoro (8 voices, including male narration)',
+  '朗读引擎 · qwentts.cpp': 'Narration engine · qwentts.cpp',
+  '中文语音 · Qwen3-TTS': 'Chinese voices · Qwen3-TTS',
   '字体选项': 'Font options',
   '删除字体': 'Delete font',
   '以后仍可重新下载。小说和阅读设置不会被删除。':
@@ -627,11 +624,21 @@ const _english = <String, String>{
   '服务端返回了空音频': 'The server returned empty audio',
   '请求失败': 'Request failed',
   '使用远程服务': 'Use remote service',
-  '朗读走本机 Kokoro': 'Narration uses local Kokoro',
+  '朗读走本机': 'Narration runs on this device',
   '朗读走远程合成': 'Narration uses remote synthesis',
   '朗读语音未安装': 'Narration voice is not installed',
   '让它读': 'Read aloud',
   '准备…': 'Preparing…',
+  '边听边合成': 'Listen now',
+  '提前合成': 'Prepare ahead',
+  '提前合成…': 'Prepare ahead…',
+  '停止提前合成': 'Stop preparing',
+  '提前合成失败': 'Preparing failed',
+  '本章': 'This chapter',
+  '5 章': '5 chapters',
+  '10 章': '10 chapters',
+  '20 章': '20 chapters',
+  '已合成': 'Prepared',
 };
 
 String translateUi(String source, material.Locale locale) {

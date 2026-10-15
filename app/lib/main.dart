@@ -21,6 +21,8 @@ import 'src/rust/api/image.dart';
 import 'src/rust/api/tts.dart';
 import 'src/rust/frb_generated.dart';
 import 'theme.dart';
+import 'tts_prepare.dart';
+import 'tts_server_page.dart';
 import 'app_localizations.dart';
 
 Future<void> main() async {
@@ -134,11 +136,21 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     _runtimeOpen = false;
   }
 
+  Future<void> _openSpeechSettings() async {
+    final nav = _navigator.currentState;
+    if (nav == null || _runtimeOpen) return;
+    _runtimeOpen = true;
+    await nav.push(
+      MaterialPageRoute(builder: (_) => TtsServerPage(settings: settings)),
+    );
+    _runtimeOpen = false;
+  }
+
   /// Every screen but the reader's page gets the background-work bar on top.
   /// The tree keeps the same shape whether the bar shows or not, so the
   /// navigator below it is never rebuilt and no screen loses its place.
   Widget _withTaskBar(Widget child) => ListenableBuilder(
-    listenable: reader,
+    listenable: Listenable.merge([reader, TtsPrepare.instance]),
     builder: (context, _) {
       final shown = !_reading && BackgroundTaskBar.shows(reader);
       return Column(
@@ -148,6 +160,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
               reader: reader,
               settings: settings,
               onOpen: _openBackgroundSettings,
+              onOpenSpeech: _openSpeechSettings,
             )
           else
             const SizedBox.shrink(),
@@ -209,9 +222,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
       listenable: settings,
       builder: (context, _) {
         return MaterialApp(
-          title: settings.language == AppLanguage.english
-              ? 'Novel Reader'
-              : '小说阅读器',
+          title: settings.language == AppLanguage.english ? 'Zhiyue' : '挚阅',
           debugShowCheckedModeBanner: false,
           locale: settings.language.locale,
           supportedLocales: const [Locale('zh'), Locale('en')],

@@ -6,64 +6,57 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `dir_bytes`, `file_bytes`, `find_engine`, `find_named`, `find_voice`, `next_tmp`, `parse_voice`, `remove`, `synth_kokoro`, `top_folder`, `tts_dir`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `cache_files`, `cached`, `ensure`, `file_bytes`, `find_engine`, `find_model`, `health`, `kill`, `last_used`, `new`, `one_line`, `server`, `speak`, `trim_cache`, `tts_dir`, `watch_idle`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `InFlight`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`, `fmt`
 
-/// Called once at startup with `<app-support>/tts`. The sherpa-onnx binary (and
-/// the DLLs its archive brings) and the extracted voice folder live here; the
-/// user can also drop files in by hand.
+/// Called once at startup with `<app-support>/tts`. The engine and the voice
+/// model live here; the user can also drop files in by hand.
 Future<void> initTts({required String dir}) =>
     RustLib.instance.api.crateApiTtsInitTts(dir: dir);
 
 Future<TtsStatus> ttsStatus() => RustLib.instance.api.crateApiTtsTtsStatus();
 
-/// True when both the binary and a voice are present — the only state in which
-/// [`synth`] can succeed.
+/// True when the engine and both model files are present — the only state in
+/// which [`synth`] can succeed.
 Future<bool> ttsReady() => RustLib.instance.api.crateApiTtsTtsReady();
 
-/// Delete the sherpa-onnx binary and its bundled DLLs (the engine's top folder),
-/// but never the voice — that is a separate download with a separate button.
+/// Delete the engine (its folder, if it came in one), but never the voice —
+/// that is a separate download with a separate button.
 Future<void> deleteTtsEngine() =>
     RustLib.instance.api.crateApiTtsDeleteTtsEngine();
 
-/// Delete the installed voice folder.
+/// Delete the voice model: the talker and the codec together.
 Future<void> deleteTtsVoice() =>
     RustLib.instance.api.crateApiTtsDeleteTtsVoice();
 
-/// Synthesize one utterance to WAV bytes. `length_scale` sets pace: 1.0 is the
-/// voice's natural speed, larger is slower (so the caller passes 1.0 / speed).
-/// `voice` is a `"<model>-<sid>"` key — see [`parse_voice`]. One short sentence
-/// per call: the pre-processor drives sentence by sentence, which keeps the
-/// highlight fine-grained and makes a whole chapter resumable mid-render.
-Future<Uint8List> synth({
-  required String text,
-  required double lengthScale,
-  required String voice,
-}) => RustLib.instance.api.crateApiTtsSynth(
-  text: text,
-  lengthScale: lengthScale,
-  voice: voice,
-);
+/// Stop the engine now. The next sentence starts it again.
+Future<void> stopTts() => RustLib.instance.api.crateApiTtsStopTts();
 
-/// Extract a `.tar.bz2` (how the sherpa-onnx binary and voice ship) into
-/// `dest_dir`, preserving the archive's own top folder. Pure-Rust bzip2 so no C
-/// toolchain is needed, and done here rather than in Dart so the large model
-/// decompress does not block the UI isolate.
-Future<void> extractTarBz2({
-  required String archivePath,
-  required String destDir,
-}) => RustLib.instance.api.crateApiTtsExtractTarBz2(
-  archivePath: archivePath,
-  destDir: destDir,
-);
+/// Speak one sentence with the named speaker (e.g. `uncle_fu`) and return a
+/// WAV. One sentence per call: the reader highlights sentence by sentence, and
+/// a chapter can be resumed mid-way. A sentence spoken ahead of time comes
+/// from the cache.
+Future<Uint8List> synth({required String text, required String voice}) =>
+    RustLib.instance.api.crateApiTtsSynth(text: text, voice: voice);
+
+/// Speak one sentence into the cache for later. False when it was already there.
+Future<bool> prepare({required String text, required String voice}) =>
+    RustLib.instance.api.crateApiTtsPrepare(text: text, voice: voice);
+
+Future<PlatformInt64> ttsCacheBytes() =>
+    RustLib.instance.api.crateApiTtsTtsCacheBytes();
+
+Future<void> clearTtsCache() => RustLib.instance.api.crateApiTtsClearTtsCache();
 
 class TtsStatus {
   final String dir;
 
-  /// The sherpa-onnx binary is present.
+  /// The engine binary is present.
   final bool engine;
 
-  /// The installed voice folder's name (e.g. `kokoro-multi-lang-v1_0`), or absent.
+  /// The installed talker's file name without `.gguf`, when the talker and
+  /// the codec are both there.
   final String? voice;
   final PlatformInt64 engineBytes;
   final PlatformInt64 voiceBytes;

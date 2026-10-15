@@ -32,13 +32,12 @@
 | 后端 | 命令 | 说明 |
 | --- | --- | --- |
 | `f5` （默认） | `start.bat` | F5-TTS。中文最自然，**支持音色克隆**，要显卡 |
-| `kokoro` | `start.bat -Backend kokoro` | 82M 小模型，纯 CPU 也能跑，音质一般 |
 | `edge` | `start.bat -Backend edge` | 微软在线语音，音质很好、不吃显卡，**但正文会发给微软** |
 
 `edge` 是唯一一个会把文字发到外部的选项，所以它永远不是默认值，选它的时候服务端
-会在窗口里明确提示一次。介意就用 `f5` 或 `kokoro`，那两个全程本地。
+会在窗口里明确提示一次。介意就用 `f5`，它全程本地。
 
-Linux/macOS 上写成 `./start.sh kokoro`。
+Linux/macOS 上写成 `./start.sh edge`。
 
 ## 分角色配音（f5 后端）
 
@@ -63,7 +62,7 @@ voices/
 这个服务端讲的是 OpenAI 的 `/v1/audio/speech` 协议，App 那边也只认这个协议。所以
 你完全可以不用它，改用任何同样支持该协议的项目：
 
-- kokoro-fastapi
+- qwentts.cpp 的 `tts-server`（App 本机听书用的就是它）
 - GPT-SoVITS（openai 兼容分支）
 - Fish-Speech / OpenAudio
 - index-tts
@@ -86,7 +85,7 @@ GET  /health
 **手机连不上** —— 两台设备要在同一个 Wi-Fi 下；Windows 防火墙首次会弹窗询问，选
 「允许」；确认填的是 `http://` 而不是 `https://`。
 
-**一直在缓冲** —— 没有显卡时 F5 合成一句要好几秒，改用 `kokoro` 或 `edge` 后端。
+**一直在缓冲** —— 没有显卡时 F5 合成一句要好几秒，改用 `edge` 后端。
 
 **只想局域网内可见** —— 默认就是这样：服务只监听内网地址，不做任何端口映射。要放到
 公网请自己加反向代理和鉴权，并在 App 里填上密钥（服务端目前不校验密钥，仅透传）。

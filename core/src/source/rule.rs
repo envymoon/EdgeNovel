@@ -333,12 +333,14 @@ pub fn sanitize_url(u: &str) -> String {
 /// page-turn link may say `/book/1/2.html#top`, or differ by a trailing slash,
 /// and both are the same page to everyone except a string comparison.
 pub fn same_page(a: &str, b: &str) -> bool {
-    fn key(u: &str) -> String {
-        let u = u.split('#').next().unwrap_or(u);
-        let u = u.strip_suffix('/').unwrap_or(u);
-        u.trim().to_lowercase()
-    }
-    !a.is_empty() && key(a) == key(b)
+    !a.is_empty() && page_key(a) == page_key(b)
+}
+
+/// A link reduced to the part that names the page, for comparing and deduping.
+pub fn page_key(u: &str) -> String {
+    let u = u.split('#').next().unwrap_or(u);
+    let u = u.strip_suffix('/').unwrap_or(u);
+    u.trim().to_lowercase()
 }
 
 /// Apply the sheet's `replaceRegex` — the author's own list of things this site
@@ -363,16 +365,7 @@ pub fn apply_replace(text: &str, spec: Option<&str>) -> String {
     let pattern = it.next().unwrap_or_default();
     let replacement = it.next().unwrap_or_default();
 
-    // Drop `{{…}}` alternatives, then the empty alternatives they leave behind —
-    // an empty branch in an alternation matches everywhere and would blank the
-    // chapter.
-    let pattern = strip_braces(pattern);
-    let pattern = pattern
-        .split('|')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect::<Vec<_>>()
-        .join("|");
+    let pattern = without_templates(pattern);
     if pattern.is_empty() {
         return text.to_string();
     }
@@ -389,6 +382,19 @@ pub fn apply_replace(text: &str, spec: Option<&str>) -> String {
 
 /// Remove every `{{…}}` span, brace-counted so a JS block full of braces goes
 /// out whole.
+/// Drop `{{…}}` alternatives — legado fills them from the book and chapter in
+/// JavaScript, which we do not run — then the empty alternatives they leave
+/// behind: an empty branch in an alternation matches everywhere and would blank
+/// the chapter.
+fn without_templates(pattern: &str) -> String {
+    strip_braces(pattern)
+        .split('|')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn strip_braces(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
@@ -736,9 +742,16 @@ fn select_segment<'a>(el: ElementRef<'a>, seg: &str) -> Result<Vec<ElementRef<'a
             "id" => sel(&format!("#{name}"), el)?,
             "tag" => sel(name, el)?,
             "children" => el.children().filter_map(ElementRef::wrap).collect(),
+            // legado's `text.下一页`: elements whose *own* text says it. Their
+            // whole text would make <html> the first match, and its href empty.
             _ => sel("*", el)?
                 .into_iter()
-                .filter(|e| e.text().collect::<String>().contains(name))
+                .filter(|e| {
+                    e.children()
+                        .filter_map(|c| c.value().as_text().map(|t| t.to_string()))
+                        .collect::<String>()
+                        .contains(name)
+                })
                 .collect(),
         };
         (got, index)
@@ -759,7 +772,7 @@ fn split_index(seg: &str) -> (&str, &str) {
     let numeric = |s: &str| {
         !s.is_empty()
             && s.chars()
-                .all(|c| c.is_ascii_digit() || c == '-' || c == ',' || c == ' ')
+                .all(|c| c.is_ascii_digit() || matches!(c, '-' | ',' | ':' | ' ' | '!'))
             && s.chars().any(|c| c.is_ascii_digit())
     };
     if let Some(i) = seg.find('!') {
@@ -774,53 +787,86 @@ fn split_index(seg: &str) -> (&str, &str) {
     }
     if let Some(i) = seg.rfind('.') {
         let tail = &seg[i + 1..];
-        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit() || c == '-' || c == ':') {
             return (&seg[..i], tail);
         }
     }
     (seg, "")
 }
 
+/// Legado's index syntax, both dialects:
+/// - after a dot or a `!`, indexes separated by `:` (or `,`): `.-1:10:2` picks
+///   those, `!0:1:2` drops them — the usual way to skip a "最新章节" block;
+/// - in brackets, items separated by `,`, each an index or an inclusive range
+///   `start:end[:step]` (start defaults to 0, end to -1), with a leading `!`
+///   to drop instead of pick: `[1:5]`, `[!0:3]`, `[-1:0]` (reversed).
+///
+/// Negative indexes count from the end.
 fn apply_index<'a>(got: Vec<ElementRef<'a>>, index: &str) -> Vec<ElementRef<'a>> {
+    let index = index.trim();
     if index.is_empty() {
         return got;
     }
     let n = got.len() as i64;
-    let pick = |i: i64| -> Option<usize> {
-        let i = if i < 0 { n + i } else { i };
-        (i >= 0 && i < n).then_some(i as usize)
+    let at = |i: i64| if i < 0 { n + i } else { i };
+    let (drop, bracketed, list) = match index.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(inner) => match inner.trim().strip_prefix('!') {
+            Some(rest) => (true, true, rest),
+            None => (false, true, inner),
+        },
+        None => match index.strip_prefix('!') {
+            Some(rest) => (true, false, rest),
+            None => (false, false, index),
+        },
     };
-    if let Some(list) = index.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let mut out = Vec::new();
-        for tok in list.split(',') {
-            if let Ok(i) = tok.trim().parse::<i64>() {
-                if let Some(i) = pick(i) {
-                    out.push(got[i]);
-                }
+    let mut picks: Vec<i64> = Vec::new();
+    let items: Vec<&str> = if bracketed {
+        list.split(',').collect()
+    } else {
+        list.split([':', ',']).collect()
+    };
+    for tok in items.iter().map(|t| t.trim()) {
+        if bracketed && tok.contains(':') {
+            let mut p = tok.split(':').map(str::trim);
+            let num = |s: Option<&str>, or: i64| s.filter(|s| !s.is_empty()).map_or(Some(or), |s| s.parse().ok());
+            let (Some(a), Some(b), Some(step)) = (num(p.next(), 0), num(p.next(), -1), num(p.next(), 1)) else {
+                continue;
+            };
+            let (a, b, step) = (at(a), at(b), step.unsigned_abs().max(1) as i64);
+            let mut i = a;
+            while (a <= b && i <= b) || (a > b && i >= b) {
+                picks.push(i);
+                i += if a <= b { step } else { -step };
             }
+        } else if let Ok(i) = tok.parse::<i64>() {
+            picks.push(at(i));
         }
-        out
-    } else if let Some(ex) = index.strip_prefix('!') {
-        let drop: Vec<usize> = ex
-            .split(',')
-            .filter_map(|t| t.trim().parse::<i64>().ok())
-            .filter_map(pick)
-            .collect();
+    }
+    if drop {
         got.into_iter()
             .enumerate()
-            .filter(|(i, _)| !drop.contains(i))
+            .filter(|(i, _)| !picks.contains(&(*i as i64)))
             .map(|(_, e)| e)
             .collect()
-    } else if let Ok(i) = index.parse::<i64>() {
-        pick(i).map(|i| vec![got[i]]).unwrap_or_default()
     } else {
-        got
+        picks
+            .into_iter()
+            .filter(|&i| i >= 0 && i < n)
+            .map(|i| got[i as usize])
+            .collect()
     }
 }
 
+/// Legado runs its rules through jsoup, whose `getElementsByTag` and `select`
+/// count the element itself when it matches; scraper only looks below it. Sheets
+/// are written against jsoup's count: `class.nr_nr@tag.div.1` on a div means the
+/// first div *inside* it.
 fn sel<'a>(css: &str, el: ElementRef<'a>) -> Result<Vec<ElementRef<'a>>, String> {
     let s = Selector::parse(css).map_err(|_| format!("选择器不对：{css}"))?;
-    Ok(el.select(&s).collect())
+    Ok(std::iter::once(el)
+        .filter(|e| s.matches(e))
+        .chain(el.select(&s))
+        .collect())
 }
 
 // ----------------------------------------------------------------- evaluation
@@ -866,6 +912,7 @@ pub fn eval(item: &Item<'_>, rule: &str) -> Result<String, String> {
     }
 
     if let Some((pat, rep)) = subst {
+        let pat = without_templates(&pat);
         if !pat.is_empty() {
             let re = regex::Regex::new(&pat).map_err(|e| format!("正则不对：{e}"))?;
             value = re.replace_all(&value, rep.as_str()).into_owned();
@@ -934,6 +981,32 @@ fn capture_ref(caps: &[String], rule: &str) -> String {
     out
 }
 
+/// The same content rule one step up: `id.chaptercontent@p@html` →
+/// `id.chaptercontent@html`. For a page the last step finds nothing on. Only
+/// plain chains: alternatives, JSON and scripts are left as they are.
+pub fn looser(rule: &str) -> Option<String> {
+    let rule = rule.trim();
+    let plain = !rule.starts_with("@css:")
+        && !rule.starts_with(':')
+        && !rule.starts_with('$')
+        && !rule.starts_with("@json")
+        && !rule.starts_with("//")
+        && !["||", "&&", "<js>", "@js:", "{{"].iter().any(|s| rule.contains(s));
+    if !plain {
+        return None;
+    }
+    let (head, tail) = match rule.find("##") {
+        Some(i) => (&rule[..i], &rule[i..]),
+        None => (rule, ""),
+    };
+    let (sel, content) = split_content(head);
+    let (up, _) = sel.rsplit_once('@')?;
+    if up.trim().is_empty() {
+        return None;
+    }
+    Some(format!("{up}@{content}{tail}"))
+}
+
 /// Peel the content spec off the end of a selector rule: `.item h3@text` →
 /// (`.item h3`, `text`). A rule that is *only* a content spec (`text`, `href`)
 /// selects nothing and reads the row itself.
@@ -975,12 +1048,30 @@ fn extract(el: ElementRef<'_>, content: &str) -> String {
             .collect::<String>()
             .trim()
             .to_string(),
-        "textNodes" => el
-            .descendants()
-            .filter_map(|n| n.value().as_text().map(|t| t.trim().to_string()))
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        // legado's textNodes are the element's own text nodes, which is how a
+        // sheet keeps out a 最新网址 tip nested in a <div>. When the own text is
+        // the lesser part, the site has wrapped its prose in <p> since the sheet
+        // was written: take every text node rather than an empty chapter.
+        "textNodes" => {
+            let lines = |nodes: Vec<String>| {
+                nodes
+                    .iter()
+                    .map(|t| t.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let text_of = |n: ego_tree::NodeRef<'_, scraper::Node>| {
+                n.value().as_text().map(|t| t.to_string())
+            };
+            let own = lines(el.children().filter_map(text_of).collect());
+            let all = lines(el.descendants().filter_map(text_of).collect());
+            if own.chars().count() * 2 >= all.chars().count() {
+                own
+            } else {
+                all
+            }
+        }
         "html" | "all" => el.inner_html(),
         attr => el.value().attr(attr).unwrap_or_default().to_string(),
     }
@@ -1175,6 +1266,73 @@ mod tests {
         let excl = select_list(&d, ".item!0").unwrap();
         assert_eq!(excl.len(), 1);
         assert_eq!(eval(&excl[0], "h3 a@text").unwrap(), "元尊");
+    }
+
+    /// Both index dialects: `:`-separated lists after a dot or a `!`, and
+    /// bracketed lists with ranges.
+    #[test]
+    fn index_lists_and_ranges() {
+        let d = doc(r#"<dl><dd>0</dd><dd>1</dd><dd>2</dd><dd>3</dd><dd>4</dd><dd>5</dd></dl>"#);
+        let texts = |rule: &str| -> Vec<String> {
+            select_list(&d, rule)
+                .unwrap()
+                .iter()
+                .map(|r| eval(r, "text").unwrap())
+                .collect()
+        };
+        assert_eq!(texts("tag.dd!0:1:2"), ["3", "4", "5"]);
+        assert_eq!(texts("dd!0:1:2"), ["3", "4", "5"]);
+        assert_eq!(texts("tag.dd.-1:0"), ["5", "0"]);
+        assert_eq!(texts("dd[1:3]"), ["1", "2", "3"]);
+        assert_eq!(texts("dd[!0:3]"), ["4", "5"]);
+        assert_eq!(texts("dd[-1:0:2]"), ["5", "3", "1"]);
+        assert_eq!(texts("dd[0, -1]"), ["0", "5"]);
+    }
+
+    #[test]
+    fn a_content_rule_steps_up_one() {
+        assert_eq!(looser("id.chaptercontent@p@html").as_deref(), Some("id.chaptercontent@html"));
+        assert_eq!(looser("#content p@text##广告").as_deref(), None);
+        assert_eq!(looser("class.box@tag.div.1@textNodes##广告##").as_deref(), Some("class.box@textNodes##广告##"));
+        assert_eq!(looser("id.content@html"), None);
+        assert_eq!(looser("id.a@p||id.b@html"), None);
+    }
+
+    /// 「#content@html##{{title}}」: the chapter title is filled in by legado's
+    /// JavaScript. Without it the rewrite is dropped, not the chapter.
+    #[test]
+    fn a_template_in_a_rewrite_is_dropped() {
+        let d = doc(r#"<div id="c">第一章 风起<br>他笑了。</div>"#);
+        let rows = select_list(&d, "@css:#c").unwrap();
+        assert_eq!(eval(&rows[0], "text##{{title}}").unwrap(), "第一章 风起
+他笑了。");
+        assert_eq!(eval(&rows[0], "text##{{title}}|风起").unwrap(), "第一章 
+他笑了。");
+    }
+
+    /// `text.下一页` is the link that says it, not every element around it.
+    #[test]
+    fn text_kind_matches_own_text() {
+        let d = doc(r#"<table><tr><td><a href="/1.html">上一章</a>
+            <a id="n" href="/2_2.html"><i class="fa"></i> 下一页</a></td></tr></table>"#);
+        assert_eq!(eval(&Item::whole(&d), "text.下一页@href").unwrap(), "/2_2.html");
+    }
+
+    /// jsoup counts the element itself: inside `.nr_nr` (a div), `tag.div.1` is
+    /// the text's div, not the 最新网址 tip nested in it.
+    #[test]
+    fn a_step_counts_the_element_itself() {
+        let d = doc(r#"<div id="nr" class="nr_nr"><script>x()</script><div id="nr1"><div id="center_tip"><b>最新网址：m.example.cc</b></div>　　少年看着少女走来。<br/>　　朱鹿再没有平时的颐指气使。</div></div>"#);
+        let text = eval(&Item::whole(&d), "class.nr_nr@tag.div.1@textNodes").unwrap();
+        assert!(text.contains("少年看着少女走来"), "{text}");
+        assert!(!text.contains("最新网址"));
+        let rows = select_list(&d, "id.nr1@tag.div").unwrap();
+        assert_eq!(rows.len(), 2);
+
+        // The same sheet after the site moved its prose into <p>.
+        let d = doc(r#"<div id="nr1"><p>少年看着少女走来。</p><p>朱鹿再没有平时的颐指气使。</p></div>"#);
+        let text = eval(&Item::whole(&d), "id.nr1@textNodes").unwrap();
+        assert_eq!(text, "少年看着少女走来。\n朱鹿再没有平时的颐指气使。");
     }
 
     /// `tag.tr!0` — a table whose first row is the header. The exclusion is stuck

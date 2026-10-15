@@ -58,7 +58,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       96.0;
   Win32Window::Size size = DefaultSize(work, scale);
   Win32Window::Point origin = CentredOrigin(work, scale, size);
-  if (!window.Create(L"novel", origin, size)) {
+  // The title is the app's name, Zhiyue, written as escapes so this file stays
+  // ASCII under any code page.
+  if (!window.Create(L"\u631A\u9605", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

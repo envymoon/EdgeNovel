@@ -6,7 +6,6 @@
 # the first-time setup.
 #
 #   .\start.ps1                 # F5-TTS, the good voices
-#   .\start.ps1 -Backend kokoro # small and CPU-friendly
 #   .\start.ps1 -Backend edge   # best quality with no GPU, but goes via Microsoft
 #   .\start.ps1 -Port 9000
 

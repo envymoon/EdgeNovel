@@ -8,7 +8,7 @@ import 'ai_cache_page.dart';
 import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
-import 'image_download.dart';
+import 'hosted_download.dart';
 import 'model_download.dart';
 import 'model_manager.dart';
 import 'platform_support.dart';
@@ -43,29 +43,6 @@ class AiPage extends StatefulWidget {
   State<AiPage> createState() => _AiPageState();
 }
 
-/// sherpa-onnx: the read-aloud engine, run as a child process. Its Chinese
-/// front-end (jieba + rule FSTs) is what Piper lacked. The Windows build is one
-/// .tar.bz2 — the binary + onnxruntime.dll and friends. `ghfast.top` is a GitHub
-/// proxy for when the direct release host is slow from the mainland.
-const _sherpaVer = 'v1.13.4';
-const _engineFile = 'sherpa-onnx-$_sherpaVer-win-x64-shared-MD-Release.tar.bz2';
-const _engineUrls = [
-  'https://github.com/k2-fsa/sherpa-onnx/releases/download/$_sherpaVer/$_engineFile',
-  'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/$_sherpaVer/$_engineFile',
-];
-
-/// The Chinese voice: Kokoro, multilingual, converted for sherpa-onnx. One
-/// .tar.bz2 with the onnx model, the packed speaker embeddings (voices.bin —
-/// eight Chinese speakers, four male / four female, pick via --sid at synth),
-/// tokens, espeak-ng data, the Chinese+English lexicons, and the date/number
-/// rule FSTs. A male narration voice reads far closer to "telling a story" than
-/// MeloTTS's single conversational voice did.
-const _voiceFile = 'kokoro-multi-lang-v1_0.tar.bz2';
-const _voiceUrls = [
-  'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$_voiceFile',
-  'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$_voiceFile',
-];
-
 class _AiPageState extends State<AiPage> {
   static const _models = ModelManager();
   AiStatus? _status;
@@ -76,15 +53,18 @@ class _AiPageState extends State<AiPage> {
   double? _engineProgress;
   double? _modelProgress;
   double? _embedProgress;
-  double? _piperProgress;
+  double? _ttsEngineProgress;
   double? _voiceProgress;
   String? _engineError;
   String? _modelError;
   String? _embedError;
   String? _modelStage;
   String? _embedStage;
-  String? _piperError;
+  String? _ttsEngineError;
   String? _voiceError;
+  int _voicePendingBytes = 0;
+  ResumableFileDownload? _voiceTransfer;
+  var _voiceCancelled = false;
   int _chatPendingBytes = 0;
   int _embedPendingBytes = 0;
   ResumableFileDownload? _chatTransfer;
@@ -114,6 +94,7 @@ class _AiPageState extends State<AiPage> {
     _chatTransfer?.pause();
     _embedTransfer?.pause();
     _imgTransfer?.pause();
+    _voiceTransfer?.pause();
     super.dispose();
   }
 
@@ -121,7 +102,10 @@ class _AiPageState extends State<AiPage> {
     final s = await aiStatus();
     final ts = AppPlatformSupport.hasReadAloud ? await ttsStatus() : null;
     final img = await imageStatus();
-    final imgPending = await pendingImageModelBytes(img.dir);
+    final imgPending = await pendingDownloadBytes(img.dir, imageModelFiles);
+    final voicePending = ts == null
+        ? 0
+        : await pendingDownloadBytes(ts.dir, ttsModelFiles);
     final states = await Future.wait([
       _models.inspect(s.dir, chatModelPackage),
       _models.inspect(s.dir, embeddingModelPackage),
@@ -136,6 +120,7 @@ class _AiPageState extends State<AiPage> {
         _ts = ts;
         _img = img;
         _imgPendingBytes = imgPending;
+        _voicePendingBytes = voicePending;
         _chatModel = states[0];
         _embeddingModel = states[1];
         _chatPendingBytes = pending[0];
@@ -231,7 +216,9 @@ class _AiPageState extends State<AiPage> {
       _imgEngineError = null;
     });
     try {
-      await downloadImageEngine(_img!.dir, (p) {
+      await downloadEngineZip(_img!.dir, imageEngineZip, imageEngineFolder, (
+        p,
+      ) {
         if (mounted) setState(() => _imgEngineProgress = p);
       });
     } catch (e) {
@@ -253,7 +240,7 @@ class _AiPageState extends State<AiPage> {
     });
     final dir = _img!.dir;
     try {
-      await downloadImageModel(dir, transfer, (p) {
+      await downloadHostedFiles(dir, imageModelFiles, transfer, (p) {
         if (mounted) setState(() => _imgModelProgress = p);
       });
     } on DownloadStopped {
@@ -263,7 +250,7 @@ class _AiPageState extends State<AiPage> {
     } finally {
       _imgTransfer = null;
       _imgModelProgress = null;
-      if (_imgCancelled) await discardImageModelDownload(dir);
+      if (_imgCancelled) await discardHostedDownload(dir, imageModelFiles);
       await _refresh();
     }
   }
@@ -275,7 +262,7 @@ class _AiPageState extends State<AiPage> {
       _imgCancelled = true;
       transfer.pause();
     } else {
-      await discardImageModelDownload(_img!.dir);
+      await discardHostedDownload(_img!.dir, imageModelFiles);
       await _refresh();
     }
   }
@@ -420,48 +407,59 @@ class _AiPageState extends State<AiPage> {
     throw lastError ?? '下载失败';
   }
 
-  /// A .tar.bz2 (the sherpa engine, or the voice), streamed to a temp file then
-  /// unpacked by Rust into the tts dir — keeping the archive's own top folder.
-  Future<void> _downloadTarBz2(
-    String name,
-    List<String> urls,
-    void Function(double?) onProgress,
-    void Function(String?) onError,
-    VoidCallback onDone,
-  ) async {
+  Future<void> _downloadTtsEngine() async {
     setState(() {
-      onProgress(0);
-      onError(null);
+      _ttsEngineProgress = 0;
+      _ttsEngineError = null;
     });
-    final dir = _ts!.dir;
-    final archive = File('$dir${Platform.pathSeparator}_$name.tar.bz2');
     try {
-      await _fetchFirst(urls, archive, onProgress);
-      await extractTarBz2(archivePath: archive.path, destDir: dir);
+      await downloadEngineZip(_ts!.dir, ttsEngineZip, ttsEngineFolder, (p) {
+        if (mounted) setState(() => _ttsEngineProgress = p);
+      });
     } catch (e) {
-      onError('$e');
+      _ttsEngineError = '$e';
     } finally {
-      if (await archive.exists()) await archive.delete();
-      onDone();
+      _ttsEngineProgress = null;
       await _refresh();
     }
   }
 
-  Future<void> _downloadTtsEngine() => _downloadTarBz2(
-    'engine',
-    _engineUrls,
-    (p) => setState(() => _piperProgress = p),
-    (e) => _piperError = e,
-    () => setState(() => _piperProgress = null),
-  );
+  /// The voice is 1.17 GB: it can be paused, and picks up where it stopped.
+  Future<void> _downloadTtsVoice() async {
+    if (_voiceTransfer != null) return;
+    final transfer = _voiceTransfer = ResumableFileDownload();
+    _voiceCancelled = false;
+    setState(() {
+      _voiceProgress = 0;
+      _voiceError = null;
+    });
+    final dir = _ts!.dir;
+    try {
+      await downloadHostedFiles(dir, ttsModelFiles, transfer, (p) {
+        if (mounted) setState(() => _voiceProgress = p);
+      });
+    } on DownloadStopped {
+      // Paused or cancelled; what is left is shown on the button.
+    } catch (e) {
+      _voiceError = '$e';
+    } finally {
+      _voiceTransfer = null;
+      _voiceProgress = null;
+      if (_voiceCancelled) await discardHostedDownload(dir, ttsModelFiles);
+      await _refresh();
+    }
+  }
 
-  Future<void> _downloadTtsVoice() => _downloadTarBz2(
-    'voice',
-    _voiceUrls,
-    (p) => setState(() => _voiceProgress = p),
-    (e) => _voiceError = e,
-    () => setState(() => _voiceProgress = null),
-  );
+  Future<void> _cancelTtsVoice() async {
+    final transfer = _voiceTransfer;
+    if (transfer != null) {
+      _voiceCancelled = true;
+      transfer.pause();
+    } else {
+      await discardHostedDownload(_ts!.dir, ttsModelFiles);
+      await _refresh();
+    }
+  }
 
   String _modelSubtitle(
     ManagedModelPackage package,
@@ -747,9 +745,8 @@ class _AiPageState extends State<AiPage> {
                       if (AppPlatformSupport.isDesktop &&
                           AppPlatformSupport.hasReadAloud) ...[
                         const Divider(height: 32),
-                        // The bundled engine is honestly labelled as the fallback it is:
-                        // it works with zero setup and sounds like it. The good voices
-                        // are one page away, on a machine that can actually run them.
+                        // Voice, pace and a server elsewhere are one page away; the
+                        // engine and the voice it runs are the two rows below.
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: Icon(
@@ -774,12 +771,12 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _ts?.engine ?? false,
-                          title: '朗读引擎 · sherpa-onnx',
+                          title: '朗读引擎 · qwentts.cpp',
                           subtitle: (_ts?.engine ?? false)
                               ? '已安装 · ${_size(_ts!.engineBytes)}'
-                              : '约 20 MB',
-                          progress: _piperProgress,
-                          error: _piperError,
+                              : '约 15 MB',
+                          progress: _ttsEngineProgress,
+                          error: _ttsEngineError,
                           onDownload: _downloadTtsEngine,
                           onDelete: (_ts?.engine ?? false)
                               ? () => _delete('朗读引擎', deleteTtsEngine)
@@ -788,14 +785,24 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _ts?.voice != null,
-                          title: '中文语音 · Kokoro',
-                          subtitle: _ts?.voice == null
-                              ? '约 340 MB'
-                              : '${_ts!.voice} · ${_size(_ts!.voiceBytes)}',
+                          title: '中文语音 · Qwen3-TTS',
+                          subtitle: _withPending(
+                            _ts?.voice == null
+                                ? '约 1.17 GB'
+                                : '已安装 · ${_size(_ts!.voiceBytes)}',
+                            _voicePendingBytes,
+                          ),
                           progress: _voiceProgress,
+                          progressText: _voiceProgress == null
+                              ? null
+                              : '正在下载',
                           error: _voiceError,
                           onDownload: _downloadTtsVoice,
-                          onDelete: _ts?.voice != null
+                          downloadLabel: _voicePendingBytes > 0 ? '继续' : '下载',
+                          hasPendingDownload: _voicePendingBytes > 0,
+                          onPause: () => _voiceTransfer?.pause(),
+                          onCancel: _cancelTtsVoice,
+                          onDelete: (_ts?.voiceBytes ?? 0) > 0
                               ? () => _delete('中文语音', deleteTtsVoice)
                               : null,
                         ),

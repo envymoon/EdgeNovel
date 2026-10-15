@@ -68,31 +68,18 @@ List<TtsUtt> chapterUtterances(List<Paragraph> paras) {
   return out;
 }
 
-/// Pace as the local sherpa-onnx engine wants it: 1.0 is the voice's natural
-/// speed, larger is slower. (Remote servers take `speed` the other way round,
-/// the way OpenAI defines it, so this conversion stays local to that backend.)
-double ttsLengthScale(double speed) => (1.0 / speed).clamp(0.4, 2.5);
-
-/// The bundled local voices — sherpa-onnx Kokoro speaker ids. Kept as the
-/// no-setup fallback for someone who has not stood a server up; the good voices
-/// live on the server (see `tts_remote.dart`).
+/// The local voices: the named speakers of Qwen3-TTS's CustomVoice model that
+/// speak Chinese natively. Dylan and Eric bring their dialects with them.
 class LocalVoice {
-  final int sid;
+  final String id;
   final String label;
-  const LocalVoice(this.sid, this.label);
+  const LocalVoice(this.id, this.label);
 }
 
 const localVoices = <LocalVoice>[
-  LocalVoice(49, '云健 · 男声旁白'),
-  LocalVoice(50, '云希 · 男声'),
-  LocalVoice(52, '云扬 · 男声'),
-  LocalVoice(51, '云夏 · 男声'),
-  LocalVoice(47, '晓晓 · 女声'),
-  LocalVoice(45, '晓贝 · 女声'),
-  LocalVoice(46, '晓妮 · 女声'),
-  LocalVoice(48, '晓伊 · 女声'),
+  LocalVoice('uncle_fu', 'Uncle Fu · 男声'),
+  LocalVoice('serena', 'Serena · 女声'),
+  LocalVoice('vivian', 'Vivian · 女声'),
+  LocalVoice('dylan', 'Dylan · 京腔男声'),
+  LocalVoice('eric', 'Eric · 川味男声'),
 ];
-
-String localVoiceLabel(int sid) => localVoices
-    .firstWhere((v) => v.sid == sid, orElse: () => LocalVoice(sid, '音色 $sid'))
-    .label;

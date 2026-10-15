@@ -17,8 +17,10 @@
 //! any of those is simply not usable here, and the manager greys it out.
 
 mod rule;
+mod tidy;
 
 pub use rule::{html_to_text, Unsupported};
+pub use tidy::{chapter_name, chapter_number, pair_chapters, scrub, tidy_toc};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -240,6 +242,16 @@ pub struct TocEntry {
     pub url: String,
 }
 
+/// One chapter as it came back, and whether it is all of it. A site that
+/// serves a teaser, or a first page whose "本章未完" we could not follow, gives
+/// us text that is real but short of the chapter — worth keeping when there is
+/// nothing better, worth replacing when another site has the whole thing.
+#[derive(Debug, Clone)]
+pub struct Chapter {
+    pub text: String,
+    pub whole: bool,
+}
+
 /// Read a legado export: one object, an array of them, or the whole thing
 /// wrapped in a JSON string (which some export buttons produce).
 pub fn parse_sources(json: &str) -> Result<Vec<BookSource>, String> {
@@ -384,6 +396,11 @@ pub fn toc_with(
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or("这个书源没有目录规则")?;
+    // legado's way of saying "this site lists newest first": a leading minus.
+    let (list_rule, reversed) = match list_rule.trim().strip_prefix('-') {
+        Some(rest) => (rest, true),
+        None => (list_rule, false),
+    };
 
     // A book page may point at a separate TOC page; when it does not, it is the
     // TOC page itself.
@@ -398,7 +415,7 @@ pub fn toc_with(
         }
     }
 
-    let mut out = Vec::new();
+    let mut pages: Vec<(String, Vec<TocEntry>)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     // `nextTocUrl` says one of two different things depending on how many URLs
     // it hands back. One URL is a chain — "after this page, that one" — and is
@@ -418,17 +435,19 @@ pub fn toc_with(
             break;
         }
         let doc = rule::fetch(ag, &rule::UrlSpec::plain(&page), src.header.as_deref())?;
+        let mut entries = Vec::new();
         for item in rule::select_list(&doc, list_rule)? {
             let url = rule::eval(&item, r.chapter_url.as_deref().unwrap_or_default())?;
             let title = rule::eval(&item, r.chapter_name.as_deref().unwrap_or_default())?;
             if url.trim().is_empty() || title.trim().is_empty() {
                 continue;
             }
-            out.push(TocEntry {
+            entries.push(TocEntry {
                 title: title.trim().to_string(),
                 url: rule::absolute(&doc.url, url.trim()),
             });
         }
+        pages.push((page, entries));
         let Some(nr) = r.next_toc_url.as_deref().filter(|s| !s.is_empty()) else {
             continue;
         };
@@ -437,7 +456,32 @@ pub fn toc_with(
             queue.push_back(rule::absolute(&doc.url, n));
         }
     }
-    Ok(out)
+    let mut out = tidy::in_page_order(pages);
+    if reversed {
+        out.reverse();
+    }
+    Ok(tidy::tidy_toc(out))
+}
+
+/// Page `n` of a chapter whose rule does not say how to turn the page, when
+/// the page links to it: the chapter's own address with `_n` or `-n` added
+/// (`9404.html` → `9404_2.html`). One site labels that link 「下一章」 and
+/// gave half of every long chapter. Being this chapter's address, it cannot be
+/// the next chapter's.
+fn continuation(doc: &rule::Doc, chapter_url: &str, n: u32) -> Option<String> {
+    let path_end = chapter_url.find(['?', '#']).unwrap_or(chapter_url.len());
+    let (path, _) = chapter_url.split_at(path_end);
+    let slash = path.rfind('/')? + 1;
+    let (stem, ext) = match path[slash..].rfind('.') {
+        Some(dot) => path.split_at(slash + dot),
+        None => (path, ""),
+    };
+    let wanted: Vec<String> = ["_", "-"].iter().map(|sep| format!("{stem}{sep}{n}{ext}")).collect();
+    let links = rule::eval(&rule::Item::whole(doc), "a@href").ok()?;
+    links
+        .lines()
+        .map(|l| rule::absolute(&doc.url, l.trim()))
+        .find(|u| wanted.iter().any(|w| rule::same_page(u, w)))
 }
 
 /// One chapter's text, following `nextContentUrl` for sites that split a chapter
@@ -469,6 +513,24 @@ pub fn content_with(
     chapter_url: &str,
     next_chapter: Option<&str>,
 ) -> Result<String, String> {
+    chapter_with(ag, src, chapter_url, next_chapter).map(|c| c.text)
+}
+
+/// The chapter, and whether we got all of it. See [`Chapter`].
+pub fn chapter(
+    src: &BookSource,
+    chapter_url: &str,
+    next_chapter: Option<&str>,
+) -> Result<Chapter, String> {
+    chapter_with(&agent(), src, chapter_url, next_chapter)
+}
+
+pub fn chapter_with(
+    ag: &ureq::Agent,
+    src: &BookSource,
+    chapter_url: &str,
+    next_chapter: Option<&str>,
+) -> Result<Chapter, String> {
     let r = src.rule_content.clone().unwrap_or_default();
     let rule_str = r
         .content
@@ -476,10 +538,11 @@ pub fn content_with(
         .filter(|s| !s.is_empty())
         .ok_or("这个书源没有正文规则")?;
 
+    let mut rule_str = rule_str.to_string();
     let mut page = chapter_url.to_string();
     let mut seen = std::collections::HashSet::new();
     let mut text = String::new();
-    for _ in 0..20 {
+    for n in 2..22 {
         if !seen.insert(page.clone()) {
             break;
         }
@@ -487,7 +550,18 @@ pub fn content_with(
         // Chapter bodies come back as HTML far more often than not — `@html`
         // hands over the raw markup, ad scripts and all. Nobody wants to read a
         // <script> tag, so the markup stops here, at the edge of the engine.
-        let part = rule::html_to_text(&rule::eval(&rule::Item::whole(&doc), rule_str)?);
+        let mut part = rule::html_to_text(&rule::eval(&rule::Item::whole(&doc), &rule_str)?);
+        // `id.chaptercontent@p@html` on a chapter the site wrote in <br> lines:
+        // the last step finds nothing, the step before it holds the text.
+        if n == 2 && part.trim().is_empty() {
+            if let Some(up) = rule::looser(&rule_str) {
+                let got = rule::html_to_text(&rule::eval(&rule::Item::whole(&doc), &up)?);
+                if !got.trim().is_empty() {
+                    part = got;
+                    rule_str = up;
+                }
+            }
+        }
         if !part.trim().is_empty() {
             if !text.is_empty() {
                 text.push('\n');
@@ -495,12 +569,15 @@ pub fn content_with(
             text.push_str(part.trim());
         }
         let next = match r.next_content_url.as_deref().filter(|s| !s.is_empty()) {
-            None => break,
+            None => String::new(),
             Some(nr) => rule::eval(&rule::Item::whole(&doc), nr)?,
         };
         let next = match next.lines().next().map(str::trim).filter(|s| !s.is_empty()) {
-            None => break,
-            Some(n) => rule::absolute(&doc.url, n),
+            Some(u) => rule::absolute(&doc.url, u),
+            None => match continuation(&doc, chapter_url, n) {
+                Some(u) => u,
+                None => break,
+            },
         };
         if next_chapter.is_some_and(|c| rule::same_page(&next, c)) {
             break;
@@ -511,7 +588,14 @@ pub fn content_with(
     if !text.trim().is_empty() && !readable(&text) {
         return Err("正文是加密的，本机引擎读不了（这个站要浏览器解密）".into());
     }
-    Ok(text)
+    let (mut text, cut) = tidy::scrub(&text);
+    // A site's 「转码失败，请换源」 in the chapter's place is no text at all, and
+    // must not reach the book as if it were the chapter.
+    if tidy::is_notice(&text) {
+        text.clear();
+    }
+    let whole = !text.is_empty() && !cut && !tidy::is_preview(&text);
+    Ok(Chapter { text, whole })
 }
 
 /// Is this prose, or is it a blob?
@@ -553,7 +637,10 @@ fn readable(text: &str) -> bool {
 ///
 /// The disqualifications are only the ones that cannot come out differently
 /// tomorrow's search: no search rule at all, rules we refuse to run (JavaScript,
-/// webView), a site that is not text, or a site that would not talk to us.
+/// webView), a site that is not text, a site that would not talk to us — or a
+/// site whose chapters, when we read some, come back as teasers, a single line
+/// of address, or a first page that says "本章未完". Those passed the old fifty-
+/// character test and then filled whole books with fragments.
 #[derive(Debug, Clone)]
 pub struct TestResult {
     pub ok: bool,
@@ -587,9 +674,21 @@ pub const TEST_KEYS: [&str; 3] = ["剑", "总裁", "斗破苍穹"];
 /// ad slot, or a book that happens to be broken.
 const HITS_TO_TRY: usize = 3;
 
-/// How many chapters we open. Chapter one is routinely a notice, a preface or a
-/// picture, none of which is evidence that the source is dead.
-const CHAPTERS_TO_TRY: usize = 3;
+/// Where in a book we read. Chapter one is routinely a notice, a preface or a
+/// picture; a chapter from the middle is what the rest of the book looks like.
+fn sample_chapters(n: usize) -> Vec<usize> {
+    if n <= 3 {
+        return (0..n).collect();
+    }
+    vec![n / 3, n / 2, n * 2 / 3]
+}
+
+/// A chapter long enough and whole enough to count as proof.
+const PROOF_CHARS: usize = 300;
+
+/// Books that must come back in fragments before the source is condemned. One
+/// is not enough: a single book can be behind a paywall on an honest site.
+const BAD_BOOKS_TO_CONDEMN: u32 = 2;
 
 pub fn test_with_timeout(src: &BookSource, secs: u64) -> TestResult {
     let dead = |message: String, found: u32| TestResult {
@@ -633,11 +732,14 @@ pub fn test_with_timeout(src: &BookSource, secs: u64) -> TestResult {
     }
     let found = hits.len() as u32;
 
-    // Everything below is a bonus round: it decides what the note says, never
-    // whether the source lives. A broken chapter rule is worth knowing about
-    // before you download a book, but it is not grounds for deletion — the site
-    // may serve some books fine, and the search still works either way.
+    // Now read some of a book. A site that will not hand over a chapter today —
+    // a timeout, a 404 on one book — keeps its place: that can come out
+    // differently tomorrow, and the search works either way. A site that hands
+    // over fragments does not. Its rule grabs the wrong thing on every book, and
+    // a source that downloads a thousand teasers is worse than no source.
     let mut trouble = String::new();
+    // Books whose chapters came back at all, and those that came back broken.
+    let (mut opened, mut broken) = (0u32, 0u32);
     for hit in hits.iter().take(HITS_TO_TRY) {
         let chapters = match toc_with(&ag, src, &hit.book_url) {
             Err(e) => {
@@ -650,20 +752,37 @@ pub fn test_with_timeout(src: &BookSource, secs: u64) -> TestResult {
             }
             Ok(c) => c,
         };
-        for (i, ch) in chapters.iter().take(CHAPTERS_TO_TRY).enumerate() {
+        let (mut seen, mut bad) = (false, false);
+        for i in sample_chapters(chapters.len()) {
             let after = chapters.get(i + 1).map(|c| c.url.as_str());
-            match content_with(&ag, src, &ch.url, after) {
+            match chapter_with(&ag, src, &chapters[i].url, after) {
                 Err(e) => trouble = e,
-                Ok(t) if t.chars().count() < 50 => trouble = "正文抓下来是空的".into(),
-                Ok(t) => {
+                Ok(c) if c.whole && c.text.chars().count() >= PROOF_CHARS => {
                     return alive(
                         format!("{} 个结果 · 目录 {} 章", found, chapters.len()),
                         found,
-                        t.chars().count() as u32,
+                        c.text.chars().count() as u32,
                     );
+                }
+                // Whole but short: a notice, a 请假条. Proves nothing either way.
+                Ok(c) if c.whole => {
+                    seen = true;
+                    trouble = "正文太短".into();
+                }
+                Ok(_) => {
+                    seen = true;
+                    bad = true;
+                    break;
                 }
             }
         }
+        opened += seen as u32;
+        broken += bad as u32;
+    }
+    // Every book we could open came back in pieces, and there was more than
+    // one of them — or only one book to be had.
+    if broken > 0 && broken == opened && (broken >= BAD_BOOKS_TO_CONDEMN || hits.len() == 1) {
+        return dead("正文抓不全，只有开头一段或空白".into(), found);
     }
     alive(
         format!("{found} 个结果，但正文没读出来（{trouble}）"),
@@ -675,6 +794,30 @@ pub fn test_with_timeout(src: &BookSource, secs: u64) -> TestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Page two of the chapter is found by its address, whatever the link says;
+    /// the next chapter is not.
+    #[test]
+    fn a_chapter_continues_on_its_own_address() {
+        let doc = rule::Doc {
+            url: "https://s.example/book/9404.html".into(),
+            html: Some(scraper::Html::parse_document(
+                r#"<a href="/book/9403.html">上一章</a><a href="/book/9404_2.html">下一章</a>"#,
+            )),
+            json: None,
+        };
+        assert_eq!(
+            continuation(&doc, "https://s.example/book/9404.html", 2).as_deref(),
+            Some("https://s.example/book/9404_2.html")
+        );
+        assert_eq!(continuation(&doc, "https://s.example/book/9404.html", 3), None);
+        let next_only = rule::Doc {
+            url: "https://s.example/book/9404.html".into(),
+            html: Some(scraper::Html::parse_document(r#"<a href="/book/9405.html">下一章</a>"#)),
+            json: None,
+        };
+        assert_eq!(continuation(&next_only, "https://s.example/book/9404.html", 2), None);
+    }
 
     #[test]
     fn parses_a_legado_array() {

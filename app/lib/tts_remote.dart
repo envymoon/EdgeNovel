@@ -125,7 +125,7 @@ class TtsRemoteClient {
     }
   }
 
-  /// What voices the server has. `/v1/audio/voices` is what kokoro-fastapi and
+  /// What voices the server has. `/v1/audio/voices` is what qwentts.cpp and
   /// our own server expose; anything else gets an empty list and the user types
   /// the voice name by hand, which still works.
   Future<List<RemoteVoice>> voices(TtsServer s) async {

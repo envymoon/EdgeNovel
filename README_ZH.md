@@ -1,9 +1,9 @@
-# Novel
+# 挚阅
 
 [简体中文](README_ZH.md) | [English](README.md)
 
 <p align="center">
-  <img src="docs/assets/novel-icon.ico" width="112" alt="Novel 应用图标">
+  <img src="docs/assets/novel-icon.ico" width="112" alt="挚阅应用图标">
 </p>
 
 <p align="center"><strong>为中文网文而生的安静阅读方式。</strong><br>本地 AI、可检索的故事，以及始终留在你身边的阅读标注。</p>
@@ -87,6 +87,7 @@
 - 章节概览、全书节奏曲线（阅读页底部也有）、全文语义检索
 - 阅读数据：完全按自己的阅读记录统计
 - AI 封面：本地生图模型画封面，以及章间立绘
+- 听书（Windows）：本机 Qwen3-TTS 语音，边听边合成或提前合成，可调语速
 - 优书网书评（可选），只在主动打开时查询
 - 主题、强调色、背景、界面字体，界面可切换中英文
 - 新版本第一次启动前，自动备份书架数据和设置
@@ -123,7 +124,7 @@ AI 封面使用量化到 0.70 GB 的动漫风格 SD 1.5 模型，由打过补丁
 
 ## 面向边缘设备的动态负载优化
 
-边缘计算不只是把模型放到设备上。Novel 会持续调整**什么时候运行**以及**运行多少**，尽量让阅读过程保持流畅：
+边缘计算不只是把模型放到设备上。挚阅会持续调整**什么时候运行**以及**运行多少**，尽量让阅读过程保持流畅：
 
 - 开始一小段任务前，同时参考充电状态、电量、温度、空闲时间、内存压力和任务优先级。
 - **无感空闲**：把工作切成小片，主动让出阅读操作的响应时间；较长间隔时尽可能卸载模型。
@@ -139,8 +140,8 @@ Windows 和 Android 使用独立 Release，不共用安装包或发布标签。
 
 ### Windows
 
-**发布标签：** [`windows-v1.1.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.1.0)  
-**下载文件：** `Novel-Windows-x64-1.1.0.zip`
+**发布标签：** [`windows-v1.2.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0)  
+**下载文件：** `Zhiyue-Windows-x64-1.2.0.zip`
 
 Windows 版是目前功能最完整的版本。ZIP 内的 `novel.exe`、`data` 目录和 DLL 必须一起保留，不能只下载或复制 exe。
 
@@ -166,7 +167,7 @@ iOS 还没有可用版本。目前正在云端 Mac 上开始开发，第一步�
 - `app/`：Flutter 界面、平台工程、应用状态和移动端共用层
 - `app/rust/`：应用使用的 Rust 数据与 AI 桥接实现
 - `core/`：小说解析、人物、关系、感情结构等核心算法与诊断工具
-- `tts-server/`：可选的听书服务
+- `tts-server/`：可选的远程听书服务
 - `app/docs/`：移动端迁移和实现说明
 
 ## 当前限制

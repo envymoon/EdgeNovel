@@ -7,8 +7,8 @@ sentence, gets back a WAV, and keeps nothing.
 
 Why OpenAI's shape (`POST /v1/audio/speech`): it is what every self-hosted TTS
 project already speaks. That means this server is the convenient option and not
-the required one — point the app at kokoro-fastapi, GPT-SoVITS, Fish-Speech or
-anything else with the same endpoint and it works — and a better model next year
+the required one — point the app at qwentts.cpp's tts-server, GPT-SoVITS,
+Fish-Speech or anything else with the same endpoint and it works — and a better model next year
 is a backend file here, not an app release.
 
 Run it with start.ps1 / start.sh, which set the environment up first.
@@ -65,8 +65,8 @@ def models() -> dict:
 
 @app.get("/v1/audio/voices")
 def voices() -> dict:
-    """Not part of OpenAI's spec, but kokoro-fastapi established it and the
-    reader uses it to offer a picker instead of a text box. Labels are separate
+    """Not part of OpenAI's spec, but self-hosted servers commonly offer it and
+    the reader uses it to offer a picker instead of a text box. Labels are separate
     from ids so a cloned voice can be called 主角 in the app while staying a
     filename here."""
     return {"voices": [{"id": v.id, "label": v.label} for v in backend().voices()]}
@@ -130,7 +130,7 @@ def main() -> None:
                    help="默认监听全部网卡，手机才连得上")
     p.add_argument("--port", type=int, default=8880)
     p.add_argument("--backend", default=os.environ.get("TTS_BACKEND", "f5"),
-                   help="f5 | kokoro | edge")
+                   help="f5 | edge")
     p.add_argument("--voices-dir", default="voices",
                    help="音色参考音频目录（f5 后端用）")
     args = p.parse_args()

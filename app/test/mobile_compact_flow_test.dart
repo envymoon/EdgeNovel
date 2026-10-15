@@ -89,9 +89,18 @@ class _SilentSpeech implements LocalSpeechSynthesizer {
   @override
   Future<Uint8List> synthesize({
     required String text,
-    required double speed,
-    required int voice,
+    required String voice,
   }) async => Uint8List(0);
+
+  @override
+  Future<bool> prepare({required String text, required String voice}) async =>
+      false;
+
+  @override
+  Future<int> cacheBytes() async => 0;
+
+  @override
+  Future<void> clearCache() async {}
 }
 
 void main() {

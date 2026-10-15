@@ -8,6 +8,8 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'annotation_page.dart';
 import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
+import 'background_task_bar.dart';
+import 'bloom.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
@@ -24,6 +26,7 @@ import 'src/rust/api/image.dart';
 import 'theme.dart';
 import 'toc_drawer.dart';
 import 'tts_controller.dart';
+import 'tts_prepare.dart';
 import 'tts_text.dart';
 import 'tts_server_page.dart';
 import 'wheel_glide.dart';
@@ -73,6 +76,7 @@ class _ReaderPageState extends State<ReaderPage> {
       enableIo: widget.enableTtsIo && AppPlatformSupport.hasReadAloud,
     );
     _tts.addListener(_onTtsTick);
+    TtsPrepare.instance.addListener(_onPrepareTick);
     widget.reader.addListener(_onChapter);
   }
 
@@ -81,6 +85,7 @@ class _ReaderPageState extends State<ReaderPage> {
     widget.reader.removeListener(_onChapter);
     _positions.itemPositions.removeListener(_onScroll);
     _tts.removeListener(_onTtsTick);
+    TtsPrepare.instance.removeListener(_onPrepareTick);
     _tts.dispose();
     _pageInfo.dispose();
     super.dispose();
@@ -142,6 +147,66 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
     );
     await _tts.onVoiceOrSpeedChanged();
+  }
+
+  void _onPrepareTick() {
+    final job = TtsPrepare.instance;
+    final why = job.error;
+    if (why == null || job.running || !mounted) return;
+    job.error = null;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${context.tr('提前合成失败')}：$why')));
+  }
+
+  /// 提前合成 is the local engine's; a server is asked as the voice goes.
+  bool get _canPrepare => !widget.settings.ttsRemote;
+
+  bool get _preparingThis =>
+      TtsPrepare.instance.running &&
+      TtsPrepare.instance.bookId == widget.reader.info?.id;
+
+  String get _prepareLabel => _preparingThis
+      ? '停止提前合成 · ${(TtsPrepare.instance.fraction * 100).floor()}%'
+      : '提前合成…';
+
+  /// Speak this chapter and the next few into the cache, or stop doing so.
+  Future<void> _prepareTts() async {
+    final job = TtsPrepare.instance;
+    if (_preparingThis) {
+      job.cancel();
+      return;
+    }
+    final info = widget.reader.info;
+    if (info == null) return;
+    final count = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('提前合成'),
+        children: [
+          for (final (n, label) in const [
+            (1, '本章'),
+            (5, '5 章'),
+            (10, '10 章'),
+            (20, '20 章'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, n),
+              child: Text(label),
+            ),
+        ],
+      ),
+    );
+    if (count == null || !mounted) return;
+    unawaited(
+      job.start(
+        book: info,
+        fromChapter: widget.reader.chapterIndex,
+        count: count,
+        voice: widget.settings.ttsLocalVoice,
+        speech: widget.localSpeech,
+      ),
+    );
   }
 
   Future<void> _toggleTts() async {
@@ -453,7 +518,7 @@ class _ReaderPageState extends State<ReaderPage> {
   );
 
   Widget _ttsMenu(ReadingTheme t, {required bool compact}) => ListenableBuilder(
-    listenable: _tts,
+    listenable: Listenable.merge([_tts, TtsPrepare.instance]),
     builder: (context, _) => SizedBox(
       width: compact ? 40 : 48,
       child: PopupMenuButton<String>(
@@ -465,13 +530,18 @@ class _ReaderPageState extends State<ReaderPage> {
               : Icons.headset_mic_outlined,
           color: _tts.playing ? t.text : t.muted,
         ),
-        onSelected: (value) =>
-            value == 'play' ? _toggleTts() : _openTtsSettings(),
+        onSelected: (value) => switch (value) {
+          'play' => _toggleTts(),
+          'prepare' => _prepareTts(),
+          _ => _openTtsSettings(),
+        },
         itemBuilder: (_) => [
           PopupMenuItem(
             value: 'play',
-            child: Text(_tts.playing ? '暂停朗读' : '收听本章'),
+            child: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
           ),
+          if (_canPrepare)
+            PopupMenuItem(value: 'prepare', child: Text(_prepareLabel)),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'settings', child: Text('听书设置…')),
         ],
@@ -480,7 +550,7 @@ class _ReaderPageState extends State<ReaderPage> {
   );
 
   Widget _narrowReaderMenu(ReadingTheme t) => ListenableBuilder(
-    listenable: _tts,
+    listenable: Listenable.merge([_tts, TtsPrepare.instance]),
     builder: (context, _) => SizedBox(
       width: 40,
       child: PopupMenuButton<String>(
@@ -494,6 +564,9 @@ class _ReaderPageState extends State<ReaderPage> {
               return;
             case 'tts':
               _toggleTts();
+              return;
+            case 'ttsPrepare':
+              _prepareTts();
               return;
             case 'ttsSettings':
               _openTtsSettings();
@@ -518,10 +591,19 @@ class _ReaderPageState extends State<ReaderPage> {
                       ? Icons.headset_off_outlined
                       : Icons.headset_mic_outlined,
                 ),
-                title: Text(_tts.playing ? '暂停朗读' : '收听本章'),
+                title: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
+            if (_canPrepare)
+              PopupMenuItem(
+                value: 'ttsPrepare',
+                child: ListTile(
+                  leading: const Icon(Icons.download_for_offline_outlined),
+                  title: Text(_prepareLabel),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
             const PopupMenuItem(
               value: 'ttsSettings',
               child: ListTile(
@@ -742,6 +824,10 @@ class _ReaderPageState extends State<ReaderPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           ListenableBuilder(
+                            listenable: TtsPrepare.instance,
+                            builder: (context, _) => _prepareLine(t),
+                          ),
+                          ListenableBuilder(
                             listenable: _tts,
                             builder: (context, _) => _tts.hasQueue
                                 ? _ttsBar(t)
@@ -800,6 +886,25 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 提前合成 started here shows its progress here: the app-wide task bar
+  /// stays off the reader's page.
+  Widget _prepareLine(ReadingTheme t) {
+    final a = TtsPrepare.instance.activity;
+    if (a == null) return const SizedBox.shrink();
+    return Container(
+      decoration: BoxDecoration(
+        color: t.background,
+        border: Border(top: BorderSide(color: t.muted.withValues(alpha: 0.15))),
+      ),
+      child: TaskLine(
+        theme: t,
+        text: describeActivity(a),
+        activity: a,
+        onTap: _openTtsSettings,
+      ),
+    );
+  }
+
   /// The read-aloud strip: it stays up while a chapter is queued, not just while
   /// sound is coming out, so pause leaves the position and the progress bar
   /// where they were. Play/pause, a sentence-level progress bar whose secondary
@@ -817,19 +922,13 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
       child: Row(
         children: [
-          // While waiting on synthesis the button becomes a spinner in place:
+          // While waiting on synthesis the button becomes the star in place:
           // the silence is explained without the strip changing shape.
           _tts.buffering
-              ? const SizedBox(
+              ? SizedBox(
                   width: 48,
                   height: 48,
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
+                  child: Center(child: Bloom(color: t.muted, size: 18)),
                 )
               : IconButton(
                   tooltip: context.tr(_tts.playing ? '暂停' : '继续'),
@@ -875,7 +974,7 @@ class _ReaderPageState extends State<ReaderPage> {
             onPressed: () {
               final i = speeds.indexOf(widget.settings.ttsSpeed);
               widget.settings.setTtsSpeed(speeds[(i + 1) % speeds.length]);
-              _tts.onVoiceOrSpeedChanged();
+              _tts.onSpeedChanged();
             },
             child: Text(
               '${_tts.speed}×',

@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `at`, `cover_limit`, `cover_prompt`, `cover_word`, `cue_limit`, `draw`, `drop_plates`, `feed`, `file_bytes`, `find_decoder`, `find_engine`, `find_model`, `find_named`, `image_dir`, `model_files`, `new`, `next_tmp`, `people_tags`, `personal`, `plate_prompt`, `plates_dir`, `plates`, `prompt`, `render`, `stop`, `stopped`, `x`
+// These functions are ignored because they are not marked as `pub`: `at`, `cover_limit`, `cover_prompt`, `cover_word`, `cue_limit`, `draw`, `drop_plates`, `feed`, `file_bytes`, `find_decoder`, `find_engine`, `find_model`, `find_named`, `image_dir`, `model_files`, `new`, `next_tmp`, `people_tags`, `personal`, `plate_prompt`, `plates_dir`, `plates`, `prompt`, `render`, `still_prompt`, `stop`, `stopped`, `x`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Log`, `Slot`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`

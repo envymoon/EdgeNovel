@@ -6,7 +6,6 @@
 # normal way to start the server, not just the first-time setup.
 #
 #   ./start.sh                  # F5-TTS, the good voices
-#   ./start.sh kokoro           # small and CPU-friendly
 #   ./start.sh edge             # best quality with no GPU, but goes via Microsoft
 #   PORT=9000 ./start.sh
 set -euo pipefail

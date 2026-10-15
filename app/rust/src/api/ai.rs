@@ -849,8 +849,9 @@ fn kill_port_holder(_port: u16) {}
 
 /// Minimal HTTP/1.1 over loopback. `Connection: close` + read-to-end keeps the
 /// framing trivial; chunked bodies are de-chunked at the byte level, because a
-/// chunk boundary happily lands inside a UTF-8 sequence.
-fn http(
+/// chunk boundary happily lands inside a UTF-8 sequence. Read-aloud's engine
+/// speaks through it too.
+pub(crate) fn http(
     port: u16,
     method: &str,
     path: &str,
@@ -893,31 +894,29 @@ fn http(
         .ok_or("坏响应：没有状态码")?;
     let rest = &raw[split + 4..];
     let body = if head.contains("transfer-encoding: chunked") {
-        dechunk(rest)
+        dechunk(rest).ok_or("响应不完整")?
     } else {
         rest.to_vec()
     };
     Ok((status, body))
 }
 
-fn dechunk(mut b: &[u8]) -> Vec<u8> {
+/// None when the body stops before its last chunk: a server that failed
+/// halfway through a stream, which must not pass for a short answer.
+fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     loop {
-        let Some(pos) = b.windows(2).position(|w| w == b"\r\n") else {
-            break;
-        };
+        let pos = b.windows(2).position(|w| w == b"\r\n")?;
         let size = std::str::from_utf8(&b[..pos])
             .ok()
-            .and_then(|s| usize::from_str_radix(s.trim(), 16).ok())
-            .unwrap_or(0);
-        let start = pos + 2;
-        if size == 0 || b.len() < start + size {
-            break;
+            .and_then(|s| usize::from_str_radix(s.trim(), 16).ok())?;
+        if size == 0 {
+            return Some(out);
         }
-        out.extend_from_slice(&b[start..start + size]);
+        let start = pos + 2;
+        out.extend_from_slice(b.get(start..start + size)?);
         b = b.get(start + size + 2..).unwrap_or(&[]);
     }
-    out
 }
 
 /// The tuned novel logic above this boundary is platform-independent. Windows

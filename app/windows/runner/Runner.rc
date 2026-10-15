@@ -90,7 +90,7 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.novel" "\0"
-            VALUE "FileDescription", "novel" "\0"
+            VALUE "FileDescription", "挚阅" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "novel" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.novel. All rights reserved." "\0"

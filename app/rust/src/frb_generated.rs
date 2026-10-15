@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 119174137;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1306536846;
 
 // Section: executor
 
@@ -784,6 +784,38 @@ fn wire__crate__api__book__clear_reading_events_impl(
         },
     )
 }
+fn wire__crate__api__tts__clear_tts_cache_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "clear_tts_cache",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::tts::clear_tts_cache()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__book__close_book_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1315,6 +1347,7 @@ fn wire__crate__api__source__download_book_impl(
             let api_book_url = <String>::sse_decode(&mut deserializer);
             let api_title = <String>::sse_decode(&mut deserializer);
             let api_author = <String>::sse_decode(&mut deserializer);
+            let api_alternates = <Vec<crate::api::source::Offer>>::sse_decode(&mut deserializer);
             let api_sink = <StreamSink<
                 crate::api::source::DownloadProgress,
                 flutter_rust_bridge::for_generated::SseCodec,
@@ -1327,6 +1360,7 @@ fn wire__crate__api__source__download_book_impl(
                         api_book_url,
                         api_title,
                         api_author,
+                        api_alternates,
                         api_sink,
                     )?;
                     Ok(output_ok)
@@ -1549,41 +1583,6 @@ fn wire__crate__api__ai__enrich_book_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::ai::enrich_book(api_path, api_book_id, api_sink)?;
-                    Ok(output_ok)
-                })())
-            }
-        },
-    )
-}
-fn wire__crate__api__tts__extract_tar_bz2_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "extract_tar_bz2",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_archive_path = <String>::sse_decode(&mut deserializer);
-            let api_dest_dir = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, String>((move || {
-                    let output_ok =
-                        crate::api::tts::extract_tar_bz2(api_archive_path, api_dest_dir)?;
                     Ok(output_ok)
                 })())
             }
@@ -2555,6 +2554,40 @@ fn wire__crate__api__image__plates_drawn_impl(
         },
     )
 }
+fn wire__crate__api__tts__prepare_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "prepare",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_text = <String>::sse_decode(&mut deserializer);
+            let api_voice = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::tts::prepare(api_text, api_voice)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__source__probe_offers_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3297,6 +3330,40 @@ fn wire__crate__api__ai__stop_ai_impl(
         },
     )
 }
+fn wire__crate__api__tts__stop_tts_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "stop_tts",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok({
+                        crate::api::tts::stop_tts();
+                    })?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__tts__synth_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3320,12 +3387,11 @@ fn wire__crate__api__tts__synth_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_text = <String>::sse_decode(&mut deserializer);
-            let api_length_scale = <f64>::sse_decode(&mut deserializer);
             let api_voice = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::tts::synth(api_text, api_length_scale, api_voice)?;
+                    let output_ok = crate::api::tts::synth(api_text, api_voice)?;
                     Ok(output_ok)
                 })())
             }
@@ -3428,6 +3494,38 @@ fn wire__crate__api__book__time_per_book_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::book::time_per_book()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__tts__tts_cache_bytes_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "tts_cache_bytes",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::tts::tts_cache_bytes()?;
                     Ok(output_ok)
                 })())
             }
@@ -5112,29 +5210,29 @@ fn pde_ffi_dispatcher_primary_impl(
         20 => wire__crate__api__book__clear_book_cover_impl(port, ptr, rust_vec_len, data_len),
         21 => wire__crate__api__image__clear_plates_impl(port, ptr, rust_vec_len, data_len),
         22 => wire__crate__api__book__clear_reading_events_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__book__close_book_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__image__cover_choices_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__image__default_cover_scene_impl(port, ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__source__delete_all_sources_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__book__delete_annotation_impl(port, ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__book__delete_book_impl(port, ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__ai__delete_engine_impl(port, ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__image__delete_image_engine_impl(port, ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__image__delete_image_model_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__ai__delete_model_impl(port, ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__source__delete_source_impl(port, ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__source__delete_sources_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__tts__delete_tts_engine_impl(port, ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__tts__delete_tts_voice_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__ai__describe_people_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__source__download_book_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__image__draw_cover_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__image__draw_plates_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__book__drop_book_cache_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__ai__drop_index_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__book__drop_summaries_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__ai__enrich_book_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__tts__extract_tar_bz2_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__tts__clear_tts_cache_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__book__close_book_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__image__cover_choices_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__image__default_cover_scene_impl(port, ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__source__delete_all_sources_impl(port, ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__book__delete_annotation_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__book__delete_book_impl(port, ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__ai__delete_engine_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__image__delete_image_engine_impl(port, ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__image__delete_image_model_impl(port, ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__ai__delete_model_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__source__delete_source_impl(port, ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__source__delete_sources_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__tts__delete_tts_engine_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__tts__delete_tts_voice_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__ai__describe_people_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__source__download_book_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__image__draw_cover_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__image__draw_plates_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__book__drop_book_cache_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__ai__drop_index_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__book__drop_summaries_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__ai__enrich_book_impl(port, ptr, rust_vec_len, data_len),
         46 => wire__crate__api__book__forget_cast_impl(port, ptr, rust_vec_len, data_len),
         47 => wire__crate__api__ai__forget_relations_impl(port, ptr, rust_vec_len, data_len),
         49 => wire__crate__api__image__image_status_impl(port, ptr, rust_vec_len, data_len),
@@ -5171,35 +5269,38 @@ fn pde_ffi_dispatcher_primary_impl(
         71 => wire__crate__api__image__plate_chapters_impl(port, ptr, rust_vec_len, data_len),
         72 => wire__crate__api__image__plate_path_impl(port, ptr, rust_vec_len, data_len),
         73 => wire__crate__api__image__plates_drawn_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
-        77 => {
+        74 => wire__crate__api__tts__prepare_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
+        78 => {
             wire__crate__api__book__relationship_structure_impl(port, ptr, rust_vec_len, data_len)
         }
-        78 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
-        87 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
-        90 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
-        97 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
+        103 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

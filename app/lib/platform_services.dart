@@ -8,7 +8,6 @@ import 'package:path_provider/path_provider.dart';
 import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/tts.dart' as native_tts;
-import 'tts_text.dart';
 
 /// Directories owned by the application. Feature code asks for a named child
 /// instead of deciding where Android, iOS or Windows should write files.
@@ -100,11 +99,14 @@ class NativeDeviceStatusReader implements DeviceStatusReader {
 abstract interface class LocalSpeechSynthesizer {
   Future<bool> ready();
 
-  Future<Uint8List> synthesize({
-    required String text,
-    required double speed,
-    required int voice,
-  });
+  Future<Uint8List> synthesize({required String text, required String voice});
+
+  /// Speak a sentence into the cache for later; false when it already was.
+  Future<bool> prepare({required String text, required String voice});
+
+  Future<int> cacheBytes();
+
+  Future<void> clearCache();
 }
 
 /// Keeps the bundled voice behind the same boundary as future iOS/Android
@@ -116,15 +118,18 @@ class NativeLocalSpeechSynthesizer implements LocalSpeechSynthesizer {
   Future<bool> ready() => native_tts.ttsReady();
 
   @override
-  Future<Uint8List> synthesize({
-    required String text,
-    required double speed,
-    required int voice,
-  }) => native_tts.synth(
-    text: text,
-    lengthScale: ttsLengthScale(speed),
-    voice: 'kokoro-$voice',
-  );
+  Future<Uint8List> synthesize({required String text, required String voice}) =>
+      native_tts.synth(text: text, voice: voice);
+
+  @override
+  Future<bool> prepare({required String text, required String voice}) =>
+      native_tts.prepare(text: text, voice: voice);
+
+  @override
+  Future<int> cacheBytes() => native_tts.ttsCacheBytes();
+
+  @override
+  Future<void> clearCache() => native_tts.clearTtsCache();
 }
 
 /// Shared lifecycle policy. Until a native background scheduler is connected,
