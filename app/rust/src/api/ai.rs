@@ -3,7 +3,7 @@
 //! updates independently of the app, crashes without taking the reader down,
 //! and is swappable for anything speaking the same API (on Android it will be
 //! the same llama.cpp behind a different launcher). iOS allows no child
-//! processes, so there the same server runs on a thread ([`crate::ios_engine`])
+//! processes, so there the same server runs on a thread ([`crate::engine_thread`])
 //! and is spoken to the same way.
 //!
 //! The model only ever gets closed tasks: bounded input, bounded output, a
@@ -17,7 +17,7 @@ use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(in_process_engine))]
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -34,11 +34,11 @@ const ENGINE_EXE: &str = "llama-server.exe";
 #[cfg(not(windows))]
 const ENGINE_EXE: &str = "llama-server";
 
-/// A running engine: a child process, or on iOS a thread of this one.
-#[cfg(not(target_os = "ios"))]
+/// A running engine: a child process, or on iOS (and a Mac) a thread of this one.
+#[cfg(not(in_process_engine))]
 type Engine = Child;
-#[cfg(target_os = "ios")]
-type Engine = crate::ios_engine::Engine;
+#[cfg(in_process_engine)]
+type Engine = crate::engine_thread::Engine;
 
 static AI_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// One flag per long-running pass. Enrichment and indexing are different
@@ -288,10 +288,10 @@ fn find_engine(dir: &Path) -> Option<PathBuf> {
         let _ = dir;
         return crate::android_engine::executable();
     }
-    // Compiled into the app: there is no file to find.
-    #[cfg(target_os = "ios")]
-    return Some(dir.to_path_buf());
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    // Compiled into the app: there is no file to find, only an iOS too old for it.
+    #[cfg(in_process_engine)]
+    return crate::engine_thread::supported().then(|| dir.to_path_buf());
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     {
         fn walk(dir: &Path, depth: u32) -> Option<PathBuf> {
             let entries = std::fs::read_dir(dir).ok()?;
@@ -456,9 +456,9 @@ pub fn delete_model(embed: bool) -> Result<(), String> {
 pub fn delete_engine() -> Result<(), String> {
     #[cfg(target_os = "android")]
     return Err("安卓推理引擎随应用安装，不能单独删除".into());
-    #[cfg(target_os = "ios")]
+    #[cfg(in_process_engine)]
     return Err("推理引擎随应用安装，不能单独删除".into());
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     {
         let dir = ai_dir()?;
         stop_ai();
@@ -477,7 +477,7 @@ pub fn delete_engine() -> Result<(), String> {
 fn health(port: u16) -> bool {
     // /health and /v1/models are public in llama.cpp. Use a protected endpoint
     // on phones so a different llama-server instance cannot be reused.
-    let path = if cfg!(any(target_os = "android", target_os = "ios")) {
+    let path = if cfg!(any(target_os = "android", in_process_engine)) {
         "/props"
     } else {
         "/health"
@@ -586,7 +586,7 @@ fn ensure(
     );
     args.extend(extra.iter().map(OsStr::new));
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(in_process_engine))]
     let child = {
         let mut cmd = Command::new(&exe);
         cmd.args(&args)
@@ -621,21 +621,21 @@ fn ensure(
         crate::job::adopt(&child);
         child
     };
-    #[cfg(target_os = "ios")]
+    #[cfg(in_process_engine)]
     let child = {
         let _ = &exe;
-        let key = crate::ios_engine::api_key()?;
+        let key = crate::engine_thread::api_key()?;
         let args: Vec<&OsStr> = args
             .into_iter()
             .chain(["--api-key", key, "--threads-http", "2"].map(OsStr::new))
             .collect();
-        crate::ios_engine::Engine::start(port, &args)
+        crate::engine_thread::Engine::start(port, &args)
             .map_err(|e| format!("启动引擎失败: {e}"))?
     };
     *slot.lock().unwrap() = Some(child);
 
     // Model load is disk-bound; a large one on a cold disk takes a while.
-    let load_ticks = if cfg!(any(target_os = "android", target_os = "ios")) {
+    let load_ticks = if cfg!(any(target_os = "android", in_process_engine)) {
         1200
     } else {
         240
@@ -726,12 +726,12 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
-    #[cfg(target_os = "ios")]
-    let _prepare = crate::ios_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(in_process_engine)]
+    let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
     const F16_KV: &str = "f16";
-    #[cfg(any(windows, target_os = "android", target_os = "ios"))]
+    #[cfg(any(windows, target_os = "android", in_process_engine))]
     const PREFERRED_KV: &str = "q8_0";
-    #[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(windows, target_os = "android", in_process_engine)))]
     const PREFERRED_KV: &str = F16_KV;
 
     if health(PORT)
@@ -796,8 +796,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
-    #[cfg(target_os = "ios")]
-    let _prepare = crate::ios_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(in_process_engine)]
+    let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
     ensure(
         EMBED_PORT,
@@ -909,12 +909,12 @@ pub(crate) fn http(
         "Authorization: Bearer {}\r\n",
         crate::android_engine::api_key()?
     );
-    #[cfg(target_os = "ios")]
+    #[cfg(in_process_engine)]
     let authorization = format!(
         "Authorization: Bearer {}\r\n",
-        crate::ios_engine::api_key()?
+        crate::engine_thread::api_key()?
     );
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     let authorization = "";
     let req = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_s}",
@@ -1024,21 +1024,7 @@ fn inference_backend() -> &'static dyn LocalInferenceBackend {
 /// the prompt did not fit, or the answer ran into the window's end — which the
 /// engine reports as an ordinary finish, so it is checked here.
 fn summarize_excerpt(excerpt: &str, context: u32) -> Result<Option<String>, String> {
-    let body = json!({
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是小说章节摘要工具。用一句简体中文陈述句概括这一章发生的主要情节，不超过40个字。只输出这一句话：不要前缀、不要引号、不要解释、不要换行。"
-            },
-            {
-                "role": "user",
-                "content": format!("{excerpt}\n\n用一句话（不超过40字）概括本章情节。/no_think")
-            }
-        ],
-        "temperature": 0.0,
-        "max_tokens": 120,
-    });
-    let (status, resp) = inference_backend().chat_completion(&body, 300)?;
+    let (status, resp) = inference_backend().chat_completion(&summary_request(excerpt), 300)?;
     if status == 400 && String::from_utf8_lossy(&resp).contains("exceed_context_size_error") {
         return Ok(None);
     }
@@ -1053,6 +1039,23 @@ fn summarize_excerpt(excerpt: &str, context: u32) -> Result<Option<String>, Stri
         .as_str()
         .ok_or("引擎响应缺少内容")?;
     Ok(Some(clean_summary(content)))
+}
+
+fn summary_request(excerpt: &str) -> Value {
+    json!({
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是小说章节摘要工具。用一句简体中文陈述句概括这一章发生的主要情节，不超过40个字。只输出这一句话：不要前缀、不要引号、不要解释、不要换行。"
+            },
+            {
+                "role": "user",
+                "content": format!("{excerpt}\n\n用一句话（不超过40字）概括本章情节。/no_think")
+            }
+        ],
+        "temperature": 0.0,
+        "max_tokens": 120,
+    })
 }
 
 /// The model's paperwork, removed: think-block residue, wrapper quotes, label
@@ -2501,6 +2504,136 @@ mod spawn_tests {
         inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
         assert!(summarize_excerpt(&long, FULL_CONTEXT).unwrap().is_some());
         stop_ai();
+    }
+}
+
+/// The engine as iOS runs it — a thread of this process, on the GPU — with the
+/// app's own models, prompts and windows, timed and weighed. CI runs it on a
+/// Mac: the times are the Mac's, the memory is what the process holds, the
+/// figure iOS ends an app by. NOVEL_AI_DIR holds both models, NOVEL_TEST_TEXT
+/// a few chapters of a book. Nothing of the book is printed.
+///
+///   cargo test --lib engine_bench -- --ignored --nocapture
+#[cfg(all(test, in_process_engine))]
+mod engine_bench {
+    use super::*;
+    use novel_core::{book as corebook, decode, fingerprint};
+    use std::time::Instant;
+
+    fn memory(phase: &str) {
+        let (now, peak) = crate::engine_thread::footprint();
+        println!("[内存] {phase}：当前 {} MB · 最高 {} MB", now >> 20, peak >> 20);
+    }
+
+    fn start(context: u32) {
+        let t = Instant::now();
+        ensure_engine(context).unwrap();
+        let kv = engine_state().lock().unwrap().as_ref().unwrap().kv_cache;
+        println!(
+            "[启动 {}K] {:.1} 秒 · KV {kv}",
+            context / 1024,
+            t.elapsed().as_secs_f64()
+        );
+    }
+
+    /// One summary as the chapter pass asks for it, with the engine's timings.
+    fn summary(excerpt: &str, context: u32) {
+        let t = Instant::now();
+        let (status, resp) = inference_backend()
+            .chat_completion(&summary_request(excerpt), 300)
+            .unwrap();
+        let wall = t.elapsed().as_secs_f64();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+        let v: Value = serde_json::from_slice(&resp).unwrap();
+        assert!(v["usage"]["total_tokens"].as_u64() < Some(context as u64));
+        let text = clean_summary(v["choices"][0]["message"]["content"].as_str().unwrap());
+        assert!(!text.is_empty());
+        let t = &v["timings"];
+        println!(
+            "[摘要 {}K] 读 {} 词元 {:.0}/秒 · 写 {} 词元 {:.1}/秒 · 共 {wall:.1} 秒 · 摘要 {} 字",
+            context / 1024,
+            t["prompt_n"],
+            t["prompt_per_second"].as_f64().unwrap_or(0.0),
+            t["predicted_n"],
+            t["predicted_per_second"].as_f64().unwrap_or(0.0),
+            text.chars().count()
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn engine_bench() {
+        init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
+        // The app's defaults (无感后台) on a 4 GB phone.
+        set_ai_runtime_config(0, 0, 0, 1, 4096);
+        let raw = std::fs::read(std::env::var("NOVEL_TEST_TEXT").expect("set NOVEL_TEST_TEXT"))
+            .unwrap();
+        let d = decode::decode(&raw);
+        let b = corebook::build(&d.text, &fingerprint::fingerprint(d.encoding, &d.text));
+        let bodies: Vec<(usize, usize)> = b
+            .chapters
+            .iter()
+            .map(|c| (c.body_start, c.span.end))
+            .filter(|&(s, e)| d.text[s..e].chars().count() > 1000)
+            .collect();
+        assert!(bodies.len() >= 2, "need at least two chapters");
+        let excerpts: Vec<String> = bodies
+            .iter()
+            .map(|&(s, e)| book::excerpt(&d.text[s..e], 1400, 400))
+            .collect();
+        // What the 8K passes read: most of the window.
+        let long: String = bodies
+            .iter()
+            .flat_map(|&(s, e)| d.text[s..e].chars())
+            .take(6500)
+            .collect();
+        println!("{} 章", bodies.len());
+        memory("开始");
+
+        start(SUMMARY_CONTEXT);
+        memory("载入 2K");
+        for ex in &excerpts {
+            summary(ex, SUMMARY_CONTEXT);
+        }
+        memory("摘要 2K");
+
+        start(FULL_CONTEXT);
+        memory("载入 8K");
+        summary(&excerpts[0], FULL_CONTEXT);
+        summary(&long, FULL_CONTEXT);
+        memory("长文 8K");
+
+        let t = Instant::now();
+        ensure_embedder().unwrap();
+        println!("[启动 嵌入] {:.1} 秒", t.elapsed().as_secs_f64());
+        let chunks: Vec<String> = bodies
+            .iter()
+            .flat_map(|&(s, e)| chunk::chunk_body(&d.text, s, e, chunk::TARGET_CHARS))
+            .map(|c| c.text)
+            .collect();
+        let t = Instant::now();
+        let mut dim = 0;
+        for batch in chunks.chunks(EMBED_BATCH) {
+            dim = embed(batch).unwrap()[0].len();
+        }
+        println!(
+            "[嵌入] {} 段 · {dim} 维 · {:.1} 秒",
+            chunks.len(),
+            t.elapsed().as_secs_f64()
+        );
+        memory("两个模型同时在");
+
+        let t = Instant::now();
+        stop_ai();
+        assert!(!health(PORT) && !health(EMBED_PORT));
+        println!("[停止] {:.1} 秒", t.elapsed().as_secs_f64());
+        memory("停止后");
+
+        start(SUMMARY_CONTEXT);
+        summary(&excerpts[1], SUMMARY_CONTEXT);
+        memory("重启后");
+        stop_ai();
+        memory("结束");
     }
 }
 

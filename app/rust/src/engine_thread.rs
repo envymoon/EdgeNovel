@@ -1,7 +1,8 @@
 //! iOS lets an app start no process of its own, so the llama-server that is an
 //! executable elsewhere is compiled into the app (build.rs, ios_engine/) and
 //! runs on a thread, one per model. It still listens on loopback, so everything
-//! that talks to it is the same code as on the other platforms.
+//! that talks to it is the same code as on the other platforms. A Mac builds it
+//! the same way, which is how CI runs the engine test on Apple's GPU.
 use std::ffi::{c_char, c_int, CString};
 use std::io;
 use std::sync::{Mutex, OnceLock};
@@ -11,6 +12,54 @@ use std::time::Duration;
 extern "C" {
     fn edge_llama_run(argc: c_int, argv: *mut *mut c_char) -> c_int;
     fn edge_llama_stop(port: c_int) -> c_int;
+}
+
+/// llama.cpp's Metal backend wants iOS 16.4. An older iOS runs the app
+/// without AI: the engine is there but is never started.
+pub(crate) fn supported() -> bool {
+    #[cfg(target_os = "ios")]
+    {
+        static OK: OnceLock<bool> = OnceLock::new();
+        return *OK.get_or_init(|| {
+            let version = std::env::var("SIMULATOR_RUNTIME_VERSION")
+                .ok()
+                .or_else(ios_version)
+                .unwrap_or_default();
+            let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+            (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (16, 4)
+        });
+    }
+    #[cfg(not(target_os = "ios"))]
+    return true;
+}
+
+#[cfg(target_os = "ios")]
+fn ios_version() -> Option<String> {
+    extern "C" {
+        fn sysctlbyname(
+            name: *const c_char,
+            oldp: *mut std::ffi::c_void,
+            oldlenp: *mut usize,
+            newp: *mut std::ffi::c_void,
+            newlen: usize,
+        ) -> c_int;
+    }
+    let mut buf = [0u8; 32];
+    let mut len = buf.len();
+    let r = unsafe {
+        sysctlbyname(
+            c"kern.osproductversion".as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    let s = std::str::from_utf8(&buf[..len.min(buf.len())]).ok()?;
+    Some(s.trim_end_matches('\0').to_string())
 }
 
 /// One start at a time: two callers that both find a port silent would both
@@ -89,4 +138,31 @@ pub(crate) fn api_key() -> Result<&'static str, String> {
     })
     .as_deref()
     .map_err(Clone::clone)
+}
+
+/// This process's memory as the kernel accounts it, in bytes: now and the most
+/// since it started. It is the number iOS ends an app by.
+#[cfg(test)]
+pub(crate) fn footprint() -> (u64, u64) {
+    extern "C" {
+        static mach_task_self_: u32;
+        fn task_info(task: u32, flavor: c_int, info: *mut c_int, count: *mut u32) -> c_int;
+    }
+    const TASK_VM_INFO: c_int = 22;
+    // task_vm_info as 64-bit words: phys_footprint is word 18 and
+    // ledger_phys_footprint_peak word 21. The kernel fills what it has.
+    let mut info = [0u64; 64];
+    let mut count = (std::mem::size_of_val(&info) / 4) as u32;
+    let r = unsafe {
+        task_info(
+            mach_task_self_,
+            TASK_VM_INFO,
+            info.as_mut_ptr().cast(),
+            &mut count,
+        )
+    };
+    if r != 0 {
+        return (0, 0);
+    }
+    (info[18], info[21])
 }

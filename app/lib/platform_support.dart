@@ -21,7 +21,11 @@ abstract final class AppPlatformSupport {
   /// executable in the APK on Android, compiled into the app on iOS.
   static bool get hasBundledAiEngine =>
       defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS;
+      (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
+
+  /// iOS starts the engine from 16.4 on; an older iOS runs the app without AI.
+  /// Set at startup from the engine's own answer.
+  static bool iosEngineAvailable = false;
 
   /// Android's bundled engine is CPU-only; iOS's runs on the GPU (Metal).
   static bool get bundledEngineIsCpuOnly =>

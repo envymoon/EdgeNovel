@@ -14,6 +14,9 @@ void main() {
     expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
     expect(AppPlatformSupport.bundledEngineIsCpuOnly, isTrue);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    expect(AppPlatformSupport.hasAiEngine, isFalse);
+    AppPlatformSupport.iosEngineAvailable = true;
+    addTearDown(() => AppPlatformSupport.iosEngineAvailable = false);
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
     expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.bundledEngineIsCpuOnly, isFalse);

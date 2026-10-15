@@ -3,7 +3,7 @@
 # an unsigned .ipa to sign and sideload from Windows.
 #
 # Logs and artifacts of this public repo are public: only build from what is
-# in the repo, never a user's books.
+# in the repo. A user's book only ever comes in as a secret, never printed.
 name: iOS
 
 on:
@@ -44,12 +44,18 @@ jobs:
           test/mobile_compact_flow_test.dart
           test/shelf_summary_test.dart
 
+      # The whole Xcode log goes into the artifact; a failure prints its errors.
       - name: Build for the simulator
-        run: flutter build ios --simulator --debug
+        run: |
+          mkdir -p ../shots
+          flutter build ios --simulator --debug -v > ../shots/build-sim.log 2>&1 || {
+            grep -n -E "error:|error\[|panicked|CMake Error|failed" ../shots/build-sim.log | tail -80
+            tail -150 ../shots/build-sim.log
+            exit 1
+          }
 
       - name: Screenshot in the simulator
         run: |
-          mkdir -p ../shots
           UDID=$(xcrun simctl list devices available -j | python3 -c '
           import json, sys
           d = json.load(sys.stdin)["devices"]
@@ -78,6 +84,46 @@ jobs:
           path: |
             shots/
             Zhiyue-iOS-unsigned.ipa
+
+  # The engine with the app's own models on the Mac's GPU, built the way iOS
+  # builds it: load times, speeds and memory. The test chapters come from a
+  # secret and never reach the log.
+  engine:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app/rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/models
+          key: models-qwen3-0.6b-q8-bge-small-zh-f16
+
+      - name: Models
+        run: |
+          mkdir -p ~/models && cd ~/models
+          get() {
+            [ -f "$1" ] || curl -fsSL --retry 3 -o "$1" "$2"
+            echo "$3  $1" | shasum -a 256 -c
+          }
+          get Qwen3-0.6B-Q8_0.gguf             https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf             9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031
+          get bge-small-zh-v1.5-f16.gguf             https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/bge-small-zh-v1.5-f16.gguf             ab9b81d9cd329c712eee379cf0068eabe6a5e2a01d0def61535eba9384085e2c
+          ls -l
+
+      - name: Machine
+        run: |
+          sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
+          system_profiler SPDisplaysDataType
+
+      - name: Engine test
+        env:
+          TEST_TEXT: ${{ secrets.ENGINE_TEST_TEXT }}
+        run: |
+          printf '%s' "$TEST_TEXT" > "$RUNNER_TEMP/chapters.txt"
+          NOVEL_AI_DIR=~/models NOVEL_TEST_TEXT="$RUNNER_TEMP/chapters.txt"             cargo test --locked --lib engine_bench -- --ignored --nocapture
 
   # The Rust shared with the Windows app must still compile for Windows.
   rust-windows:

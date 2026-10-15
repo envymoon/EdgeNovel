@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -13,6 +14,7 @@ import 'reader_page.dart';
 import 'reader_state.dart';
 import 'reading_session_store.dart';
 import 'platform_services.dart';
+import 'platform_support.dart';
 import 'shelf_categories.dart';
 import 'shelf_page.dart';
 import 'src/rust/api/ai.dart';
@@ -47,6 +49,9 @@ Future<void> main() async {
   await DataGuard.snapshotIfNewBuild(storage.support);
   await initStore(dir: storage.support.path);
   await initAi(dir: storage.supportChild('ai').path);
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    AppPlatformSupport.iosEngineAvailable = (await aiStatus()).engine;
+  }
   await initTts(dir: storage.supportChild('tts').path);
   await initImage(dir: storage.supportChild('image').path);
   // Read-aloud used to grind chapters into WAVs here ahead of time. It no longer

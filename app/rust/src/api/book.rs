@@ -997,11 +997,14 @@ pub(crate) fn chapter_excerpt(
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
     let c = l.chapters.get(index as usize).ok_or("章节不存在")?;
-    let body = l.text[c.body_start..c.span.end].trim();
+    Ok(excerpt(&l.text[c.body_start..c.span.end], head_chars, tail_chars))
+}
 
+pub(crate) fn excerpt(body: &str, head_chars: usize, tail_chars: usize) -> String {
+    let body = body.trim();
     let n = body.chars().count();
     if n <= head_chars + tail_chars {
-        return Ok(body.to_string());
+        return body.to_string();
     }
     let head_end = body
         .char_indices()
@@ -1014,11 +1017,7 @@ pub(crate) fn chapter_excerpt(
         .nth(tail_chars - 1)
         .map(|(i, _)| i)
         .unwrap_or(0);
-    Ok(format!(
-        "{}\n……\n{}",
-        &body[..head_end],
-        &body[tail_start..]
-    ))
+    format!("{}\n……\n{}", &body[..head_end], &body[tail_start..])
 }
 
 // ── 人物图谱 ─────────────────────────────────────────────────────────────────
