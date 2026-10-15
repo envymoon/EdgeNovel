@@ -55,3 +55,16 @@
  
          clean_up();
          if (ctx_http.thread.joinable()) {
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1153,7 +1153,9 @@
+         model_tgt = llama_init->model();
+         ctx_tgt   = llama_init->context();
+ 
+-        if (model_tgt == nullptr) {
++        // A model that loads but gets no context (a KV type this GPU cannot
++        // run) must fail here too: it crashed below, and in an app that is the app.
++        if (model_tgt == nullptr || ctx_tgt == nullptr) {
+             SRV_ERR("failed to load model, '%s'\n", params_base.model.path.c_str());
+             return false;
+         }
