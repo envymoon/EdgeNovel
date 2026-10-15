@@ -2517,7 +2517,7 @@ mod spawn_tests {
 #[cfg(all(test, in_process_engine))]
 mod engine_bench {
     use super::*;
-    use novel_core::{book as corebook, decode, fingerprint};
+    use novel_core::decode;
     use std::time::Instant;
 
     fn memory(phase: &str) {
@@ -2569,11 +2569,21 @@ mod engine_bench {
         let raw = std::fs::read(std::env::var("NOVEL_TEST_TEXT").expect("set NOVEL_TEST_TEXT"))
             .unwrap();
         let d = decode::decode(&raw);
-        let b = corebook::build(&d.text, &fingerprint::fingerprint(d.encoding, &d.text));
-        let bodies: Vec<(usize, usize)> = b
-            .chapters
+        // A few chapters are too few for the book's own chapter vote: split on
+        // their 第…章 title lines here.
+        let mut titles = vec![];
+        let mut at = 0;
+        for line in d.text.split_inclusive('\n') {
+            let t = line.trim();
+            if t.starts_with('第') && t.chars().take(12).any(|c| c == '章') {
+                titles.push((at, at + line.len()));
+            }
+            at += line.len();
+        }
+        let bodies: Vec<(usize, usize)> = titles
             .iter()
-            .map(|c| (c.body_start, c.span.end))
+            .enumerate()
+            .map(|(i, &(_, body))| (body, titles.get(i + 1).map_or(d.text.len(), |t| t.0)))
             .filter(|&(s, e)| d.text[s..e].chars().count() > 1000)
             .collect();
         assert!(bodies.len() >= 2, "need at least two chapters");
