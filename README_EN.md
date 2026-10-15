@@ -8,10 +8,6 @@
 
 <p align="center"><strong>A quieter way to read Chinese web fiction.</strong><br>Local AI, searchable stories, and reading notes that stay with you.</p>
 
-<p align="center">
-  <a href="https://envymoon.github.io/EdgeNovel/"><strong>Open the project showcase →</strong></a>
-</p>
-
 A local-first novel reader designed for Chinese web fiction, with mobile as its final destination.
 
 The project brings small language models, rule-based retrieval, and reading data onto the user's own device. Its goal is to make AI useful both before and during reading—without turning reading into a permanently connected cloud conversation.
