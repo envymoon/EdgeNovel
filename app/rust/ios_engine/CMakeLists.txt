@@ -6,6 +6,9 @@ project(edge_ios_engine LANGUAGES C CXX OBJC)
 # a thread inside the app (edge_llama.cpp). build.rs drives this for iOS only.
 
 set(CMAKE_CXX_STANDARD 17)
+# On iOS CMake makes every executable an app bundle, and llama-server's install
+# rule has no place for one. Nothing here is installed or run as a program.
+set(CMAKE_MACOSX_BUNDLE OFF)
 
 # Same upstream revision as the validated Windows b9957 engine and the Android
 # one. The patch lets several servers share the process, each stopped by port.
