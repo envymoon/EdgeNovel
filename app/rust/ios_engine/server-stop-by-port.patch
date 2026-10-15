@@ -1,0 +1,57 @@
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -16,6 +16,8 @@
+ #include <clocale>
+ #include <exception>
+ #include <signal.h>
++#include <map>
++#include <mutex>
+ #include <thread> // for std::thread::hardware_concurrency
+ 
+ #if defined(_WIN32)
+@@ -48,6 +50,23 @@
+     }
+ }
+ 
++// Several servers may share one process (an app that cannot start processes
++// runs each on a thread). Each one, once its model is loaded, registers how to
++// stop it under its port, and unregisters before it is torn down.
++static std::mutex stop_by_port_mutex;
++static std::map<int, std::function<void()>> stop_by_port;
++
++bool llama_server_stop_port(int port);
++bool llama_server_stop_port(int port) {
++    std::lock_guard<std::mutex> lock(stop_by_port_mutex);
++    auto it = stop_by_port.find(port);
++    if (it == stop_by_port.end()) {
++        return false;
++    }
++    it->second();
++    return true;
++}
++
+ 
+ // wrapper function that handles exceptions and logs errors
+ // this is to make sure handler_t never throws exceptions; instead, it returns an error response
+@@ -430,6 +449,10 @@
+             // this will unblock start_loop()
+             ctx_server.terminate();
+         };
++        {
++            std::lock_guard<std::mutex> lock(stop_by_port_mutex);
++            stop_by_port[params.port] = [&ctx_server]() { ctx_server.terminate(); };
++        }
+     }
+ 
+     // register signal handler if not running by CLI
+@@ -476,6 +499,10 @@
+ 
+         // this call blocks the main thread until queue_tasks.terminate() is called
+         ctx_server.start_loop();
++        {
++            std::lock_guard<std::mutex> lock(stop_by_port_mutex);
++            stop_by_port.erase(params.port);
++        }
+ 
+         clean_up();
+         if (ctx_http.thread.joinable()) {

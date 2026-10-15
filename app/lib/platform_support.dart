@@ -12,14 +12,19 @@ abstract final class AppPlatformSupport {
 
   static bool get supportsBookDrop => isDesktop;
 
-  /// Whether the local model can run here at all. iOS may not start the
-  /// engine as a process of its own and has no in-app engine yet, so every
-  /// way into the model passes stays hidden there.
+  /// Whether the local model can run here at all.
   static bool get hasAiEngine => isDesktop || hasBundledAiEngine;
 
   static bool get canDownloadAiEngine => isDesktop;
 
+  /// The engine ships inside the app instead of being downloaded: an
+  /// executable in the APK on Android, compiled into the app on iOS.
   static bool get hasBundledAiEngine =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// Android's bundled engine is CPU-only; iOS's runs on the GPU (Metal).
+  static bool get bundledEngineIsCpuOnly =>
       defaultTargetPlatform == TargetPlatform.android;
 
   /// Mobile document pickers grant access to the selected files themselves;

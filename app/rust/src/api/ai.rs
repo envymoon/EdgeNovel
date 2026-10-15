@@ -2,7 +2,9 @@
 //! over loopback HTTP — deliberately not a compiled-in binding: the engine
 //! updates independently of the app, crashes without taking the reader down,
 //! and is swappable for anything speaking the same API (on Android it will be
-//! the same llama.cpp behind a different launcher).
+//! the same llama.cpp behind a different launcher). iOS allows no child
+//! processes, so there the same server runs on a thread ([`crate::ios_engine`])
+//! and is spoken to the same way.
 //!
 //! The model only ever gets closed tasks: bounded input, bounded output, a
 //! verifiable shape. Free generation is not on the menu.
@@ -11,9 +13,11 @@ use crate::api::book::{self, SearchHit};
 use crate::frb_generated::StreamSink;
 use novel_core::chunk;
 use serde_json::{json, Value};
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "ios"))]
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -29,6 +33,12 @@ const EMBED_PORT: u16 = 8738;
 const ENGINE_EXE: &str = "llama-server.exe";
 #[cfg(not(windows))]
 const ENGINE_EXE: &str = "llama-server";
+
+/// A running engine: a child process, or on iOS a thread of this one.
+#[cfg(not(target_os = "ios"))]
+type Engine = Child;
+#[cfg(target_os = "ios")]
+type Engine = crate::ios_engine::Engine;
 
 static AI_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// One flag per long-running pass. Enrichment and indexing are different
@@ -233,8 +243,8 @@ pub fn ai_device_state() -> AiDeviceState {
     }
 }
 
-fn engine_child() -> &'static Mutex<Option<Child>> {
-    static C: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+fn engine_child() -> &'static Mutex<Option<Engine>> {
+    static C: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
@@ -249,8 +259,8 @@ fn engine_state() -> &'static Mutex<Option<ChatEngineState>> {
     C.get_or_init(Default::default)
 }
 
-fn embed_child() -> &'static Mutex<Option<Child>> {
-    static C: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+fn embed_child() -> &'static Mutex<Option<Engine>> {
+    static C: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
@@ -278,7 +288,10 @@ fn find_engine(dir: &Path) -> Option<PathBuf> {
         let _ = dir;
         return crate::android_engine::executable();
     }
-    #[cfg(not(target_os = "android"))]
+    // Compiled into the app: there is no file to find.
+    #[cfg(target_os = "ios")]
+    return Some(dir.to_path_buf());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         fn walk(dir: &Path, depth: u32) -> Option<PathBuf> {
             let entries = std::fs::read_dir(dir).ok()?;
@@ -443,7 +456,9 @@ pub fn delete_model(embed: bool) -> Result<(), String> {
 pub fn delete_engine() -> Result<(), String> {
     #[cfg(target_os = "android")]
     return Err("安卓推理引擎随应用安装，不能单独删除".into());
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    return Err("推理引擎随应用安装，不能单独删除".into());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let dir = ai_dir()?;
         stop_ai();
@@ -461,8 +476,8 @@ pub fn delete_engine() -> Result<(), String> {
 
 fn health(port: u16) -> bool {
     // /health and /v1/models are public in llama.cpp. Use a protected endpoint
-    // on Android so a different llama-server instance cannot be reused.
-    let path = if cfg!(target_os = "android") {
+    // on phones so a different llama-server instance cannot be reused.
+    let path = if cfg!(any(target_os = "android", target_os = "ios")) {
         "/props"
     } else {
         "/health"
@@ -481,7 +496,7 @@ fn health(port: u16) -> bool {
 /// a caller that cannot say anything during it looks hung.
 fn ensure(
     port: u16,
-    slot: &'static Mutex<Option<Child>>,
+    slot: &'static Mutex<Option<Engine>>,
     model: PathBuf,
     extra: &[&str],
     #[cfg(target_os = "android")] startup_generation: u64,
@@ -533,12 +548,13 @@ fn ensure(
     };
     let poll = if config.mode == 2 { "50" } else { "0" };
 
-    let mut cmd = Command::new(&exe);
-    cmd.args(["-m"])
-        .arg(&model)
-        .args([
+    let port_arg = port.to_string();
+    let threads_arg = threads.to_string();
+    let mut args: Vec<&OsStr> = vec![OsStr::new("-m"), model.as_os_str()];
+    args.extend(
+        [
             "--port",
-            &port.to_string(),
+            &port_arg,
             "--host",
             "127.0.0.1",
             // Offload every layer when a GPU backend (Vulkan/CUDA) is present;
@@ -546,10 +562,10 @@ fn ensure(
             "-ngl",
             gpu_layers,
             "-t",
-            &threads.to_string(),
+            &threads_arg,
             // Prompt ingestion must obey the same ceiling as generation.
             "-tb",
-            &threads.to_string(),
+            &threads_arg,
             // One background task at a time. Parallel slots increase KV memory
             // and make two "quiet" jobs compete for the same thermal budget.
             "-np",
@@ -565,41 +581,61 @@ fn ensure(
             "--prio",
             priority,
             "--no-webui",
-        ])
-        .args(extra)
-        .current_dir(exe.parent().unwrap_or(dir))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(target_os = "android")]
-    {
-        cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
-            .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
-            .args(["--threads-http", "2"]);
-        // Startup diagnostics only; prompts and model responses are not logged.
-        let cache = extra
-            .windows(2)
-            .find(|pair| pair[0] == "--cache-type-k")
-            .map(|pair| pair[1])
-            .unwrap_or("embed");
-        let log = std::fs::File::create(dir.join(format!(".novel-engine-{port}-{cache}.log")))
-            .map_err(|e| format!("无法创建引擎日志: {e}"))?;
-        cmd.stderr(Stdio::from(log));
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
-        cmd.creation_flags(0x0800_0000 | 0x0000_4000);
-    }
-    let child = cmd.spawn().map_err(|e| format!("启动引擎失败: {e}"))?;
-    // Before anything else can go wrong: an engine that outlives the app holds
-    // gigabytes for nobody. See [`crate::job`].
-    crate::job::adopt(&child);
+        ]
+        .map(OsStr::new),
+    );
+    args.extend(extra.iter().map(OsStr::new));
+
+    #[cfg(not(target_os = "ios"))]
+    let child = {
+        let mut cmd = Command::new(&exe);
+        cmd.args(&args)
+            .current_dir(exe.parent().unwrap_or(dir))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "android")]
+        {
+            cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
+                .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
+                .args(["--threads-http", "2"]);
+            // Startup diagnostics only; prompts and model responses are not logged.
+            let cache = extra
+                .windows(2)
+                .find(|pair| pair[0] == "--cache-type-k")
+                .map(|pair| pair[1])
+                .unwrap_or("embed");
+            let log = std::fs::File::create(dir.join(format!(".novel-engine-{port}-{cache}.log")))
+                .map_err(|e| format!("无法创建引擎日志: {e}"))?;
+            cmd.stderr(Stdio::from(log));
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            cmd.creation_flags(0x0800_0000 | 0x0000_4000);
+        }
+        let child = cmd.spawn().map_err(|e| format!("启动引擎失败: {e}"))?;
+        // Before anything else can go wrong: an engine that outlives the app holds
+        // gigabytes for nobody. See [`crate::job`].
+        crate::job::adopt(&child);
+        child
+    };
+    #[cfg(target_os = "ios")]
+    let child = {
+        let _ = &exe;
+        let key = crate::ios_engine::api_key()?;
+        let args: Vec<&OsStr> = args
+            .into_iter()
+            .chain(["--api-key", key, "--threads-http", "2"].map(OsStr::new))
+            .collect();
+        crate::ios_engine::Engine::start(port, &args)
+            .map_err(|e| format!("启动引擎失败: {e}"))?
+    };
     *slot.lock().unwrap() = Some(child);
 
     // Model load is disk-bound; a large one on a cold disk takes a while.
-    let load_ticks = if cfg!(target_os = "android") {
+    let load_ticks = if cfg!(any(target_os = "android", target_os = "ios")) {
         1200
     } else {
         240
@@ -690,10 +726,12 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(target_os = "ios")]
+    let _prepare = crate::ios_engine::PREPARE_LOCK.lock().unwrap();
     const F16_KV: &str = "f16";
-    #[cfg(any(windows, target_os = "android"))]
+    #[cfg(any(windows, target_os = "android", target_os = "ios"))]
     const PREFERRED_KV: &str = "q8_0";
-    #[cfg(not(any(windows, target_os = "android")))]
+    #[cfg(not(any(windows, target_os = "android", target_os = "ios")))]
     const PREFERRED_KV: &str = F16_KV;
 
     if health(PORT)
@@ -758,6 +796,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(target_os = "ios")]
+    let _prepare = crate::ios_engine::PREPARE_LOCK.lock().unwrap();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
     ensure(
         EMBED_PORT,
@@ -869,7 +909,12 @@ pub(crate) fn http(
         "Authorization: Bearer {}\r\n",
         crate::android_engine::api_key()?
     );
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    let authorization = format!(
+        "Authorization: Bearer {}\r\n",
+        crate::ios_engine::api_key()?
+    );
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let authorization = "";
     let req = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_s}",
@@ -919,9 +964,9 @@ fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-/// The tuned novel logic above this boundary is platform-independent. Windows
-/// currently talks to a managed llama-server process; iOS will provide an
-/// in-process llama.cpp implementation behind the same four operations.
+/// The tuned novel logic above this boundary is platform-independent. Every
+/// platform talks to the same llama-server: a managed process, or on iOS a
+/// thread of the app.
 #[flutter_rust_bridge::frb(ignore)]
 trait LocalInferenceBackend: Sync {
     #[flutter_rust_bridge::frb(ignore)]

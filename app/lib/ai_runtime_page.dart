@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'app_localizations.dart';
 import 'ai_runtime.dart';
 import 'reader_state.dart';
+import 'platform_services.dart';
 import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
 import 'theme.dart';
@@ -22,6 +23,7 @@ class AiRuntimePage extends StatefulWidget {
 class _AiRuntimePageState extends State<AiRuntimePage> {
   final runtime = AiRuntimeSettings.instance;
   AiDeviceState? _device;
+  AppMemory? _memory;
   Timer? _refreshTimer;
 
   @override
@@ -43,7 +45,13 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
   Future<void> _refresh() async {
     try {
       final state = await runtime.readDeviceState();
-      if (mounted) setState(() => _device = state);
+      final memory = await AppMemory.read();
+      if (mounted) {
+        setState(() {
+          _device = state;
+          _memory = memory;
+        });
+      }
     } catch (_) {}
   }
 
@@ -365,6 +373,18 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             icon: const Icon(Icons.refresh, size: 19),
           ),
         ),
+        if (_memory case final m?)
+          ListTile(
+            leading: Icon(Icons.memory_outlined, color: t.muted),
+            title: Text(
+              '应用内存',
+              style: TextStyle(color: t.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              '当前 ${m.now} MB · 最高 ${m.peak} MB · 上限 ${m.limit} MB',
+              style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
+            ),
+          ),
       ],
     );
   }
@@ -390,7 +410,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
           ListTile(
             title: Text('处理器', style: TextStyle(color: t.text, fontSize: 13)),
             trailing: DropdownButton<AiBackend>(
-              value: AppPlatformSupport.hasBundledAiEngine
+              value: AppPlatformSupport.bundledEngineIsCpuOnly
                   ? AiBackend.cpu
                   : runtime.backend,
               underline: const SizedBox.shrink(),
@@ -399,7 +419,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                 DropdownMenuItem(value: AiBackend.cpu, child: Text('仅 CPU')),
                 DropdownMenuItem(value: AiBackend.gpu, child: Text('优先 GPU')),
               ],
-              onChanged: AppPlatformSupport.hasBundledAiEngine
+              onChanged: AppPlatformSupport.bundledEngineIsCpuOnly
                   ? null
                   : (value) {
                       if (value != null) runtime.setBackend(value);

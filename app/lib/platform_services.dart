@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -80,6 +82,36 @@ class AppFileAccess {
     );
     if (result == null) return const [];
     return result.files.map((file) => file.path).whereType<String>().toList();
+  }
+}
+
+/// What iOS counts against the app when it decides to end it, in MB: now, the
+/// most since launch, and the most it would allow. Read from the app's own
+/// accounting (AppDelegate.swift); null on other platforms.
+class AppMemory {
+  const AppMemory(this.now, this.peak, this.limit);
+
+  final int now;
+  final int peak;
+  final int limit;
+
+  static Future<AppMemory?> read() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    try {
+      final m = await const MethodChannel(
+        'novel/memory',
+      ).invokeMapMethod<String, int>('read');
+      final now = m?['now'];
+      if (now == null) return null;
+      int mb(int bytes) => bytes ~/ (1 << 20);
+      return AppMemory(
+        mb(now),
+        mb(m!['peak'] ?? now),
+        mb(now + (m['left'] ?? 0)),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 }
 

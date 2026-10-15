@@ -5,16 +5,19 @@ import 'package:novel/platform_support.dart';
 import 'package:novel/platform_services.dart';
 
 void main() {
-  test('only Android bundles an engine; mobile stays foreground-only', () {
+  test('phones bundle the engine; mobile stays foreground-only', () {
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
     expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
+    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isTrue);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
-    expect(AppPlatformSupport.hasAiEngine, isFalse);
+    expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
+    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isFalse);
+    expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
     expect(AppPlatformSupport.hasAiEngine, isTrue);

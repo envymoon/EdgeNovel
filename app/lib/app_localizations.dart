@@ -35,6 +35,8 @@ const _english = <String, String>{
   '封面模式': 'Cover view',
   '详情模式': 'Detail view',
   '应用内置 · CPU · 默认 Q8 KV / 8K': 'Bundled · CPU · Default Q8 KV / 8K',
+  '应用内置 · GPU · 默认 Q8 KV / 8K': 'Bundled · GPU · Default Q8 KV / 8K',
+  '应用内存': 'App memory',
   '内置引擎缺失，请重新安装应用': 'Bundled engine missing. Please reinstall the app.',
   '书架': 'Library',
   '设置': 'Settings',

@@ -576,9 +576,11 @@ class _AiPageState extends State<AiPage> {
                           ),
                           title: const Text('推理引擎 · llama.cpp'),
                           subtitle: Text(
-                            s.engine
+                            !s.engine
+                                ? '内置引擎缺失，请重新安装应用'
+                                : AppPlatformSupport.bundledEngineIsCpuOnly
                                 ? '应用内置 · CPU · 默认 Q8 KV / 8K'
-                                : '内置引擎缺失，请重新安装应用',
+                                : '应用内置 · GPU · 默认 Q8 KV / 8K',
                           ),
                         ),
                       if (AppPlatformSupport.canDownloadAiEngine)

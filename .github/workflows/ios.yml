@@ -14,7 +14,9 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 90
+    # The first build of the compiled-in llama.cpp, once per architecture,
+    # takes most of this.
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: app
@@ -76,3 +78,14 @@ jobs:
           path: |
             shots/
             Zhiyue-iOS-unsigned.ipa
+
+  # The Rust shared with the Windows app must still compile for Windows.
+  rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app/rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo check --locked
