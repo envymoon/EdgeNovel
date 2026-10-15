@@ -1,185 +1,145 @@
-# Zhiyue 挚阅
+# 挚阅
 
-[简体中文](README_ZH.md) | English
-
-<p align="center">
-  <img src="docs/assets/novel-icon.ico" width="112" alt="Zhiyue app icon">
-</p>
-
-<p align="center"><strong>A quieter way to read Chinese web fiction.</strong><br>Local AI, searchable stories, and reading notes that stay with you.</p>
+简体中文 | [English](README_EN.md)
 
 <p align="center">
-  <a href="https://envymoon.github.io/EdgeNovel/"><strong>Open the project showcase →</strong></a>
+  <img src="docs/assets/novel-icon.ico" width="112" alt="挚阅应用图标">
 </p>
 
-A local-first novel reader designed for Chinese web fiction, with mobile as its final destination.
-
-The project brings small language models, rule-based retrieval, and reading data onto the user's own device. Its goal is to make AI useful both before and during reading—without turning reading into a permanently connected cloud conversation.
-
-> This project is in early development. Windows is the most complete version and is used for daily reading. The Android version has completed its first migration and emulator validation. iOS development is starting on a cloud Mac.
-
-## Why This Project Exists
-
-Readers of long-form Chinese web fiction often need answers to questions more specific than “What does this paragraph mean?”:
-
-- Is a novel with hundreds or thousands of chapters worth starting?
-- Do its protagonist, main cast, and romance structure match the reader's preferences?
-- Which potentially unwanted story elements may appear, and what passages support that conclusion?
-- After a long break, how can the reader quickly find a character, earlier event, or relevant chapter?
-
-The product is therefore organized into two distinct layers.
-
-### Reading Report
-
-The report appears on the book details page, so it can be read before starting the novel. It currently covers the cast and their relationships, the romance structure (the heroines by name), chapter overviews, a pacing chart counted from the text (no model needed), and links to the supporting passages. Potentially sensitive plot excerpts are parked until they are reliable enough to show readers.
-
-A small model cannot reliably make unrestricted, book-wide judgments about a very long novel. This project therefore does not delegate every conclusion to AI. Rules and retrieval provide stable, inspectable results; the lightweight model is reserved for bounded tasks it can handle. Whenever possible, users can return to the original chapter and make the final judgment themselves.
-
-### Reading Assistant
-
-The in-reader assistant provides search, the reading report, background work, and reading appearance. It is kept separate from the book page so that choosing a book and reading a book do not become the same workflow.
-
-## See It in the Reader
+<p align="center"><strong>为中文网文而生的安静阅读方式。</strong><br>本地 AI、可检索的故事，以及始终留在你身边的阅读标注。</p>
 
 <p align="center">
-  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and reading report">
-  <img src="docs/assets/android-reader-open.png" width="31%" alt="Mobile reading view">
-  <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="An annotation saved in the novel">
+  <a href="https://envymoon.github.io/EdgeNovel/">查看项目展示页 →</a>
 </p>
 
-The same flow moves from **book choice** to **reading** to **personal annotation**. These are screenshots of the current Chinese web-fiction flow; the English captions describe the product surface, not an English novel pipeline.
+一个面向中文网文阅读场景、以移动端为最终目标的本地优先阅读器。
 
-### A small reading moment
+项目尝试把轻量模型、规则检索和阅读数据放到用户自己的设备上运行，让 AI 服务于“选书”和“读书”，而不是把阅读变成一次持续联网的云端对话。
 
-> Rain traced the window. He closed the chapter, left one line for later, and returned to the exact place where the story had paused.
+> 当前处于早期开发阶段。Windows 版功能最完整，已用于日常阅读；Android 版已完成第一轮迁移和模拟器验证；iOS 版正在云端 Mac 上开始开发。
 
-This short English passage is original showcase copy. It is not a bundled test novel.
+## 项目理念
 
-### Inside the reading report
+中文网文读者面对的常常不是“这段话是什么意思”，而是更具体的问题：
 
-<p align="center">
-  <img src="docs/assets/cast-graph-real.png" width="100%" alt="Cast composition and relationship structure">
-</p>
+- 这本几百或几千章的小说是否值得开始？
+- 主角、主要人物和感情结构是否符合自己的偏好？
+- 中断阅读后，怎样快速找到人物、前文和相关章节？
 
-<p align="center">
-  <img src="docs/assets/chapter-overview-real.png" width="100%" alt="Chapter overview and current reading position">
-</p>
+因此应用分为两个明确层次：
 
-<p align="center">
-  <img src="docs/assets/android-test-ai-runtime-mobile.png" width="48%" alt="Dynamic workload settings">
-</p>
+### 阅读报告
 
-The cast graph and chapter overview above are real captures from the app. The underlying evidence remains tied to Chinese novel chapters.
+位于书籍详情页，开始阅读之前就能看，帮助用户判断是否值得读。当前包括人物构成与关系、感情结构（直接列出女主名字）、章节概览、按原文统计的节奏图（不需要模型）以及原文依据。
 
-## Current Content Support
+小模型不能稳定完成整本长篇小说的开放式判断，所以项目没有把所有结果都交给模型。当前方案以规则和检索保证可复查性，以轻量模型处理适合它的局部任务，并尽量让用户能够回到原文章节自行判断。
 
-The interface can be switched to English in the current source, but an English interface does not automatically add English novel support; the current analysis pipeline is dedicated to **Chinese web fiction**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and reading reports may be incomplete or fail.
+### 阅读助手
 
-## Features
+位于阅读过程中，提供搜索、阅读报告、后台处理和阅读外观。它与书籍详情页分离，避免把“选书判断”和“阅读辅助”混成一个入口。
 
-- Local TXT import, encoding handling, chapter detection, and custom shelf categories
-- Reading-position recovery, latest-chapter tracking, and completion marks for chapters actually read
-- Chapter navigation and a shortcut back to the current reading position
-- Inline annotations with management and source-location navigation
-- Cast, relationship, and romance-structure analysis
-- Chapter overviews, a whole-book pacing curve (also under the reader), and full-text semantic search
-- Reading statistics computed from the reader's own reading log
-- AI covers drawn by an on-device image model, and illustrations placed between chapters
-- Read-aloud on Windows with an on-device Qwen3-TTS voice: play while it speaks, or prepare chapters ahead, at an adjustable pace
-- Optional Youshu (优书网) reviews, fetched only when the reader opens them
-- Themes, accent colors, backgrounds, interface fonts, and a Chinese/English interface
-- A snapshot of the library and settings before a new build first opens them
-- Recoverable local AI task queue with pause, retry, and chapter-level checkpoints
-- Low-impact background, balanced, and finish-now workload modes
-- Charging, battery, idle-time, and thermal constraints
-- On-demand model downloads, integrity checks, resume support, and version rollback
-- On-demand fonts and mobile-oriented reading interactions
+## 主要功能
 
-### Core workflows at a glance
+- 本地 TXT 导入、编码处理、章节识别和自定义书架分类
+- 阅读位置恢复、最近阅读章节、真正读完的章节标记
+- 章节目录跳转和回到当前阅读记录
+- 原文标注、标注管理及跳转
+- 人物构成、人物关系和感情结构分析
+- 章节概览、全书节奏曲线（阅读页底部也有）、全文语义检索
+- 阅读数据：完全按自己的阅读记录统计
+- AI 封面：本地生图模型画封面，以及章间立绘
+- 听书（Windows）：本机 Qwen3-TTS 语音，边听边合成或提前合成，可调语速
+- 优书网书评（可选），只在主动打开时查询
+- 主题、强调色、背景、界面字体，界面可切换中英文
+- 新版本第一次启动前，自动备份书架数据和设置
+- 本地 AI 后台队列、暂停、失败恢复和章节级断点
+- 无感后台、智能平衡、立即完成三种负载策略
+- 充电、电量、空闲时间和温控限制
+- 模型按需下载、完整性校验、断点续传和版本回退
+- 字体按需下载以及移动端阅读交互适配
 
-| Before reading | While reading | Under the hood |
+### 核心流程一览
+
+| 阅读前 | 阅读中 | 本地能力 |
 | --- | --- | --- |
-| Cast and romance structure, chapter overviews, and pacing | Chapter jump, current-position recovery, annotations, and semantic search | On-device models, resumable tasks, workload limits, and model rollback |
+| 人物关系、感情结构、章节概览与节奏 | 章节跳转、阅读位置恢复、标注和语义搜索 | 端侧模型、可恢复任务、负载限制和模型回退 |
 
-## AI on Edge Devices
+## 边缘设备 AI
 
-The current generation baseline is **Qwen3 0.6B Q8**, with **BGE small Chinese F16** for semantic retrieval. Cast and relationship tasks read up to **8K tokens** of sampled evidence. Chapter summaries read a fixed excerpt and run in a **2K window**: measured against 8K, the summaries are word-for-word identical (78 chapters on GPU, 48 on CPU) while the KV cache is a quarter of the size. Workload modes adjust threads, scheduling, intervals, and model unloading; they never change what the model reads.
+当前生成模型基线为 **Qwen3 0.6B Q8**，语义检索使用 **BGE small 中文 F16**。人物和关系任务读取最多 **8K** 的抽样原文；章节摘要只读固定长度的摘录，用 **2K 窗口**运行。实测 2K 与 8K 的摘要逐字相同（GPU 78 章、CPU 48 章），KV 缓存只有原来的四分之一。负载模式只调整线程、调度、任务间隔和模型卸载策略，不改变模型读到的内容。
 
-AI covers use an anime-style SD 1.5 model quantized to 0.70 GB, run by a patched [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (Vulkan on Windows). The recipe is in `experiments/anime-cover-model/`.
+AI 封面使用量化到 0.70 GB 的动漫风格 SD 1.5 模型，由打过补丁的 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) 运行（Windows 上用 Vulkan），做法见 `experiments/anime-cover-model/`。
 
-Models are not bundled with the installer. They are downloaded only when the related feature is requested, keeping the application package smaller and allowing model updates or rollbacks independently of app releases.
+模型不会随安装包发布，使用相关功能时再由用户按需下载。这既减小安装包，也允许独立更新或回退模型。
 
-Target device tiers (pending broader physical-device testing):
+设备目标（仍需更多真机数据验证）：
 
-| Tier | Suggested device | Local AI support |
+| 档位 | 建议设备 | 本地 AI 范围 |
 | --- | --- | --- |
-| Reading first | 4GB RAM or less | Core reading features; generative AI is not guaranteed |
-| Experimental minimum | 6GB RAM, ARM64, Android 10+ | One foreground AI task at a time |
-| Standard | 8GB RAM or more | Full local AI feature set |
-| High performance | 12GB RAM or more | Fast mode and future enhanced models |
+| 阅读优先 | 4GB 及以下 | 阅读功能为主，不承诺生成式 AI |
 
-Actual performance depends on the processor, available memory, operating-system background limits, and cooling—not memory capacity alone.
+具体体验取决于芯片、可用内存、系统后台限制和散热，不能只按标称内存判断。
 
-## Edge-first Workload Design
+## 面向边缘设备的动态负载优化
 
-Edge computing is not only about placing a model on the device. Zhiyue continuously adjusts **when** and **how much** work is done so reading stays responsive:
+边缘计算不只是把模型放到设备上。挚阅会持续调整**什么时候运行**以及**运行多少**，尽量让阅读过程保持流畅：
 
-- It combines charging state, battery level, thermal state, idle time, memory pressure, and task priority before starting a slice of work.
-- **Quiet idle** works in small slices, yields to the reader, and unloads the model between longer intervals when possible.
-- **Balanced** keeps a steady background pace for chapter analysis and retrieval.
-- **Finish now** uses the available resources to complete a requested result sooner, while still respecting device safety limits.
-- These modes change scheduling, thread count, intervals, and model residency—not what the model reads or the meaning of the result.
+- 开始一小段任务前，同时参考充电状态、电量、温度、空闲时间、内存压力和任务优先级。
+- **无感空闲**：把工作切成小片，主动让出阅读操作的响应时间；较长间隔时尽可能卸载模型。
+- **智能平衡**：以稳定速度在后台处理章节分析和检索任务。
+- **立即完成**：在设备安全限制允许的范围内使用更多资源，尽快完成当前请求。
+- 这些模式调整的是调度、线程数、任务间隔和模型驻留方式，不改变模型读到的内容，也不通过降低结果质量换取速度。
 
-The goal is not to pretend that inference has no cost. It is to make that cost adaptive, visible, and appropriate for a phone that is also being used for reading.
+目标不是假装端侧推理没有成本，而是让成本能够动态适配、可以被用户理解，并适合一台同时承担阅读任务的手机。
 
-## Platform Status and Downloads
+## 平台状态与下载入口
 
-Windows and Android use separate GitHub Releases. Their packages and release tags are not shared.
+Windows 和 Android 使用独立 Release，不共用安装包或发布标签。
 
 ### Windows
 
-**Release tag:** [`windows-v1.2.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0)  
-**Download:** `Zhiyue-Windows-x64-1.2.0.zip`
+**发布标签：** [`windows-v1.2.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0)  
+**下载文件：** `Zhiyue-Windows-x64-1.2.0.zip`
 
-Windows is currently the most complete version. The `novel.exe` file must remain beside the bundled `data` directory and DLL files; copying or downloading the executable alone will not work.
+Windows 版是目前功能最完整的版本。ZIP 内的 `novel.exe`、`data` 目录和 DLL 必须一起保留，不能只下载或复制 exe。
 
-Upgrading keeps the bookshelf: reading data lives in `%APPDATA%\com.novel\novel\`, not beside the executable, so replacing the extracted folder does not touch it. The first launch of a new build also copies the library and settings to `backups/` there.
+升级不会丢书架：阅读数据保存在 `%APPDATA%\com.novel\novel\`，不在 exe 旁边，替换解压目录不会动到它。新版本第一次启动时，还会把书架数据和设置复制一份到该目录的 `backups/`。
 
 ### Android
 
-**Release tag:** [`android-v1.0.0-preview.1`](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.0.0-preview.1)  
-**Download:** `Novel-Android-arm64-v8a-1.0.0-preview.1.apk`
+**发布标签：** [`android-v1.0.0-preview.1`](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.0.0-preview.1)  
+**下载文件：** `Novel-Android-arm64-v8a-1.0.0-preview.1.apk`
 
-The Android migration includes emulator tests for the bookshelf, book details, settings, reader, annotations, chapter navigation, completed-chapter marks, background recovery, model download failures, and Android system-back behavior.
+Android 已完成书架、书籍详情、设置、阅读、标注、目录跳转、已读标记、后台恢复、模型下载/失败处理和系统返回逻辑的模拟器测试。
 
-Current status: the first ARM64 Android preview is available. It uses a development signing key and has not yet been validated on a physical phone; a later official signing key may require reinstalling the app.
+当前状态：ARM64 Android 首个预览版已经发布。当前使用开发签名，尚未经过真实手机验证；未来切换正式签名后可能需要重新安装。
 
 ### iOS
 
-There is no iOS build yet. Development is starting on a cloud Mac, with a TestFlight build on a physical iPhone as the first goal and the Windows design carried over. iOS does not allow helper processes, so the inference engine will run inside the app on Metal.
+iOS 还没有可用版本。目前正在云端 Mac 上开始开发，第一步是通过 TestFlight 装到真机，界面沿用 Windows 版的设计。iOS 不允许应用启动辅助进程，所以推理引擎会直接跑在应用内部，使用 Metal。
 
-See the [release guide](docs/RELEASING.md) for platform-specific packaging rules.
+详细发布规则见 [发布说明](docs/RELEASING.md)。
 
-## Repository Structure
+## 技术结构
 
-- `app/`: Flutter UI, platform projects, application state, and shared mobile layer
-- `app/rust/`: Rust data and AI bridge used by the application
-- `core/`: novel parsing, cast, relationship, romance, and diagnostic algorithms
-- `tts-server/`: optional remote text-to-speech service
-- `app/docs/`: mobile migration and implementation notes
+- `app/`：Flutter 界面、平台工程、应用状态和移动端共用层
+- `app/rust/`：应用使用的 Rust 数据与 AI 桥接实现
+- `core/`：小说解析、人物、关系、感情结构等核心算法与诊断工具
+- `tts-server/`：可选的远程听书服务
+- `app/docs/`：移动端迁移和实现说明
 
-## Current Limitations
+## 当前限制
 
-- A 0.6B model cannot independently understand an entire long-form web novel with consistent accuracy. Some analysis may still miss evidence or produce incorrect results.
-- The reading report supports decision-making; it is not a definitive statement about a novel. Important results should be checked against their source passages.
-- Android has not yet undergone physical-device testing for memory use, temperature, battery consumption, or long-running background behavior.
-- iOS is in early development and has no build yet.
-- No open-source license has been selected yet. Until a license is added, no permission is granted to copy, modify, or redistribute the code.
+- 0.6B 轻量模型不适合独立完成长篇网文的全局理解，部分分析仍可能遗漏或误判。
+- 阅读报告是辅助判断，不代表对作品内容的确定结论；重要结果应查看原文依据。
+- Android 尚未经过真实手机上的内存、温度、耗电和长期后台测试。
+- iOS 处于早期开发阶段，还没有可用版本。
+- 当前仓库尚未确定开源许可证；在许可证加入前，代码默认不授予复制、修改或再发布权利。
 
-## Roadmap
+## 开发方向
 
-The short-term priority is the iOS version on a physical iPhone while keeping the Windows version stable; Android follows. The next stage will fine-tune a model on purpose-built Chinese web-fiction data to improve character, relationship, chapter, and content-screening tasks instead of simply increasing the on-device model size.
+短期重点是完成 iOS 版并在真机上验证，同时保持 Windows 版稳定；Android 随后跟进。下一阶段将使用专门整理的中文网文训练数据微调模型，提高人物、关系和章节相关任务的稳定性，而不是盲目增大端侧模型。
 
-## Content and Privacy
+## 内容与隐私
 
-Novel text, reading history, annotations, and generated caches are stored locally by default. The public repository and Releases do not include test novels, user databases, model weights, or personal reading data. Users should only import content they are authorized to use.
+小说原文、阅读记录、标注和生成缓存默认保存在本地。公开仓库和 Release 不包含测试小说、用户数据库、模型权重或个人阅读数据。用户应只导入自己有权使用的内容。
