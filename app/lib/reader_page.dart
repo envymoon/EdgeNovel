@@ -11,13 +11,16 @@ import 'ai_runtime_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
+import 'pace_page.dart';
 import 'paged_reader.dart';
+import 'plate_view.dart';
 import 'platform_services.dart';
 import 'reading_assistant_drawer.dart';
 import 'platform_support.dart';
 import 'reader_state.dart';
 import 'search_page.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/image.dart';
 import 'theme.dart';
 import 'toc_drawer.dart';
 import 'tts_controller.dart';
@@ -67,13 +70,15 @@ class _ReaderPageState extends State<ReaderPage> {
       widget.reader,
       widget.settings,
       localSpeech: widget.localSpeech,
-      enableIo: widget.enableTtsIo,
+      enableIo: widget.enableTtsIo && AppPlatformSupport.hasReadAloud,
     );
     _tts.addListener(_onTtsTick);
+    widget.reader.addListener(_onChapter);
   }
 
   @override
   void dispose() {
+    widget.reader.removeListener(_onChapter);
     _positions.itemPositions.removeListener(_onScroll);
     _tts.removeListener(_onTtsTick);
     _tts.dispose();
@@ -252,6 +257,63 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// The 章间立绘 on screen, between the chapter just finished and the next.
+  String? _plate;
+  int? _plateBook;
+  int _plateChapter = -1;
+
+  /// Reading on from a chapter a plate was drawn after shows it first. Only
+  /// reading on: a jump from the table of contents, or back, does not.
+  void _onChapter() {
+    final book = widget.reader.info?.id;
+    final chapter = widget.reader.chapterIndex;
+    if (book == null || (book == _plateBook && chapter == _plateChapter)) {
+      return;
+    }
+    final from = _plateChapter;
+    final onward = book == _plateBook && chapter == from + 1;
+    _plateBook = book;
+    _plateChapter = chapter;
+    if (_plate != null) setState(() => _plate = null);
+    // Any plate drawn for the chapter shows, whatever spacing drew it.
+    if (!onward) return;
+    platePath(bookId: book, chapter: from).then((path) {
+      if (path == null || !mounted) return;
+      if (widget.reader.info?.id != book ||
+          widget.reader.chapterIndex != from + 1) {
+        return;
+      }
+      setState(() => _plate = path);
+    });
+  }
+
+  void _closePlate() => setState(() => _plate = null);
+
+  /// From the table of contents: the plate after [chapter], over the start of
+  /// the chapter it leads into.
+  Future<void> _showPlate(int chapter) async {
+    final info = widget.reader.info;
+    if (info == null) return;
+    final path = await platePath(bookId: info.id, chapter: chapter);
+    if (path == null || !mounted) return;
+    final next = chapter + 1 < info.chapters.length ? chapter + 1 : chapter;
+    await widget.reader.goToChapter(next);
+    if (!mounted || widget.reader.info?.id != info.id) return;
+    _plateBook = info.id;
+    _plateChapter = widget.reader.chapterIndex;
+    setState(() => _plate = path);
+  }
+
+  Widget _withPlate(ReadingTheme t, Widget page) => Stack(
+    children: [
+      page,
+      if (_plate != null)
+        Positioned.fill(
+          child: PlateView(path: _plate!, theme: t, onDone: _closePlate),
+        ),
+    ],
+  );
+
   /// Chapter navigation by hand invalidates the read-aloud queue, so stop it.
   void _navChapter(void Function() go) {
     if (_tts.playing) _tts.stop();
@@ -351,6 +413,10 @@ class _ReaderPageState extends State<ReaderPage> {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
+    if (_plate != null) {
+      _closePlate();
+      return KeyEventResult.handled;
+    }
     final key = e.logicalKey;
     if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.pageDown) {
       _page(1);
@@ -443,26 +509,28 @@ class _ReaderPageState extends State<ReaderPage> {
               contentPadding: EdgeInsets.zero,
             ),
           ),
-          PopupMenuItem(
-            value: 'tts',
-            child: ListTile(
-              leading: Icon(
-                _tts.playing
-                    ? Icons.headset_off_outlined
-                    : Icons.headset_mic_outlined,
+          if (AppPlatformSupport.hasReadAloud) ...[
+            PopupMenuItem(
+              value: 'tts',
+              child: ListTile(
+                leading: Icon(
+                  _tts.playing
+                      ? Icons.headset_off_outlined
+                      : Icons.headset_mic_outlined,
+                ),
+                title: Text(_tts.playing ? '暂停朗读' : '收听本章'),
+                contentPadding: EdgeInsets.zero,
               ),
-              title: Text(_tts.playing ? '暂停朗读' : '收听本章'),
-              contentPadding: EdgeInsets.zero,
             ),
-          ),
-          const PopupMenuItem(
-            value: 'ttsSettings',
-            child: ListTile(
-              leading: Icon(Icons.tune),
-              title: Text('听书设置'),
-              contentPadding: EdgeInsets.zero,
+            const PopupMenuItem(
+              value: 'ttsSettings',
+              child: ListTile(
+                leading: Icon(Icons.tune),
+                title: Text('听书设置'),
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     ),
@@ -530,7 +598,8 @@ class _ReaderPageState extends State<ReaderPage> {
                             onPressed: _openAnnotations,
                             compact: compact,
                           ),
-                          _ttsMenu(t, compact: compact),
+                          if (AppPlatformSupport.hasReadAloud)
+                            _ttsMenu(t, compact: compact),
                         ],
                         Builder(
                           builder: (ctx) => _readerIconButton(
@@ -556,6 +625,7 @@ class _ReaderPageState extends State<ReaderPage> {
               drawer: TocDrawer(
                 reader: widget.reader,
                 settings: widget.settings,
+                onPlate: _showPlate,
               ),
               endDrawer: ReadingAssistantDrawer(
                 reader: widget.reader,
@@ -572,86 +642,96 @@ class _ReaderPageState extends State<ReaderPage> {
                   ),
                 ),
               ),
-              body: SafeArea(
-                top: !showControls,
-                bottom: !showControls,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: widget.settings.pageWidth,
-                    ),
-                    child: _isPaged
-                        ? PagedReader(
-                            key: _pagedKey,
-                            reader: widget.reader,
-                            settings: widget.settings,
-                            padding: readerPadding,
-                            pageInfo: _pageInfo,
-                            annotationMode: _annotationMode,
-                            onAnnotationSelection: _setAnnotationDraft,
-                            compactTapZones: compact,
-                            onToggleControls: _toggleChrome,
-                          )
-                        // The list is rebuilt per chapter and opens directly on the
-                        // restored paragraph: scrolling to it after building would be
-                        // a visible jump.
-                        : GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTap: compact && !_annotationMode
-                                ? _toggleChrome
-                                : null,
-                            child: ListenableBuilder(
-                              listenable: _tts,
-                              builder: (context, _) =>
-                                  ScrollablePositionedList.builder(
-                                    key: ValueKey(widget.reader.chapterIndex),
-                                    initialScrollIndex:
-                                        widget.reader.initialParagraph,
-                                    itemScrollController: _itemScroll,
-                                    itemPositionsListener: _positions,
-                                    itemCount: widget.reader.paragraphs.length,
-                                    itemBuilder: (context, i) => WheelGlide(
-                                      scale: widget.settings.wheelScale,
-                                      child: Padding(
-                                        padding: _itemPadding(readerPadding, i),
-                                        child: ParagraphView(
-                                          para: widget.reader.paragraphs[i],
-                                          settings: widget.settings,
-                                          theme: t,
-                                          active: _tts.activeParagraph == i,
-                                          activeStart: _tts.activeParagraph == i
-                                              ? _tts.activeStart
-                                              : -1,
-                                          onTapSentence: compact
-                                              ? null
-                                              : (start) => _tts.seekToSentence(
-                                                  i,
-                                                  start,
+              body: _withPlate(
+                t,
+                SafeArea(
+                  top: !showControls,
+                  bottom: !showControls,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: widget.settings.pageWidth,
+                      ),
+                      child: _isPaged
+                          ? PagedReader(
+                              key: _pagedKey,
+                              reader: widget.reader,
+                              settings: widget.settings,
+                              padding: readerPadding,
+                              pageInfo: _pageInfo,
+                              annotationMode: _annotationMode,
+                              onAnnotationSelection: _setAnnotationDraft,
+                              compactTapZones: compact,
+                              onToggleControls: _toggleChrome,
+                            )
+                          // The list is rebuilt per chapter and opens directly on the
+                          // restored paragraph: scrolling to it after building would be
+                          // a visible jump.
+                          : GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onTap: compact && !_annotationMode
+                                  ? _toggleChrome
+                                  : null,
+                              child: ListenableBuilder(
+                                listenable: _tts,
+                                builder: (context, _) =>
+                                    ScrollablePositionedList.builder(
+                                      key: ValueKey(widget.reader.chapterIndex),
+                                      initialScrollIndex:
+                                          widget.reader.initialParagraph,
+                                      itemScrollController: _itemScroll,
+                                      itemPositionsListener: _positions,
+                                      itemCount:
+                                          widget.reader.paragraphs.length,
+                                      itemBuilder: (context, i) => WheelGlide(
+                                        scale: widget.settings.wheelScale,
+                                        child: Padding(
+                                          padding: _itemPadding(
+                                            readerPadding,
+                                            i,
+                                          ),
+                                          child: ParagraphView(
+                                            para: widget.reader.paragraphs[i],
+                                            settings: widget.settings,
+                                            theme: t,
+                                            active: _tts.activeParagraph == i,
+                                            activeStart:
+                                                _tts.activeParagraph == i
+                                                ? _tts.activeStart
+                                                : -1,
+                                            onTapSentence:
+                                                compact ||
+                                                    !AppPlatformSupport
+                                                        .hasReadAloud
+                                                ? null
+                                                : (start) => _tts
+                                                      .seekToSentence(i, start),
+                                            annotations: widget.reader
+                                                .annotationsForParagraph(
+                                                  widget.reader.paragraphs[i],
                                                 ),
-                                          annotations: widget.reader
-                                              .annotationsForParagraph(
-                                                widget.reader.paragraphs[i],
-                                              ),
-                                          onShowAnnotations: (annotations) =>
-                                              showAnnotationComments(
-                                                context,
-                                                reader: widget.reader,
-                                                settings: widget.settings,
-                                                paragraph:
-                                                    widget.reader.paragraphs[i],
-                                                annotations: annotations,
-                                              ),
-                                          annotationMode: _annotationMode,
-                                          annotationChapter:
-                                              widget.reader.chapterIndex,
-                                          onAnnotationSelection:
-                                              _setAnnotationDraft,
+                                            onShowAnnotations: (annotations) =>
+                                                showAnnotationComments(
+                                                  context,
+                                                  reader: widget.reader,
+                                                  settings: widget.settings,
+                                                  paragraph: widget
+                                                      .reader
+                                                      .paragraphs[i],
+                                                  annotations: annotations,
+                                                ),
+                                            annotationMode: _annotationMode,
+                                            annotationChapter:
+                                                widget.reader.chapterIndex,
+                                            onAnnotationSelection:
+                                                _setAnnotationDraft,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
               ),
@@ -700,7 +780,7 @@ class _ReaderPageState extends State<ReaderPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  selected ? '已选择正文' : '拖动选择要标注的文字',
+                  selected ? '已选择正文' : '未选择正文',
                   style: TextStyle(color: t.muted, fontSize: 12.5),
                 ),
               ),
@@ -819,59 +899,113 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  void _hidePace() {
+    widget.settings.setPaceStrip(false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已隐藏全书节奏'),
+          action: SnackBarAction(
+            label: '撤销',
+            onPressed: () => widget.settings.setPaceStrip(true),
+          ),
+        ),
+      );
+  }
+
+  /// The full 节奏 chart from the strip, marked at this chapter; picking a
+  /// chapter there comes back here and goes to it.
+  void _openPace(BookInfo info) {
+    _openPage(
+      PacePage(
+        info: info,
+        settings: widget.settings,
+        current: widget.reader.chapterIndex,
+        onOpenChapter: (chapter) {
+          Navigator.pop(context);
+          _navChapter(() => widget.reader.goToChapter(chapter));
+        },
+      ),
+    );
+  }
+
   Widget _bottomBar(BookInfo info, ReadingTheme t) {
-    final r = widget.reader;
-    final i = r.chapterIndex;
-    final n = info.chapters.length;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       color: t.background,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            tooltip: context.tr('上一章'),
-            icon: const Icon(Icons.chevron_left),
-            color: t.muted,
-            onPressed: i > 0 ? () => _navChapter(r.prev) : null,
-          ),
-          Expanded(
-            // Paged mode counts where you are in the chapter; chapter position
-            // already lives in the title and the TOC.
-            child: _isPaged
-                ? ValueListenableBuilder(
-                    valueListenable: _pageInfo,
-                    builder: (context, (int, int) p, _) => Text(
-                      '本章 ${p.$1} / ${p.$2} 页',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: t.muted, fontSize: 12),
-                    ),
+          // Its own listener: the switch lives in the 阅读外观 sheet, which is
+          // open on top of this page while it is flipped.
+          ListenableBuilder(
+            listenable: widget.settings,
+            builder: (context, _) => widget.settings.paceStrip
+                ? PaceStrip(
+                    info: info,
+                    chapter: widget.reader.chapterIndex,
+                    theme: t,
+                    onTap: () => _openPace(info),
+                    onHide: _hidePace,
                   )
-                : Text(
-                    '${i + 1} / $n   ·   ${info.encoding}'
-                    '${info.interstitialCount > 0 ? '   ·   插页 ${info.interstitialCount}' : ''}',
+                : const SizedBox.shrink(),
+          ),
+          _chapterRow(info, t),
+        ],
+      ),
+    );
+  }
+
+  Widget _chapterRow(BookInfo info, ReadingTheme t) {
+    final r = widget.reader;
+    final i = r.chapterIndex;
+    final n = info.chapters.length;
+    return Row(
+      children: [
+        IconButton(
+          tooltip: context.tr('上一章'),
+          icon: const Icon(Icons.chevron_left),
+          color: t.muted,
+          onPressed: i > 0 ? () => _navChapter(r.prev) : null,
+        ),
+        Expanded(
+          // Paged mode counts where you are in the chapter; chapter position
+          // already lives in the title and the TOC.
+          child: _isPaged
+              ? ValueListenableBuilder(
+                  valueListenable: _pageInfo,
+                  builder: (context, (int, int) p, _) => Text(
+                    '本章 ${p.$1} / ${p.$2} 页',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: t.muted, fontSize: 12),
                   ),
-          ),
-          _Clock(theme: t),
-          IconButton(
-            tooltip: i < n - 1
-                ? '下一章'
+                )
+              : Text(
+                  '${i + 1} / $n   ·   ${info.encoding}'
+                  '${info.interstitialCount > 0 ? '   ·   插页 ${info.interstitialCount}' : ''}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+        ),
+        _Clock(theme: t),
+        IconButton(
+          tooltip: i < n - 1
+              ? '下一章'
+              : r.isChapterCompleted(i)
+              ? '已读完'
+              : '本书末章',
+          icon: Icon(
+            i < n - 1
+                ? Icons.chevron_right
                 : r.isChapterCompleted(i)
-                ? '已读完'
-                : '本书末章',
-            icon: Icon(
-              i < n - 1
-                  ? Icons.chevron_right
-                  : r.isChapterCompleted(i)
-                  ? Icons.check_circle
-                  : Icons.check_circle_outline,
-            ),
-            color: t.muted,
-            onPressed: i < n - 1 ? _nextChapter : null,
+                ? Icons.check_circle
+                : Icons.check_circle_outline,
           ),
-        ],
-      ),
+          color: t.muted,
+          onPressed: i < n - 1 ? _nextChapter : null,
+        ),
+      ],
     );
   }
 }
@@ -1231,10 +1365,6 @@ class SettingsSheet extends StatelessWidget {
                   ),
                   style: TextStyle(color: t.text, fontSize: 14),
                 ),
-                subtitle: Text(
-                  '按需下载或导入本地字体',
-                  style: TextStyle(color: t.muted, fontSize: 11),
-                ),
                 trailing: Icon(Icons.chevron_right, color: t.muted),
                 onTap: () => Navigator.push(
                   context,
@@ -1311,6 +1441,16 @@ class SettingsSheet extends StatelessWidget {
                 ),
                 value: settings.firstLineIndent,
                 onChanged: settings.setFirstLineIndent,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(
+                  '底栏显示全书节奏',
+                  style: TextStyle(color: t.muted, fontSize: 13),
+                ),
+                value: settings.paceStrip,
+                onChanged: settings.setPaceStrip,
               ),
             ],
           ),

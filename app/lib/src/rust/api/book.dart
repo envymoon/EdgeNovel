@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `around`, `cache`, `chapter_chunks`, `chapter_excerpt`, `chapter_titles`, `data_dir`, `db_path`, `ensure_loaded`, `is_loaded`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `snippet`, `store`, `unjudged_names`
+// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_digest`, `chapter_excerpt`, `chapter_titles`, `data_dir`, `db_path`, `ensure_loaded`, `is_loaded`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `read_quietly`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `snippet`, `source_label`, `store`, `summarized_chapters`, `unjudged_names`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -24,7 +24,8 @@ Future<CacheUsage> cacheUsage() =>
 Future<void> dropSummaries({required PlatformInt64 bookId}) =>
     RustLib.instance.api.crateApiBookDropSummaries(bookId: bookId);
 
-/// Both, in one go, for the "清空这本书的 AI 数据" button.
+/// All of it, in one go, for the "清空这本书的 AI 数据" button: summaries, the
+/// index and the drawn 章间立绘, which are drawn again if it is still on.
 Future<void> dropBookCache({required PlatformInt64 bookId}) =>
     RustLib.instance.api.crateApiBookDropBookCache(bookId: bookId);
 
@@ -226,6 +227,14 @@ Future<List<SearchHit>> searchText({
   upToChapter: upToChapter,
   k: k,
 );
+
+/// 节奏图: one intensity score per chapter, in table-of-contents order — 0 is
+/// this book's average, higher is more intense. `None` for a chapter too short
+/// to say (an author's note). Counted from the whole text by
+/// `novel_core::pace`, no model, a few dozen milliseconds for a long book, so it
+/// is ready the moment the book is and is never stored.
+Future<List<double?>> chapterPace({required String path}) =>
+    RustLib.instance.api.crateApiBookChapterPace(path: path);
 
 /// Scan the cast and relationships. Pure rules, no engine, no download —
 /// then whatever the model has already ruled on for this book is laid over the
@@ -535,6 +544,15 @@ class CastPerson {
   /// written one. Every UI must render correctly when this is None.
   final String? background;
 
+  /// What [`Self::background`] was written from, said for the reader
+  /// (章节概览 / 章节概览与原文摘句 / 原文摘句), or None when unknown.
+  final String? backgroundSource;
+
+  /// The background could now be written from better material — more
+  /// chapter summaries than when it was written, or it predates them. The old
+  /// one is still shown until the reader asks for a new one.
+  final bool backgroundOutdated;
+
   /// The sentences that account rests on — shown to the reader, so a claim
   /// about a character can always be traced back to the book.
   final List<RelEvidence> evidence;
@@ -547,6 +565,8 @@ class CastPerson {
     required this.firstChapter,
     required this.uncertain,
     this.background,
+    this.backgroundSource,
+    required this.backgroundOutdated,
     required this.evidence,
   });
 
@@ -559,6 +579,8 @@ class CastPerson {
       firstChapter.hashCode ^
       uncertain.hashCode ^
       background.hashCode ^
+      backgroundSource.hashCode ^
+      backgroundOutdated.hashCode ^
       evidence.hashCode;
 
   @override
@@ -573,6 +595,8 @@ class CastPerson {
           firstChapter == other.firstChapter &&
           uncertain == other.uncertain &&
           background == other.background &&
+          backgroundSource == other.backgroundSource &&
+          backgroundOutdated == other.backgroundOutdated &&
           evidence == other.evidence;
 }
 
@@ -640,6 +664,8 @@ class ChapterInfo {
 
   /// One-word mood label from the same pass, from a fixed vocabulary. Same
   /// rule: absent until enrichment has been here, and absence must render fine.
+  /// No longer written (see `ai::MOOD_LABELS`) and no page shows it; labels
+  /// from before are still read back.
   final String? mood;
 
   const ChapterInfo({

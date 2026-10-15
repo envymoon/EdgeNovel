@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 12;
+pub const SCAN_VERSION: u32 = 13;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -916,7 +916,6 @@ const BACKGROUND_CUES: &[&str] = &[
     "早年",
     "昔日",
     "从前",
-    "原本",
     "本是",
     "原是",
     "曾是",
@@ -1001,10 +1000,6 @@ const BACKGROUND_CUES: &[&str] = &[
     "身形",
     "个子",
     "眉眼",
-    "一袭",
-    "身穿",
-    "穿着",
-    "打扮",
     "年纪",
     "岁上下",
     "少年",
@@ -1026,8 +1021,6 @@ const BACKGROUND_CUES: &[&str] = &[
     "逐出",
     "背叛",
     "失踪",
-    "回来",
-    "醒来",
     "重生",
     "穿越",
 ];
@@ -1035,6 +1028,132 @@ const BACKGROUND_CUES: &[&str] = &[
 /// Does this sentence say anything about who the person is? See [`BACKGROUND_CUES`].
 fn has_background(sent: &str) -> bool {
     BACKGROUND_CUES.iter().any(|w| sent.contains(w))
+}
+
+/// What someone has on is a scene, not a person: 「克莱恩身穿沾染着尘埃的灰蓝色
+/// 工人制服」 is a disguise for one chapter, and a summary that reads it calls
+/// him a worker. Worse, the clothes in a sentence are as often someone else's.
+/// Such sentences are kept out of every background sample.
+const CLOTHING: &[&str] = &[
+    "穿着", "身穿", "身着", "穿上", "换上", "戴着", "头戴", "披着", "套着", "裹着", "一袭", "打扮",
+];
+
+/// Splits a sentence into the clauses a subject governs.
+const CLAUSE_SEPS: &str = "，,：:；;…—";
+
+/// Words that may stand before a clause's subject without making it anything
+/// else: 「就算克莱恩……」「只见陈平安……」. Anything else there — 「搜查克莱恩家
+/// 的警官」「示意克莱恩上去」 — makes the name an object or part of a modifier,
+/// and the clause is about someone else.
+const LEAD_WORDS: &[&str] = &[
+    "而",
+    "但",
+    "但是",
+    "可",
+    "可是",
+    "却",
+    "只是",
+    "不过",
+    "于是",
+    "随后",
+    "然后",
+    "接着",
+    "此时",
+    "这时",
+    "那时",
+    "当时",
+    "此刻",
+    "那就是",
+    "就算",
+    "即使",
+    "即便",
+    "虽然",
+    "如果",
+    "若是",
+    "若",
+    "要是",
+    "当",
+    "连",
+    "就连",
+    "唯有",
+    "只有",
+    "直到",
+    "等到",
+    "便",
+    "又",
+    "也",
+    "还",
+    "就",
+    "才",
+    "正",
+    "都",
+    "原来",
+    "果然",
+    "其实",
+    "至于",
+    "因为",
+    "所以",
+    "因此",
+    "可惜",
+    "幸好",
+    "好在",
+    "只见",
+    "却见",
+];
+
+/// Joins subjects that share one predicate: 「高阳和王子凯一起……」.
+const COORDINATORS: &[&str] = &["和", "与", "跟", "同", "及", "以及", "、", "还有"];
+
+/// How one sentence stands to one person in it, for that person's background.
+/// Ordered best first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Stance {
+    /// The person is the clause's subject and the clause says who they are.
+    Tells,
+    /// The person is the clause's subject.
+    Topic,
+    /// The person is only mentioned: an object, or inside someone else's
+    /// description. Used only to top up a sample that is otherwise too thin.
+    Aside,
+}
+
+/// Is the person this clause opens on really its subject, given the text in
+/// front of their name? A lead ending in 的 describes them (出身“值夜者”的克莱恩).
+fn opens_on_subject(lead: &str) -> bool {
+    let lead = lead.trim_matches(|c: char| c.is_whitespace() || "“”「」『』‘’\"'".contains(c));
+    lead.is_empty() || lead.ends_with('的') || LEAD_WORDS.contains(&lead)
+}
+
+/// Each person's best [`Stance`] in one sentence. `hits` are the names found in
+/// it, as (start, end, person) byte offsets into `sent`, in order.
+fn stances(sent: &str, hits: &[(usize, usize, usize)]) -> HashMap<usize, Stance> {
+    let mut out: HashMap<usize, Stance> = hits.iter().map(|h| (h.2, Stance::Aside)).collect();
+    let mut cuts = vec![0];
+    for (o, c) in sent.char_indices() {
+        if CLAUSE_SEPS.contains(c) {
+            cuts.push(o + c.len_utf8());
+        }
+    }
+    cuts.push(sent.len());
+    for w in cuts.windows(2) {
+        let (c0, c1) = (w[0], w[1]);
+        let tells = has_background(&sent[c0..c1]);
+        let mut prev: Option<usize> = None;
+        for &(s, e, pid) in hits.iter().filter(|h| h.0 >= c0 && h.0 < c1) {
+            let subject = match prev {
+                None => opens_on_subject(&sent[c0..s]),
+                Some(pe) => COORDINATORS.contains(&sent[pe..s].trim()),
+            };
+            if !subject {
+                break;
+            }
+            let st = if tells { Stance::Tells } else { Stance::Topic };
+            let best = out.entry(pid).or_insert(st);
+            *best = (*best).min(st);
+            prev = Some(e);
+        }
+    }
+    out
 }
 
 /// Where an appellation sits decides whether it says anything about *this* pair.
@@ -1841,11 +1960,11 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
     let mut edges: HashMap<(usize, usize), Acc> = HashMap::new();
     let mut last_seen: Vec<Option<usize>> = vec![None; people.len()];
     let mut first_seen: Vec<Option<usize>> = vec![None; people.len()];
-    // Per person, the same two-tier sample the edges keep, for the same reason:
-    // a lead's sentences are overwhelmingly 「他点点头」, and a uniform draw of
-    // forty of those tells the model nothing about who he is.
-    let mut solo: Vec<(Reservoir, Reservoir)> =
-        (0..people.len()).map(|_| Default::default()).collect();
+    // Per person, a tiered sample like the edges keep, for the same reason: a
+    // lead's sentences are overwhelmingly 「他点点头」, and a uniform draw of
+    // seventy of those tells the model nothing about who he is. One tier per
+    // [`Stance`], best first.
+    let mut solo: Vec<[Reservoir; 3]> = (0..people.len()).map(|_| Default::default()).collect();
 
     for &(ci, line) in paras {
         // Longest match wins and overlaps are dropped, so 李青 inside 李青山
@@ -1901,17 +2020,22 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
                 .collect();
             pids.sort_unstable();
             pids.dedup();
-            let sent = line[s0..s1].trim();
-            // Every person in the sentence banks it, alone or not: a scene with
-            // two people in it still says something about each of them.
-            let tells = has_background(sent);
-            for &pid in &pids {
-                let r = if tells {
-                    &mut solo[pid].0
-                } else {
-                    &mut solo[pid].1
-                };
-                r.push(ci, sent);
+            let raw = &line[s0..s1];
+            let sent = raw.trim();
+            // Every person in the sentence banks it, in the tier that says how
+            // much it is about them: a scene with two people in it still says
+            // something about each, but 「搜查克莱恩家的黑发绿瞳警官」 describes the
+            // officer, and handed to 克莱恩's summary it made him one.
+            if !CLOTHING.iter().any(|w| sent.contains(w)) {
+                let base = s0 + (raw.len() - raw.trim_start().len());
+                let local: Vec<(usize, usize, usize)> = kept
+                    .iter()
+                    .filter(|h| h.0 >= s0 && h.0 < s1)
+                    .map(|&(a, b, pid)| (a - base, b - base, pid))
+                    .collect();
+                for (pid, stance) in stances(sent, &local) {
+                    solo[pid][stance as usize].push(ci, sent);
+                }
             }
             if pids.len() < 2 {
                 continue;
@@ -1967,13 +2091,13 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
 
     for (pid, p) in people.iter_mut().enumerate() {
         p.first_chapter = first_seen[pid].unwrap_or(0);
-        // Telling sentences first, neutral ones only to fill; then chronological,
-        // so the model reads a life in the order it was lived.
-        let (strong, weak) = std::mem::take(&mut solo[pid]);
-        let mut ev = strong.items;
-        if ev.len() < MAX_EVIDENCE {
+        // Telling sentences first, the rest of their own only to fill, mentions
+        // only if that is still thin; then chronological, so the model reads a
+        // life in the order it was lived.
+        let mut ev = Vec::new();
+        for tier in std::mem::take(&mut solo[pid]) {
             let need = MAX_EVIDENCE - ev.len();
-            ev.extend(weak.items.into_iter().take(need));
+            ev.extend(tier.items.into_iter().take(need));
         }
         ev.sort_by_key(|&(ci, _)| ci);
         p.evidence = ev;
@@ -2504,5 +2628,85 @@ mod binding {
         for s in ["“姑娘，请留步。", "阮邛莫名其妙骂娘起来"] {
             assert!(!bind(s, &["阮邛", "齐静春"]).iter().any(|w| *w == "娘"));
         }
+    }
+}
+
+#[cfg(test)]
+mod background {
+    use super::*;
+
+    /// Each name's stance, found the way [`graph`] finds them: by plain match.
+    fn stance_of(sent: &str, names: &[&str]) -> Vec<Stance> {
+        let mut hits: Vec<(usize, usize, usize)> = Vec::new();
+        for (pid, n) in names.iter().enumerate() {
+            for (o, _) in sent.match_indices(n) {
+                hits.push((o, o + n.len(), pid));
+            }
+        }
+        hits.sort();
+        let got = stances(sent, &hits);
+        (0..names.len()).map(|pid| got[&pid]).collect()
+    }
+
+    #[test]
+    fn a_subject_whose_clause_says_who_they_are_tells() {
+        assert_eq!(
+            stance_of("出身“值夜者”的克莱恩对此相当了解。", &["克莱恩"]),
+            [Stance::Tells]
+        );
+        assert_eq!(
+            stance_of(
+                "他的行踪，就算克莱恩在灰雾之上也只能窥见一二。",
+                &["克莱恩"]
+            ),
+            [Stance::Topic]
+        );
+    }
+
+    #[test]
+    fn a_name_inside_someone_elses_description_is_only_a_mention() {
+        assert_eq!(
+            stance_of(
+                "正是之前搜查克莱恩家的黑发绿瞳警官，刚才两人在楼上已经见过一面。",
+                &["克莱恩"]
+            ),
+            [Stance::Aside]
+        );
+        assert_eq!(
+            stance_of("对不清楚克莱恩原本身份的存在来说。", &["克莱恩"]),
+            [Stance::Aside]
+        );
+    }
+
+    #[test]
+    fn a_cue_in_another_clause_is_not_about_this_subject() {
+        // 身份 belongs to the first clause, the subject to the second.
+        assert_eq!(
+            stance_of(
+                "依靠着这层身份带来的认知，克莱恩没有立刻放弃。",
+                &["克莱恩"]
+            ),
+            [Stance::Topic]
+        );
+    }
+
+    #[test]
+    fn the_first_subject_owns_the_clause_unless_they_are_joined() {
+        assert_eq!(
+            stance_of(
+                "伦纳德发现克莱恩保持着冷峻斯文的形象。",
+                &["伦纳德", "克莱恩"]
+            ),
+            [Stance::Topic, Stance::Aside]
+        );
+        assert_eq!(
+            stance_of("高阳和王子凯一起走出了门。", &["高阳", "王子凯"]),
+            [Stance::Topic, Stance::Topic]
+        );
+        // A later clause has its own subject.
+        assert_eq!(
+            stance_of("伦纳德点点头，克莱恩笑了笑。", &["伦纳德", "克莱恩"]),
+            [Stance::Topic, Stance::Topic]
+        );
     }
 }

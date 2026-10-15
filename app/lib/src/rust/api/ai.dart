@@ -7,8 +7,8 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `background_rest`, `build_portrait_facts`, `chat_engine_args`, `chat_once`, `classify_mood`, `clean_summary`, `compose`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine`, `ensure`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `fmt_dur`, `health`, `hour_bucket`, `http`, `inference_backend`, `is_a_person`, `is_embed_model`, `is_engine_entry`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `normalized_evidence`, `repeats_original`, `runtime_config`, `stop_chat_engine`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `tail_pick`, `ymd_from_epoch`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ChatEngineState`, `LastInputInfo`, `LlamaServerBackend`, `MemoryStatusEx`, `PortraitFacts`, `SystemPowerStatus`
+// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `also_called`, `ask_for_text`, `background_rest`, `chat_engine_args`, `chat_once`, `classify_mood`, `clean_summary`, `cpu_only`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine`, `ensure`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `health`, `http`, `inference_backend`, `is_a_person`, `is_embed_model`, `is_engine_entry`, `joined`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `normalized_evidence`, `repeats_original`, `runtime_config`, `stage_from_lines`, `stop_chat_engine`, `story_from_lines`, `story_from_stages`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `tail_pick`, `write_background`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ChatEngineState`, `LastInputInfo`, `LlamaServerBackend`, `MemoryStatusEx`, `SystemPowerStatus`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `chat_completion`, `chat_completion`, `embeddings`, `embeddings`, `prepare_chat`, `prepare_chat`, `prepare_embeddings`, `prepare_embeddings`
 
@@ -171,16 +171,6 @@ Stream<ScanProgress> scanLandmine({
   id: id,
   k: k,
 );
-
-/// A 阅读画像 paragraph, grounded entirely in counted facts. `angle` is a rotating
-/// seed (advanced by 换一篇) that varies the phrasing; `tz_secs` is the reader's
-/// UTC offset so session times and the opening date land on their local clock.
-/// Pure template — no engine needed. Empty string when nothing has been read yet.
-Future<String> readerPortrait({
-  required int angle,
-  required PlatformInt64 tzSecs,
-}) =>
-    RustLib.instance.api.crateApiAiReaderPortrait(angle: angle, tzSecs: tzSecs);
 
 /// Platform facts used by the shared queue controller. Android and iOS will
 /// provide these through their native adapters; Windows is implemented here so

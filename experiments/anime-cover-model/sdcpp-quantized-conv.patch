@@ -1,0 +1,246 @@
+diff --git a/src/convert.cpp b/src/convert.cpp
+index 7fb0825..911c82f 100644
+--- a/src/convert.cpp
++++ b/src/convert.cpp
+@@ -25,8 +25,33 @@
+ struct TensorExportInfo {
+     TensorStorage storage;
+     ggml_type type;
++    // Written as the [KW*KH*IC, OC] matrix of a [KW, KH, IC, OC] conv kernel, the only
++    // shape it can be quantized in; Conv2d and ggml_ext_conv_2d read it back.
++    bool kernel_as_matrix = false;
+ };
+ 
++static TensorStorage kernel_matrix_storage(const TensorStorage& storage) {
++    TensorStorage matrix = storage;
++    matrix.n_dims        = 2;
++    matrix.ne[0]         = storage.ne[0] * storage.ne[1] * storage.ne[2];
++    matrix.ne[1]         = storage.ne[3];
++    for (int i = 2; i < SD_MAX_DIMS; i++) {
++        matrix.ne[i] = 1;
++    }
++    return matrix;
++}
++
++// Square conv kernels of a UNet, the model whose convolutions all go through Conv2d.
++static bool is_unet_conv_kernel(const TensorStorage& storage, SDVersion version) {
++    return sd_version_is_unet(version) &&
++           storage.n_dims == 4 &&
++           storage.ne[0] == storage.ne[1] &&
++           (storage.type == GGML_TYPE_F16 || storage.type == GGML_TYPE_F32 || storage.type == GGML_TYPE_BF16) &&
++           !storage.is_f64 && !storage.is_i64 &&
++           starts_with(convert_tensor_name(storage.name, version), "model.diffusion_model.") &&
++           ends_with(storage.name, ".weight");
++}
++
+ struct TensorExportJob {
+     TensorExportInfo info;
+     std::vector<uint8_t> data;
+@@ -63,14 +88,24 @@ static bool collect_tensors_for_export(ModelLoader& model_loader,
+                                        std::vector<TensorExportInfo>& tensors) {
+     tensors.clear();
+     tensors.reserve(model_loader.get_tensor_storage_map().size());
++    const SDVersion version = model_loader.get_sd_version();
++    size_t kernels          = 0;
+     for (const auto& kv : model_loader.get_tensor_storage_map()) {
+         const TensorStorage& tensor_storage = kv.second;
+         TensorExportInfo info;
+         info.storage = tensor_storage;
+         info.type    = get_export_tensor_type(model_loader, tensor_storage, type, tensor_type_rules);
++        if (is_unet_conv_kernel(tensor_storage, version)) {
++            ggml_type matrix_type = get_export_tensor_type(model_loader, kernel_matrix_storage(tensor_storage), type, tensor_type_rules);
++            if (ggml_is_quantized(matrix_type)) {
++                info.type             = matrix_type;
++                info.kernel_as_matrix = true;
++                kernels++;
++            }
++        }
+         tensors.push_back(std::move(info));
+     }
+-    LOG_INFO("collected %zu tensors for export", tensors.size());
++    LOG_INFO("collected %zu tensors for export (%zu conv kernels as matrices)", tensors.size(), kernels);
+     return true;
+ }
+ 
+@@ -81,12 +116,13 @@ static size_t export_tensor_nbytes(const TensorExportInfo& info) {
+ }
+ 
+ static TensorWritePlan tensor_write_plan_from_export_info(const TensorExportInfo& info, const std::string& name) {
++    const TensorStorage shape = info.kernel_as_matrix ? kernel_matrix_storage(info.storage) : info.storage;
+     TensorWritePlan plan;
+     plan.name   = name;
+     plan.type   = info.type;
+-    plan.n_dims = info.storage.n_dims;
++    plan.n_dims = shape.n_dims;
+     for (int i = 0; i < SD_MAX_DIMS; i++) {
+-        plan.ne[i] = info.storage.ne[i];
++        plan.ne[i] = shape.ne[i];
+     }
+     return plan;
+ }
+@@ -131,10 +167,13 @@ static bool preallocate_output_file(const std::string& output_path, uint64_t fil
+ }
+ 
+ static bool load_tensor_for_export(ModelLoader& model_loader, TensorExportJob& job) {
+-    size_t mem_size = 1 * 1024 * 1024;
++    // A kernel going out as a matrix is read as it is stored and quantized below:
++    // load_tensor would quantize it along its KW-long rows.
++    const ggml_type load_type = job.info.kernel_as_matrix ? job.info.storage.type : job.info.type;
++    size_t mem_size           = 1 * 1024 * 1024;
+     mem_size += ggml_tensor_overhead();
+     TensorStorage output_storage = job.info.storage;
+-    output_storage.type          = job.info.type;
++    output_storage.type          = load_type;
+     mem_size += static_cast<size_t>(output_storage.nbytes());
+ 
+     ggml_context* ggml_ctx = ggml_init({mem_size, nullptr, false});
+@@ -143,7 +182,7 @@ static bool load_tensor_for_export(ModelLoader& model_loader, TensorExportJob& j
+         return false;
+     }
+ 
+-    ggml_tensor* tensor = ggml_new_tensor(ggml_ctx, job.info.type, job.info.storage.n_dims, job.info.storage.ne);
++    ggml_tensor* tensor = ggml_new_tensor(ggml_ctx, load_type, job.info.storage.n_dims, job.info.storage.ne);
+     if (tensor == nullptr) {
+         ggml_free(ggml_ctx);
+         job.error = "ggml_new_tensor failed for tensor '" + job.info.storage.name + "'";
+@@ -158,9 +197,15 @@ static bool load_tensor_for_export(ModelLoader& model_loader, TensorExportJob& j
+         return false;
+     }
+ 
+-    job.data.resize(tensor_nbytes);
+-    if (tensor_nbytes > 0) {
+-        memcpy(job.data.data(), tensor->data, tensor_nbytes);
++    if (job.info.kernel_as_matrix) {
++        const TensorStorage matrix = kernel_matrix_storage(job.info.storage);
++        job.data.resize(export_tensor_nbytes(job.info));
++        convert_tensor(tensor->data, load_type, job.data.data(), job.info.type, (int)matrix.ne[1], (int)matrix.ne[0]);
++    } else {
++        job.data.resize(tensor_nbytes);
++        if (tensor_nbytes > 0) {
++            memcpy(job.data.data(), tensor->data, tensor_nbytes);
++        }
+     }
+     ggml_free(ggml_ctx);
+     return true;
+@@ -174,10 +219,13 @@ static bool export_tensor_from_memory(const TensorExportInfo& info,
+     if (found == mem.end() || found->second == nullptr || found->second->data == nullptr) {
+         return false;
+     }
+-    const TensorStorage& storage = info.storage;
++    const TensorStorage storage = info.kernel_as_matrix ? kernel_matrix_storage(info.storage) : info.storage;
+     out.resize(export_tensor_nbytes(info));
+     if (out.size() > 0) {
+-        std::vector<float> imatrix = get_imatrix_collector().get_values(convert_tensor_name(info.storage.name, version));
++        std::vector<float> imatrix;
++        if (!info.kernel_as_matrix) {
++            imatrix = get_imatrix_collector().get_values(convert_tensor_name(info.storage.name, version));
++        }
+         convert_tensor(found->second->data,
+                        found->second->type,
+                        out.data(),
+diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
+index d16b92a..72316fd 100644
+--- a/src/core/ggml_extend.cpp
++++ b/src/core/ggml_extend.cpp
+@@ -413,6 +413,35 @@ ggml_tensor* ggml_ext_conv_1d(ggml_context* ctx,
+     return result;
+ }
+ 
++// A quantized kernel can't keep the [KW, KH, IC, OC] layout: its KW-long rows are
++// shorter than a quantization block. It is stored as the [KW*KH*IC, OC] matrix that
++// ggml_conv_2d reshapes it to anyway, and multiplies the unfolded input directly.
++static ggml_tensor* conv_2d_matrix(ggml_context* ctx,
++                                   ggml_tensor* x,
++                                   ggml_tensor* w,
++                                   int s0,
++                                   int s1,
++                                   int p0,
++                                   int p1,
++                                   int d0,
++                                   int d1) {
++    // The matrix only gives KW*KH; every kernel stored this way is square.
++    const int64_t IC = x->ne[2];
++    const int64_t K  = static_cast<int64_t>(std::lround(std::sqrt(static_cast<double>(w->ne[0] / IC))));
++    GGML_ASSERT(K * K * IC == w->ne[0]);
++
++    // im2col reads nothing but the kernel's shape from its first argument.
++    // F32 columns: the CPU backend multiplies quantized weights by nothing else, and
++    // GPUs without NVIDIA's coopmat2 would dequantize a copy of the kernel for F16
++    // ones (10% slower on an Iris Xe). The price is a compute buffer about 100MB
++    // larger at 512x768 than with the F16 columns ggml_conv_2d uses.
++    ggml_tensor* shape = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, K, K, IC, 1);
++    ggml_tensor* cols  = ggml_im2col(ctx, shape, x, s0, s1, p0, p1, d0, d1, true, GGML_TYPE_F32);  // [N, OH, OW, IC*KH*KW]
++    ggml_tensor* y     = ggml_mul_mat(ctx, w, ggml_reshape_2d(ctx, cols, cols->ne[0], ggml_nrows(cols)));
++    y                  = ggml_reshape_4d(ctx, y, w->ne[1], cols->ne[1], cols->ne[2], cols->ne[3]);  // [N, OH, OW, OC]
++    return ggml_cont(ctx, ggml_permute(ctx, y, 2, 0, 1, 3));                                       // [N, OC, OH, OW]
++}
++
+ ggml_tensor* ggml_ext_conv_2d(ggml_context* ctx,
+                               ggml_tensor* x,
+                               ggml_tensor* w,
+@@ -427,10 +456,11 @@ ggml_tensor* ggml_ext_conv_2d(ggml_context* ctx,
+                               bool circular_x,
+                               bool circular_y,
+                               float scale) {
++    const bool matrix_kernel = ggml_is_quantized(w->type) && ggml_n_dims(w) == 2;
+     if (scale != 1.f) {
+         x = ggml_ext_scale(ctx, x, scale);
+     }
+-    if (w->ne[2] != x->ne[2] && ggml_n_dims(w) == 2) {
++    if (w->ne[2] != x->ne[2] && ggml_n_dims(w) == 2 && !matrix_kernel) {
+         w = ggml_reshape_4d(ctx, w, 1, 1, w->ne[0], w->ne[1]);
+     }
+ 
+@@ -440,7 +470,9 @@ ggml_tensor* ggml_ext_conv_2d(ggml_context* ctx,
+         p1 = 0;
+     }
+ 
+-    if (direct) {
++    if (matrix_kernel) {
++        x = conv_2d_matrix(ctx, x, w, s0, s1, p0, p1, d0, d1);
++    } else if (direct) {
+         x = ggml_conv_2d_direct(ctx, w, x, s0, s1, p0, p1, d0, d1);
+     } else {
+         x = ggml_conv_2d(ctx, w, x, s0, s1, p0, p1, d0, d1);
+diff --git a/src/core/ggml_extend.h b/src/core/ggml_extend.h
+index 5747d62..8b0a562 100644
+--- a/src/core/ggml_extend.h
++++ b/src/core/ggml_extend.h
+@@ -115,7 +115,7 @@ ggml_tensor* ggml_ext_conv_1d(ggml_context* ctx,
+                               int64_t groups      = 1,
+                               bool force_prec_f32 = false);
+ 
+-// w: [OC，IC, KH, KW]
++// w: [OC，IC, KH, KW], or a quantized square kernel as a [OC, IC*KH*KW] matrix
+ // x: [N, IC, IH, IW]
+ // b: [OC,]
+ // result: [N, OC, OH, OW]
+diff --git a/src/model/common/ggml_block.hpp b/src/model/common/ggml_block.hpp
+index 1d35b41..f0aaf9b 100644
+--- a/src/model/common/ggml_block.hpp
++++ b/src/model/common/ggml_block.hpp
+@@ -514,9 +514,21 @@ protected:
+     std::string prefix;
+ 
+     void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map, const std::string prefix = "") override {
+-        this->prefix         = prefix;
+-        enum ggml_type wtype = GGML_TYPE_F16;
+-        params["weight"]     = ggml_new_tensor_4d(ctx, wtype, kernel_size.second, kernel_size.first, in_channels, out_channels);
++        this->prefix = prefix;
++        // A quantized kernel comes as a [OC, IC*KH*KW] matrix; see ggml_ext_conv_2d.
++        const int64_t kernel_elements = int64_t(kernel_size.first) * kernel_size.second * in_channels;
++        auto weight_storage           = tensor_storage_map.find(prefix + "weight");
++        if (weight_storage != tensor_storage_map.end() &&
++            ggml_is_quantized(weight_storage->second.type) &&
++            weight_storage->second.n_dims == 2 &&
++            weight_storage->second.ne[0] == kernel_elements &&
++            weight_storage->second.ne[1] == out_channels &&
++            kernel_size.first == kernel_size.second) {
++            params["weight"] = ggml_new_tensor_2d(ctx, weight_storage->second.type, kernel_elements, out_channels);
++        } else {
++            enum ggml_type wtype = GGML_TYPE_F16;
++            params["weight"]     = ggml_new_tensor_4d(ctx, wtype, kernel_size.second, kernel_size.first, in_channels, out_channels);
++        }
+         if (bias) {
+             enum ggml_type wtype = GGML_TYPE_F32;
+             params["bias"]       = ggml_new_tensor_1d(ctx, wtype, out_channels);

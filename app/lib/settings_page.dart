@@ -22,7 +22,7 @@ class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.settings});
 
   /// Keep in step with `version:` in pubspec.yaml.
-  static const appVersion = '1.0.0';
+  static const appVersion = '1.1.0';
 
   Future<bool> _confirmClearHistory(
     BuildContext context,
@@ -34,7 +34,7 @@ class SettingsPage extends StatelessWidget {
         backgroundColor: t.raisedSurface,
         title: Text('清空全部阅读记录？', style: TextStyle(color: t.text, fontSize: 16)),
         content: Text(
-          '阅读时长、连续阅读天数和阅读画像所依据的数据都会被删除，且无法恢复。'
+          '阅读时长、阅读速度、连续阅读天数和阅读画像所依据的数据都会被删除，且无法恢复。'
           '小说文件与阅读进度不会受影响。',
           style: TextStyle(color: t.muted, fontSize: 13, height: 1.5),
         ),
@@ -98,7 +98,6 @@ class SettingsPage extends StatelessWidget {
                     t,
                     icon: Icons.palette_outlined,
                     title: '外观',
-                    subtitle: '界面字体与配色',
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -116,7 +115,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.rate_review_outlined,
                       title: '优书网书评',
-                      subtitle: '登录与书评更新',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -137,7 +135,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.tune,
                       title: 'AI 运行与设备',
-                      subtitle: '速度、电量与后台',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -149,7 +146,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.font_download_outlined,
                       title: '阅读字体',
-                      subtitle: '下载或导入字体',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -161,7 +157,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.dns_outlined,
                       title: '书源管理',
-                      subtitle: '在线书源',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -172,7 +167,7 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 24),
-                _sectionLabel(t, '本地 AI'),
+                _sectionLabel(t, 'AI 管理'),
                 _group(
                   t,
                   children: [
@@ -180,7 +175,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.auto_awesome_outlined,
                       title: '模型、引擎与生成数据',
-                      subtitle: '模型与生成数据',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -199,7 +193,6 @@ class SettingsPage extends StatelessWidget {
                       t,
                       icon: Icons.history_toggle_off,
                       title: '清空阅读记录',
-                      subtitle: '保留书籍',
                       destructive: true,
                       showChevron: false,
                       onTap: () => _clearHistory(context, t),

@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart' hide Text;
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
-import 'ai_page.dart';
+import 'analysis_run_card.dart';
 import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
 import 'cast_graph_page.dart';
 import 'cover.dart';
 import 'landmine_page.dart';
-import 'mood_page.dart';
+import 'pace_page.dart';
+import 'plate_page.dart';
 import 'platform_support.dart';
 import 'reader_state.dart';
+import 'search_index_page.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
@@ -121,49 +123,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
   }
 
-  Future<void> _startAnalysis() async {
-    final status = await aiStatus();
-    if (!mounted) return;
-    if (!status.engine || status.model == null) {
-      final go = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: widget.settings.theme.background,
-          title: const Text('需要先下载本地 AI 模型'),
-          content: const Text('模型按需下载，书籍内容仍在本机处理。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('去下载'),
-            ),
-          ],
-        ),
-      );
-      if (go == true && mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => AiPage(settings: widget.settings)),
-        );
-      }
-      return;
-    }
-    widget.reader.startEnrich(widget.book);
-  }
-
-  void _startIndex() {
-    widget.reader.startIndex(
-      widget.book.id,
-      widget.book.path,
-      title: widget.book.title,
-    );
-  }
-
-  void _open(Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  /// Back from a report page, the counts on this one may have moved.
+  Future<void> _open(Widget page) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    if (mounted) _load();
   }
 
   Future<void> _read(int? chapter, int? offset) async {
@@ -230,15 +193,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         const SizedBox(height: 28),
                         _reportHeader(t),
                         const SizedBox(height: 12),
-                        _coverage(t, info),
-                        const SizedBox(height: 12),
                         _narrativeFocus(t, info),
                         const SizedBox(height: 12),
                         _relationshipCard(t, info),
                         const SizedBox(height: 12),
                         _reportEntries(t, info),
-                        const SizedBox(height: 20),
-                        _preparation(t, info),
+                        const SizedBox(height: 12),
+                        _backgroundEntry(t),
                       ],
                     ),
                   ),
@@ -257,7 +218,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '书籍详情加载失败\n$_error',
+                  '阅读报告加载失败\n$_error',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Color(0xFFB3574D),
@@ -407,53 +368,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
     ],
   );
 
-  Widget _coverage(ReadingTheme t, BookInfo info) {
-    final summaries = info.chapters
-        .where((c) => (c.summary ?? '').trim().isNotEmpty)
-        .length;
-    final moods = info.chapters
-        .where((c) => (c.mood ?? '').trim().isNotEmpty)
-        .length;
-    final indexed = _index?.indexed ?? 0;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: t.outline),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          _coverageItem(t, '章节分析', '$summaries / ${info.chapters.length}'),
-          _divider(t),
-          _coverageItem(t, '氛围标签', '$moods / ${info.chapters.length}'),
-          _divider(t),
-          _coverageItem(t, '全文检索', '$indexed / ${info.chapters.length}'),
-        ],
-      ),
-    );
-  }
-
-  Widget _coverageItem(ReadingTheme t, String label, String value) => Expanded(
-    child: Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: t.text,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: TextStyle(color: t.muted, fontSize: 10.5)),
-      ],
-    ),
-  );
-
-  Widget _divider(ReadingTheme t) =>
-      Container(width: 1, height: 30, color: t.muted.withValues(alpha: 0.16));
-
   Widget _narrativeFocus(ReadingTheme t, BookInfo info) => Container(
     padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
     decoration: BoxDecoration(
@@ -563,12 +477,15 @@ class _BookDetailPageState extends State<BookDetailPage> {
           0,
           (sum, person) => sum + person.evidence.length,
         );
-    final confidence = switch (report.confidence) {
-      >= 3 => '高可信',
-      2 => '中等可信',
-      1 => '有限依据',
-      _ => '证据不足',
-    };
+    // Named only when the scan settled on a romance; a 无法判断 with one
+    // steady candidate has not decided she is the one.
+    final heroines = const {'单女主', '多女主', '后宫'}.contains(report.label)
+        ? [
+            for (final person in report.people)
+              if (person.status == '已确认伴侣' || person.status.startsWith('持续'))
+                person.name,
+          ]
+        : const <String>[];
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
       decoration: BoxDecoration(
@@ -595,12 +512,15 @@ class _BookDetailPageState extends State<BookDetailPage> {
           ),
           const SizedBox(height: 11),
           Wrap(
-            spacing: 7,
-            runSpacing: 7,
+            spacing: 10,
+            runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: t.text.withValues(alpha: 0.07),
                   borderRadius: BorderRadius.circular(20),
@@ -614,19 +534,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   ),
                 ),
               ),
-              Text(confidence, style: TextStyle(color: t.muted, fontSize: 11)),
+              if (heroines.isNotEmpty)
+                Text(
+                  heroines.join('、'),
+                  translate: false,
+                  style: TextStyle(color: t.text, fontSize: 13.5),
+                ),
             ],
-          ),
-          const SizedBox(height: 9),
-          Text(
-            report.reason,
-            style: TextStyle(color: t.text, fontSize: 12, height: 1.5),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            '主角：${report.protagonist} · 全书 ${report.analyzedChapters} 章'
-            ' · 核对 ${report.candidateCount} 名人物',
-            style: TextStyle(color: t.muted, fontSize: 10.8, height: 1.4),
           ),
           if (evidenceCount > 0) ...[
             const SizedBox(height: 6),
@@ -655,9 +569,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final summaryCount = info.chapters
         .where((c) => (c.summary ?? '').trim().isNotEmpty)
         .length;
-    final moodCount = info.chapters
-        .where((c) => (c.mood ?? '').trim().isNotEmpty)
-        .length;
+    final indexed = _index?.indexed ?? 0;
+    final total = info.chapters.length;
     return Material(
       clipBehavior: Clip.antiAlias,
       color: t.surface,
@@ -667,13 +580,31 @@ class _BookDetailPageState extends State<BookDetailPage> {
       ),
       child: Column(
         children: [
+          // The image engine runs on desktop only.
+          if (AppPlatformSupport.isDesktop) ...[
+            _entry(
+              t,
+              icon: Icons.photo_outlined,
+              title: '章间立绘',
+              onTap: () => _open(
+                PlatePage(
+                  book: widget.book,
+                  reader: widget.reader,
+                  settings: widget.settings,
+                ),
+              ),
+            ),
+            _line(t),
+          ],
           _entry(
             t,
             icon: Icons.notes_outlined,
             title: '章节概览',
-            subtitle: summaryCount == 0 ? '暂无' : '$summaryCount 章',
+            subtitle: summaryCount == 0 ? '未分析' : '$summaryCount / $total 章',
             onTap: () => _open(
               _ChapterSummaryPage(
+                book: widget.book,
+                reader: widget.reader,
                 info: info,
                 settings: widget.settings,
                 lastChapter: widget.book.lastOpenedAt == null
@@ -690,9 +621,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
             t,
             icon: Icons.account_tree_outlined,
             title: '人物构成与关系',
-            subtitle: '人物、活跃章节与关系',
             onTap: () => _open(
-              CastGraphPage(book: widget.book, settings: widget.settings),
+              CastGraphPage(
+                book: widget.book,
+                reader: widget.reader,
+                settings: widget.settings,
+              ),
             ),
           ),
           if (landmineEntryVisible) ...[
@@ -701,7 +635,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
               t,
               icon: Icons.report_gmailerrorred_outlined,
               title: '排雷原文',
-              subtitle: '查看候选原文',
               onTap: () => _open(
                 LandminePage(
                   book: widget.book,
@@ -712,13 +645,36 @@ class _BookDetailPageState extends State<BookDetailPage> {
             ),
           ],
           _line(t),
+          // 氛围图 (mood_page.dart) is hidden, not deleted: its model labels
+          // measured no better than a constant. 节奏 is counted from the text.
           _entry(
             t,
             icon: Icons.show_chart,
-            title: '节奏与氛围',
-            subtitle: moodCount == 0 ? '暂无' : '$moodCount 章',
-            onTap: () =>
-                _open(MoodPage(book: widget.book, settings: widget.settings)),
+            title: '节奏',
+            onTap: () => _open(
+              PacePage(
+                info: info,
+                settings: widget.settings,
+                current: widget.book.lastOpenedAt == null
+                    ? null
+                    : info.lastChapter,
+                onOpenChapter: (i) => _read(i, null),
+              ),
+            ),
+          ),
+          _line(t),
+          _entry(
+            t,
+            icon: Icons.manage_search,
+            title: '语义检索',
+            subtitle: indexed == 0 ? '未建立' : '$indexed / $total 章',
+            onTap: () => _open(
+              SearchIndexPage(
+                book: widget.book,
+                reader: widget.reader,
+                settings: widget.settings,
+              ),
+            ),
           ),
         ],
       ),
@@ -729,108 +685,50 @@ class _BookDetailPageState extends State<BookDetailPage> {
     ReadingTheme t, {
     required IconData icon,
     required String title,
-    required String subtitle,
+    String? subtitle,
     required VoidCallback onTap,
   }) => ListTile(
+    // Square: a row's highlight runs edge to edge and the card rounds it.
+    shape: const RoundedRectangleBorder(),
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
     leading: Icon(icon, color: t.muted, size: 22),
     title: Text(title, style: TextStyle(color: t.text, fontSize: 14)),
-    subtitle: Text(
-      subtitle,
-      style: TextStyle(color: t.muted, fontSize: 11, height: 1.35),
-    ),
+    subtitle: subtitle == null
+        ? null
+        : Text(
+            subtitle,
+            style: TextStyle(color: t.muted, fontSize: 11, height: 1.35),
+          ),
     trailing: Icon(Icons.chevron_right, color: t.muted, size: 19),
     onTap: onTap,
   );
 
-  Widget _line(ReadingTheme t) =>
-      Divider(height: 1, indent: 52, color: t.muted.withValues(alpha: 0.13));
+  Widget _line(ReadingTheme t) => Divider(
+    height: 1,
+    indent: 52,
+    endIndent: 14,
+    color: t.muted.withValues(alpha: 0.13),
+  );
 
-  Widget _preparation(ReadingTheme t, BookInfo info) {
-    final summaryCount = info.chapters
-        .where((c) => (c.summary ?? '').trim().isNotEmpty)
-        .length;
-    final summaryDone = summaryCount >= info.chapters.length;
-    final indexDone = (_index?.indexed ?? 0) >= info.chapters.length;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '准备报告',
-          style: TextStyle(
-            color: t.text,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '这些任务在后台逐章完成，可以暂停和继续。',
-          style: TextStyle(color: t.muted, fontSize: 11.5),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: summaryDone
-                  ? null
-                  : widget.reader.enrichQueued && !widget.reader.enrichPaused
-                  ? widget.reader.stopEnrich
-                  : _startAnalysis,
-              icon: widget.reader.enriching
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.auto_awesome_outlined, size: 17),
-              label: Text(
-                summaryDone
-                    ? '章节分析已完成'
-                    : widget.reader.enrichPaused
-                    ? '继续章节分析'
-                    : widget.reader.enrichQueued
-                    ? '暂停章节分析'
-                    : '生成章节分析',
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: indexDone
-                  ? null
-                  : widget.reader.indexQueued && !widget.reader.indexPaused
-                  ? widget.reader.stopIndex
-                  : _startIndex,
-              icon: widget.reader.indexing
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.manage_search, size: 17),
-              label: Text(
-                indexDone
-                    ? '全文检索已完成'
-                    : widget.reader.indexPaused
-                    ? '继续全文检索'
-                    : widget.reader.indexQueued
-                    ? '暂停全文检索'
-                    : '建立全文检索',
-              ),
-            ),
-            TextButton.icon(
-              onPressed: () => _open(
-                AiRuntimePage(settings: widget.settings, reader: widget.reader),
-              ),
-              icon: const Icon(Icons.schedule_outlined, size: 17),
-              label: const Text('后台处理设置'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
+  /// The one way into pace and device policy from here. Starting a pass is
+  /// done inside the page that shows its result; this is for everything else.
+  Widget _backgroundEntry(ReadingTheme t) => Material(
+    clipBehavior: Clip.antiAlias,
+    color: t.surface,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: t.outline),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: _entry(
+      t,
+      icon: Icons.schedule_outlined,
+      title: '后台设置',
+      subtitle: widget.reader.aiQueueState,
+      onTap: () => _open(
+        AiRuntimePage(settings: widget.settings, reader: widget.reader),
+      ),
+    ),
+  );
 }
 
 class _RelationshipEvidencePage extends StatelessWidget {
@@ -937,8 +835,7 @@ class _RelationshipEvidencePage extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              '结论：${report.label}\n${report.reason}\n'
-              '这些是规则找到的原文依据；点击任一段可直接跳到对应章节。',
+              '结论：${report.label}\n${report.reason}',
               style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.55),
             ),
           ),
@@ -1020,6 +917,8 @@ class _RelationshipEvidencePage extends StatelessWidget {
 }
 
 class _ChapterSummaryPage extends StatefulWidget {
+  final ShelfItem book;
+  final ReaderState reader;
   final BookInfo info;
   final ReadingSettings settings;
   final int? lastChapter;
@@ -1028,6 +927,8 @@ class _ChapterSummaryPage extends StatefulWidget {
   final Future<void> Function(int? chapter, int? offset) onOpenChapter;
 
   const _ChapterSummaryPage({
+    required this.book,
+    required this.reader,
     required this.info,
     required this.settings,
     required this.lastChapter,
@@ -1043,13 +944,44 @@ class _ChapterSummaryPage extends StatefulWidget {
 class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
   final ItemScrollController _scroll = ItemScrollController();
 
+  /// Summaries written while this page is open, by chapter index. The run
+  /// streams each one as it lands, so the list fills in without a reload.
+  final Map<int, String> _fresh = {};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.reader.addListener(_onReader);
+  }
+
+  @override
+  void dispose() {
+    widget.reader.removeListener(_onReader);
+    super.dispose();
+  }
+
+  void _onReader() {
+    final p = widget.reader.enrichProgress;
+    final summary = (p?.summary ?? '').trim();
+    if (p != null &&
+        summary.isNotEmpty &&
+        _fresh[p.index] != summary &&
+        widget.reader.enrichStateFor(widget.book.id) == AiTaskState.running) {
+      setState(() => _fresh[p.index] = summary);
+    }
+  }
+
+  String _summaryOf(int index) =>
+      _fresh[index] ?? (widget.info.chapters[index].summary ?? '').trim();
+
   @override
   Widget build(BuildContext context) {
     final t = widget.settings.theme;
     final chapters = widget.info.chapters;
-    final summarized = chapters
-        .where((c) => (c.summary ?? '').trim().isNotEmpty)
-        .length;
+    var summarized = 0;
+    for (var i = 0; i < chapters.length; i++) {
+      if (_summaryOf(i).isNotEmpty) summarized++;
+    }
     final last = chapters.isEmpty
         ? 0
         : (widget.lastChapter ?? 0).clamp(0, chapters.length - 1);
@@ -1082,7 +1014,17 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
           : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 10),
+                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 0),
+                  child: ChapterAnalysisCard(
+                    book: widget.book,
+                    reader: widget.reader,
+                    settings: widget.settings,
+                    done: summarized,
+                    total: chapters.length,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                     decoration: BoxDecoration(
@@ -1093,7 +1035,7 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                       children: [
                         Expanded(
                           child: Text(
-                            '摘要覆盖 $summarized / ${chapters.length} 章，内容可能透露后续剧情。',
+                            '概括可能透露后续剧情。',
                             style: TextStyle(
                               color: t.muted,
                               fontSize: 11.5,
@@ -1126,7 +1068,7 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                     itemCount: chapters.length,
                     itemBuilder: (context, index) {
                       final chapter = chapters[index];
-                      final summary = (chapter.summary ?? '').trim();
+                      final summary = _summaryOf(index);
                       final annotationCount =
                           annotationCountByChapter[index] ?? 0;
                       final completed = widget.completedChapters.contains(

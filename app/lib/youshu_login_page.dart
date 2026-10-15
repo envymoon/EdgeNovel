@@ -129,12 +129,6 @@ class _YoushuLoginPageState extends State<YoushuLoginPage> {
               ],
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              '默认勾选下次自动登录，登录状态保存在本机。网站使登录失效时需重新登录。仅主动打开书评或手动更新时查询该书。',
-            ),
-          ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.all(12),

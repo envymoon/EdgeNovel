@@ -8,8 +8,10 @@
 
 import 'api/ai.dart';
 import 'api/book.dart';
+import 'api/image.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
+import 'api/stats.dart';
 import 'api/tts.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -26,6 +28,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw);
+
+  @protected
+  RustStreamSink<CoverProgress> dco_decode_StreamSink_cover_progress_Sse(
+    dynamic raw,
+  );
 
   @protected
   RustStreamSink<DescribeProgress> dco_decode_StreamSink_describe_progress_Sse(
@@ -49,6 +56,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<OfferProbe> dco_decode_StreamSink_offer_probe_Sse(dynamic raw);
+
+  @protected
+  RustStreamSink<PlateProgress> dco_decode_StreamSink_plate_progress_Sse(
+    dynamic raw,
+  );
 
   @protected
   RustStreamSink<RelabelProgress> dco_decode_StreamSink_relabel_progress_Sse(
@@ -90,16 +102,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo dco_decode_book_info(dynamic raw);
 
   @protected
+  BookSpeed dco_decode_book_speed(dynamic raw);
+
+  @protected
   BookTime dco_decode_book_time(dynamic raw);
 
   @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  BookSpeed dco_decode_box_autoadd_book_speed(dynamic raw);
+
+  @protected
   bool dco_decode_box_autoadd_bool(dynamic raw);
 
   @protected
+  DayRecord dco_decode_box_autoadd_day_record(dynamic raw);
+
+  @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PaceSpeed dco_decode_box_autoadd_pace_speed(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
@@ -129,6 +156,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo dco_decode_chapter_info(dynamic raw);
 
   @protected
+  CoverChoices dco_decode_cover_choices(dynamic raw);
+
+  @protected
+  CoverProgress dco_decode_cover_progress(dynamic raw);
+
+  @protected
+  CoverTagGroup dco_decode_cover_tag_group(dynamic raw);
+
+  @protected
+  DayRecord dco_decode_day_record(dynamic raw);
+
+  @protected
   DescribeProgress dco_decode_describe_progress(dynamic raw);
 
   @protected
@@ -151,6 +190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  ImageStatus dco_decode_image_status(dynamic raw);
 
   @protected
   IndexProgress dco_decode_index_progress(dynamic raw);
@@ -183,6 +225,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChapterInfo> dco_decode_list_chapter_info(dynamic raw);
 
   @protected
+  List<CoverTagGroup> dco_decode_list_cover_tag_group(dynamic raw);
+
+  @protected
   List<FoundBookItem> dco_decode_list_found_book_item(dynamic raw);
 
   @protected
@@ -192,10 +237,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Offer> dco_decode_list_offer(dynamic raw);
 
   @protected
+  List<double?> dco_decode_list_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
   List<Paragraph> dco_decode_list_paragraph(dynamic raw);
 
   @protected
   Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -238,10 +289,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  BookSpeed? dco_decode_opt_box_autoadd_book_speed(dynamic raw);
+
+  @protected
   bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
 
   @protected
+  DayRecord? dco_decode_opt_box_autoadd_day_record(dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PaceSpeed? dco_decode_opt_box_autoadd_pace_speed(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -256,13 +319,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SearchHit>? dco_decode_opt_list_search_hit(dynamic raw);
 
   @protected
+  PaceSpeed dco_decode_pace_speed(dynamic raw);
+
+  @protected
   ParaKind dco_decode_para_kind(dynamic raw);
 
   @protected
   Paragraph dco_decode_paragraph(dynamic raw);
 
   @protected
+  PlateProgress dco_decode_plate_progress(dynamic raw);
+
+  @protected
   ReadingEvent dco_decode_reading_event(dynamic raw);
+
+  @protected
+  ReadingInsights dco_decode_reading_insights(dynamic raw);
 
   @protected
   RelEvidence dco_decode_rel_evidence(dynamic raw);
@@ -325,6 +397,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<CoverProgress> sse_decode_StreamSink_cover_progress_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<DescribeProgress> sse_decode_StreamSink_describe_progress_Sse(
     SseDeserializer deserializer,
   );
@@ -346,6 +423,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<OfferProbe> sse_decode_StreamSink_offer_probe_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RustStreamSink<PlateProgress> sse_decode_StreamSink_plate_progress_Sse(
     SseDeserializer deserializer,
   );
 
@@ -393,16 +475,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
+  BookSpeed sse_decode_book_speed(SseDeserializer deserializer);
+
+  @protected
   BookTime sse_decode_book_time(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  BookSpeed sse_decode_box_autoadd_book_speed(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
+  DayRecord sse_decode_box_autoadd_day_record(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PaceSpeed sse_decode_box_autoadd_pace_speed(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
@@ -432,6 +529,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo sse_decode_chapter_info(SseDeserializer deserializer);
 
   @protected
+  CoverChoices sse_decode_cover_choices(SseDeserializer deserializer);
+
+  @protected
+  CoverProgress sse_decode_cover_progress(SseDeserializer deserializer);
+
+  @protected
+  CoverTagGroup sse_decode_cover_tag_group(SseDeserializer deserializer);
+
+  @protected
+  DayRecord sse_decode_day_record(SseDeserializer deserializer);
+
+  @protected
   DescribeProgress sse_decode_describe_progress(SseDeserializer deserializer);
 
   @protected
@@ -454,6 +563,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  ImageStatus sse_decode_image_status(SseDeserializer deserializer);
 
   @protected
   IndexProgress sse_decode_index_progress(SseDeserializer deserializer);
@@ -490,6 +602,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChapterInfo> sse_decode_list_chapter_info(SseDeserializer deserializer);
 
   @protected
+  List<CoverTagGroup> sse_decode_list_cover_tag_group(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<FoundBookItem> sse_decode_list_found_book_item(
     SseDeserializer deserializer,
   );
@@ -501,10 +618,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Offer> sse_decode_list_offer(SseDeserializer deserializer);
 
   @protected
+  List<double?> sse_decode_list_opt_box_autoadd_f_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<Paragraph> sse_decode_list_paragraph(SseDeserializer deserializer);
 
   @protected
   Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -549,10 +674,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  BookSpeed? sse_decode_opt_box_autoadd_book_speed(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
+  DayRecord? sse_decode_opt_box_autoadd_day_record(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PaceSpeed? sse_decode_opt_box_autoadd_pace_speed(
+    SseDeserializer deserializer,
+  );
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
@@ -567,13 +710,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SearchHit>? sse_decode_opt_list_search_hit(SseDeserializer deserializer);
 
   @protected
+  PaceSpeed sse_decode_pace_speed(SseDeserializer deserializer);
+
+  @protected
   ParaKind sse_decode_para_kind(SseDeserializer deserializer);
 
   @protected
   Paragraph sse_decode_paragraph(SseDeserializer deserializer);
 
   @protected
+  PlateProgress sse_decode_plate_progress(SseDeserializer deserializer);
+
+  @protected
   ReadingEvent sse_decode_reading_event(SseDeserializer deserializer);
+
+  @protected
+  ReadingInsights sse_decode_reading_insights(SseDeserializer deserializer);
 
   @protected
   RelEvidence sse_decode_rel_evidence(SseDeserializer deserializer);
@@ -645,6 +797,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_cover_progress_Sse(
+    RustStreamSink<CoverProgress> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_describe_progress_Sse(
     RustStreamSink<DescribeProgress> self,
     SseSerializer serializer,
@@ -671,6 +829,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_StreamSink_offer_probe_Sse(
     RustStreamSink<OfferProbe> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_plate_progress_Sse(
+    RustStreamSink<PlateProgress> self,
     SseSerializer serializer,
   );
 
@@ -729,17 +893,41 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_book_speed(BookSpeed self, SseSerializer serializer);
+
+  @protected
   void sse_encode_book_time(BookTime self, SseSerializer serializer);
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_book_speed(
+    BookSpeed self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_day_record(
+    DayRecord self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_pace_speed(
+    PaceSpeed self,
     SseSerializer serializer,
   );
 
@@ -769,6 +957,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_chapter_info(ChapterInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cover_choices(CoverChoices self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cover_progress(CoverProgress self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cover_tag_group(CoverTagGroup self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_day_record(DayRecord self, SseSerializer serializer);
 
   @protected
   void sse_encode_describe_progress(
@@ -802,6 +1002,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_image_status(ImageStatus self, SseSerializer serializer);
 
   @protected
   void sse_encode_index_progress(IndexProgress self, SseSerializer serializer);
@@ -849,6 +1052,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_cover_tag_group(
+    List<CoverTagGroup> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_found_book_item(
     List<FoundBookItem> self,
     SseSerializer serializer,
@@ -861,6 +1070,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_offer(List<Offer> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_opt_box_autoadd_f_64(
+    List<double?> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_paragraph(
     List<Paragraph> self,
     SseSerializer serializer,
@@ -869,6 +1084,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_prim_i_64_strict(
     Int64List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
     SseSerializer serializer,
   );
 
@@ -936,11 +1157,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_book_speed(
+    BookSpeed? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_day_record(
+    DayRecord? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_i_64(
     PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_pace_speed(
+    PaceSpeed? self,
     SseSerializer serializer,
   );
 
@@ -960,13 +1202,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_pace_speed(PaceSpeed self, SseSerializer serializer);
+
+  @protected
   void sse_encode_para_kind(ParaKind self, SseSerializer serializer);
 
   @protected
   void sse_encode_paragraph(Paragraph self, SseSerializer serializer);
 
   @protected
+  void sse_encode_plate_progress(PlateProgress self, SseSerializer serializer);
+
+  @protected
   void sse_encode_reading_event(ReadingEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_reading_insights(
+    ReadingInsights self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_rel_evidence(RelEvidence self, SseSerializer serializer);

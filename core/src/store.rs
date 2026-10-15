@@ -165,6 +165,21 @@ CREATE TABLE IF NOT EXISTS reading_events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_book ON reading_events(book_id, started_at);
 
+-- Reading speed, from 2026-10. The reader page cuts a sitting into windows of
+-- about 30 seconds and records how many characters went by in each. Written
+-- raw, every window: which ones were a reader looking away or hunting through
+-- pages is decided when counting (`reading_stats`), so a better rule later
+-- re-reads the whole history instead of only what comes after it.
+CREATE TABLE IF NOT EXISTS reading_windows (
+    book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    chapter    INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    secs       INTEGER NOT NULL,
+    chars      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_windows_time ON reading_windows(started_at);
+CREATE INDEX IF NOT EXISTS idx_windows_book ON reading_windows(book_id);
+
 -- One bookmark per chapter. The byte offset returns to the exact reading
 -- position, while the chapter key gives long novels a stable, scannable mark.
 -- A short optional comment belongs to the bookmark; free-range text
@@ -342,6 +357,12 @@ impl Store {
         // the reader chose; None means the generated glyph cover is used.
         let _ = conn.execute("ALTER TABLE books ADD COLUMN custom_author TEXT", []);
         let _ = conn.execute("ALTER TABLE books ADD COLUMN cover_path TEXT", []);
+        // What a character background was written from ('summaries', 'mixed' or
+        // 'sentences'; NULL for ones written before this was recorded) and how
+        // many chapters had a summary at the time. Together they say when a
+        // background could now be written from better material.
+        let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN source TEXT", []);
+        let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN basis INTEGER", []);
         // 前情提要 was removed from the product. Its old generated paragraphs
         // lived in settings as recap:<book>:<chapter>; discard that unreachable
         // cache during migration instead of leaving stale AI text behind.
@@ -897,6 +918,61 @@ impl Store {
         rows.collect()
     }
 
+    /// One window of reading speed. Kept as written, idle and hunting included —
+    /// see the table's comment.
+    pub fn log_window(
+        &self,
+        book_id: i64,
+        chapter: i64,
+        started: i64,
+        secs: i64,
+        chars: i64,
+    ) -> Result<()> {
+        if secs <= 0 {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO reading_windows (book_id, chapter, started_at, secs, chars)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![book_id, chapter, started, secs, chars.max(0)],
+        )?;
+        Ok(())
+    }
+
+    pub fn windows_since(&self, since: i64) -> Result<Vec<crate::reading_stats::Window>> {
+        let mut st = self.conn.prepare(
+            "SELECT book_id, chapter, started_at, secs, chars FROM reading_windows
+             WHERE started_at >= ?1 ORDER BY started_at",
+        )?;
+        let rows = st.query_map([since], |r| {
+            Ok(crate::reading_stats::Window {
+                book_id: r.get(0)?,
+                chapter: r.get(1)?,
+                started: r.get(2)?,
+                secs: r.get(3)?,
+                chars: r.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Chapters the reader finished — seen from first line to last, see
+    /// `completed_chapters` — and the bytes of body text in them.
+    pub fn finished_chapters(&self) -> Result<(i64, i64)> {
+        self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(c.end - c.body_start), 0)
+             FROM completed_chapters d
+             JOIN chapters c ON c.book_id = d.book_id AND c.idx = d.chapter",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+
+    pub fn annotation_count(&self) -> Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get(0))
+    }
+
     /// Total reading time per book, most-read first.
     pub fn time_per_book(&self) -> Result<Vec<(String, i64)>> {
         let mut st = self.conn.prepare(
@@ -932,13 +1008,19 @@ impl Store {
 
     /// Chapters the enrichment pass has not finished, in reading order, with
     /// which pieces are still missing — a re-run only pays for those.
-    /// Tuple: (idx, title, needs_summary, needs_mood).
-    pub fn chapters_needing_enrich(&self, book_id: i64) -> Result<Vec<(i64, String, bool, bool)>> {
+    /// Tuple: (idx, title, needs_summary, needs_mood). A missing mood only
+    /// counts as unfinished while the pass still writes moods (`with_mood`);
+    /// otherwise every summarised chapter would be revisited forever.
+    pub fn chapters_needing_enrich(
+        &self,
+        book_id: i64,
+        with_mood: bool,
+    ) -> Result<Vec<(i64, String, bool, bool)>> {
         let mut st = self.conn.prepare(
             "SELECT idx, title, summary IS NULL, mood IS NULL FROM chapters
-             WHERE book_id = ?1 AND (summary IS NULL OR mood IS NULL) ORDER BY idx",
+             WHERE book_id = ?1 AND (summary IS NULL OR (?2 AND mood IS NULL)) ORDER BY idx",
         )?;
-        let rows = st.query_map([book_id], |r| {
+        let rows = st.query_map(params![book_id, with_mood], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })?;
         rows.collect()
@@ -1177,10 +1259,31 @@ impl Store {
         rows.collect()
     }
 
-    pub fn set_person_summary(&self, book_id: i64, name: &str, summary: &str) -> Result<()> {
+    /// What each background was written from: (name, source, basis). See the
+    /// migration in [`Store::open`].
+    pub fn person_summary_sources(
+        &self,
+        book_id: i64,
+    ) -> Result<Vec<(String, Option<String>, Option<i64>)>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT name, source, basis FROM person_summaries WHERE book_id = ?1")?;
+        let rows = st.query_map([book_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect()
+    }
+
+    pub fn set_person_summary(
+        &self,
+        book_id: i64,
+        name: &str,
+        summary: &str,
+        source: &str,
+        basis: i64,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO person_summaries (book_id, name, summary) VALUES (?1, ?2, ?3)",
-            params![book_id, name, summary],
+            "INSERT OR REPLACE INTO person_summaries (book_id, name, summary, source, basis)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![book_id, name, summary, source, basis],
         )?;
         Ok(())
     }
@@ -1215,6 +1318,7 @@ impl Store {
     /// March cannot.
     pub fn clear_events(&self) -> Result<()> {
         self.conn.execute("DELETE FROM reading_events", [])?;
+        self.conn.execute("DELETE FROM reading_windows", [])?;
         Ok(())
     }
 
@@ -1415,6 +1519,38 @@ mod tests {
     }
 
     #[test]
+    fn speed_windows_are_kept_raw_and_go_with_the_book_or_the_clear_button() {
+        let mut s = mem();
+        let a = s.upsert_book(&book("/a.txt"), &[chapter(0, 1)]).unwrap();
+        let b = s.upsert_book(&book("/b.txt"), &[chapter(0, 2)]).unwrap();
+        s.log_window(a, 0, 100, 30, 300).unwrap();
+        s.log_window(a, 0, 130, 600, 4).unwrap(); // idle is written too
+        s.log_window(b, 0, 200, 30, 250).unwrap();
+        s.log_window(b, 0, 230, 0, 10).unwrap(); // no time, nothing to keep
+        assert_eq!(s.windows_since(0).unwrap().len(), 3);
+        assert_eq!(s.windows_since(150).unwrap().len(), 1);
+
+        s.remove_book(a).unwrap();
+        let left = s.windows_since(0).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].book_id, b);
+
+        s.clear_events().unwrap();
+        assert!(s.windows_since(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn finished_chapters_count_their_body_text() {
+        let mut s = mem();
+        let id = s
+            .upsert_book(&book("/a.txt"), &[chapter(0, 1), chapter(1, 2)])
+            .unwrap();
+        assert_eq!(s.finished_chapters().unwrap(), (0, 0));
+        s.mark_chapter_completed(id, 1).unwrap();
+        assert_eq!(s.finished_chapters().unwrap(), (1, 8));
+    }
+
+    #[test]
     fn a_byte_offset_resolves_the_real_chapter_for_progress_repair() {
         let mut s = mem();
         let id = s
@@ -1431,6 +1567,49 @@ mod tests {
         s.save_progress(id, 0, 25).unwrap();
         s.repair_progress_chapter(id, 2).unwrap();
         assert_eq!(s.progress(id).unwrap(), (2, 25));
+    }
+
+    #[test]
+    fn backgrounds_written_before_sources_were_recorded_survive_the_migration() {
+        let path =
+            std::env::temp_dir().join(format!("novel-store-migration-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE person_summaries (
+                     book_id INTEGER NOT NULL, name TEXT NOT NULL,
+                     summary TEXT NOT NULL, PRIMARY KEY (book_id, name));
+                 INSERT INTO person_summaries VALUES (1, '克莱恩', '旧的背景');",
+            )
+            .unwrap();
+        }
+        let mut s = Store::open(&path).unwrap();
+        let id = s.upsert_book(&book("a.txt"), &[chapter(0, 1)]).unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(
+            s.person_summaries(id).unwrap(),
+            vec![("克莱恩".to_string(), "旧的背景".to_string())]
+        );
+        assert_eq!(
+            s.person_summary_sources(id).unwrap(),
+            vec![("克莱恩".to_string(), None, None)]
+        );
+
+        s.set_person_summary(id, "克莱恩", "新的背景", "summaries", 1392)
+            .unwrap();
+        assert_eq!(
+            s.person_summary_sources(id).unwrap(),
+            vec![(
+                "克莱恩".to_string(),
+                Some("summaries".to_string()),
+                Some(1392)
+            )]
+        );
+        drop(s);
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+        }
     }
 
     #[test]
@@ -1454,7 +1633,7 @@ mod tests {
         );
         assert_eq!(s.chapter_moods(id).unwrap(), vec![(0, "紧张".to_string())]);
         assert_eq!(s.chapter_summary(id, 1).unwrap(), None);
-        assert_eq!(s.chapters_needing_enrich(id).unwrap().len(), 1);
+        assert_eq!(s.chapters_needing_enrich(id, true).unwrap().len(), 1);
     }
 
     #[test]
@@ -1465,7 +1644,19 @@ mod tests {
         s.set_chapter_ai(id, 0, None, Some("轻松"), "m").unwrap();
         assert_eq!(s.chapter_summary(id, 0).unwrap().as_deref(), Some("摘要"));
         assert_eq!(s.chapter_moods(id).unwrap(), vec![(0, "轻松".to_string())]);
-        assert!(s.chapters_needing_enrich(id).unwrap().is_empty());
+        assert!(s.chapters_needing_enrich(id, true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_missing_mood_alone_is_not_unfinished_once_moods_are_off() {
+        let mut s = mem();
+        let id = s
+            .upsert_book(&book("a.txt"), &[chapter(0, 111), chapter(1, 222)])
+            .unwrap();
+        s.set_chapter_ai(id, 0, Some("摘要"), None, "m").unwrap();
+        let todo = s.chapters_needing_enrich(id, false).unwrap();
+        assert_eq!(todo.iter().map(|t| t.0).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(s.chapters_needing_enrich(id, true).unwrap().len(), 2);
     }
 
     #[test]

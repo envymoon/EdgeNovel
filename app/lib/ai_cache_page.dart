@@ -79,7 +79,7 @@ class _AiCachePageState extends State<AiCachePage> {
     final what = all
         ? '全部 AI 生成数据'
         : summaries
-        ? '摘要与氛围'
+        ? '章节摘要'
         : '语义索引';
     if (!await _confirm(t, '删除《${book.title}》的$what？')) return;
 
@@ -118,12 +118,6 @@ class _AiCachePageState extends State<AiCachePage> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
-            Text(
-              '管理本地模型为每本书生成的摘要、氛围和语义索引。'
-              '这些内容都可以重新生成，小说原文与阅读记录不会出现在这里。',
-              style: TextStyle(color: t.muted, fontSize: 13, height: 1.6),
-            ),
-            const SizedBox(height: 20),
             if (_error != null) _errorCard(t),
             if (_usage == null && _error == null)
               Padding(
@@ -249,7 +243,7 @@ class _AiCachePageState extends State<AiCachePage> {
                   PopupMenuItem(
                     value: 'summaries',
                     child: Text(
-                      '删除摘要与氛围',
+                      '删除章节摘要',
                       style: TextStyle(color: t.text, fontSize: 13),
                     ),
                   ),

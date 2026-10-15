@@ -132,7 +132,7 @@ void main() {
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
     expect(find.text('找书'), findsOneWidget);
-    expect(find.text('本地 AI'), findsOneWidget);
+    expect(find.text('AI 管理'), findsOneWidget);
     expect(find.text('阅读数据'), findsOneWidget);
     expect(find.text('主题色'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
@@ -178,7 +178,6 @@ void main() {
             theme: readingThemes[1],
             category: '正在读',
             onTap: () {},
-            onReport: () {},
             onDelete: () {},
             onDeleteForever: () {},
             onEncoding: () {},
@@ -194,7 +193,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.more_horiz));
     await tester.pumpAndSettle();
-    expect(find.text('扫书报告'), findsOneWidget);
+    expect(find.text('扫书报告'), findsNothing);
     expect(find.text('分类 · 正在读'), findsOneWidget);
     expect(find.text('删除'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -232,8 +231,8 @@ void main() {
 
     await tester.tap(find.byTooltip('阅读助手'));
     await tester.pumpAndSettle();
-    expect(find.text('回忆搜索'), findsOneWidget);
-    expect(find.text('书籍详情'), findsOneWidget);
+    expect(find.text('搜索'), findsOneWidget);
+    expect(find.text('阅读报告'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
@@ -292,7 +291,7 @@ void main() {
     await tester.tap(find.byTooltip('选择正文'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('拖动选择要标注的文字'), findsOneWidget);
+    expect(find.text('未选择正文'), findsOneWidget);
     expect(find.text('退出'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

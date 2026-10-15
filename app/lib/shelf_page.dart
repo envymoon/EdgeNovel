@@ -1,13 +1,15 @@
+import 'dart:io';
+
 // frb 的 Int64List（Web 上可退化为 BigInt 列表），非 dart:typed_data 的同名类型。
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
 import 'app_localizations.dart';
-import 'ai_runtime_page.dart';
 import 'bloom.dart';
 import 'book_detail_page.dart';
 import 'cover.dart';
+import 'cover_generator.dart';
 import 'discover_page.dart';
 import 'desktop_book_drop.dart';
 import 'platform_support.dart';
@@ -164,7 +166,7 @@ class _ShelfPageState extends State<ShelfPage> {
                     value: 'ai',
                     child: ListTile(
                       leading: Icon(Icons.auto_awesome_outlined),
-                      title: Text('本地 AI'),
+                      title: Text('AI 管理'),
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
@@ -215,18 +217,6 @@ class _ShelfPageState extends State<ShelfPage> {
                 ),
                 child: Column(
                   children: [
-                    if (widget.reader.enriching ||
-                        widget.reader.enrichError != null)
-                      _enrichBanner(t),
-                    if (widget.reader.indexing ||
-                        widget.reader.indexError != null)
-                      _indexBanner(t),
-                    if (widget.reader.aiQueuedCount > 0 &&
-                        !widget.reader.enriching &&
-                        !widget.reader.indexing &&
-                        widget.reader.enrichError == null &&
-                        widget.reader.indexError == null)
-                      _queueBanner(t),
                     _categoryBar(t),
                     Expanded(
                       child: widget.reader.loading
@@ -376,7 +366,6 @@ class _ShelfPageState extends State<ShelfPage> {
           controller: controller,
           autofocus: true,
           maxLength: 16,
-          decoration: InputDecoration(hintText: context.tr('例如：正在读、古风、轻松')),
           onSubmitted: (value) => Navigator.pop(dialogContext, value),
         ),
         actions: [
@@ -465,10 +454,6 @@ class _ShelfPageState extends State<ShelfPage> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  subtitle: Text(
-                    '只创建你需要的分类',
-                    style: TextStyle(color: t.muted, fontSize: 11.5),
-                  ),
                   trailing: IconButton(
                     tooltip: context.tr('新建分类'),
                     onPressed: _createCategory,
@@ -534,104 +519,6 @@ class _ShelfPageState extends State<ShelfPage> {
           ),
         ),
       ),
-    );
-  }
-
-  /// The index run's face, next to the summary run's. They are two halves of the
-  /// same idea — a one-off AI pass over the whole book that nothing else can use
-  /// until it finishes — so they are started from the same menu and reported in
-  /// the same place, rather than the index being something you could only stumble
-  /// into from inside search.
-  Widget _indexBanner(ReadingTheme t) {
-    final r = widget.reader;
-    final p = r.indexProgress;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: r.indexError != null
-          ? Text(
-              '索引失败：${r.indexError}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFB3574D), fontSize: 12),
-            )
-          : BloomProgress(
-              label: p == null
-                  ? '正在启动本机引擎…'
-                  : '《${r.indexingTitle ?? ''}》索引中 · ${p.done} / ${p.total}',
-              detail: p?.title,
-              value: p == null || p.total == 0 ? null : p.done / p.total,
-              color: t.muted,
-              textColor: t.text,
-              trailing: TextButton(
-                onPressed: r.stopIndex,
-                child: const Text('停止', style: TextStyle(fontSize: 12)),
-              ),
-            ),
-    );
-  }
-
-  Widget _queueBanner(ReadingTheme t) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-    child: Material(
-      color: t.text.withValues(alpha: 0.035),
-      borderRadius: BorderRadius.circular(10),
-      child: ListTile(
-        dense: true,
-        leading: Icon(Icons.schedule_outlined, color: t.muted, size: 20),
-        title: Text(
-          widget.reader.aiQueueState,
-          style: TextStyle(color: t.text, fontSize: 12.5),
-        ),
-        subtitle: widget.reader.aiQueueDetail == null
-            ? null
-            : Text(
-                widget.reader.aiQueueDetail!,
-                style: TextStyle(color: t.muted, fontSize: 10.5),
-              ),
-        trailing: Icon(Icons.chevron_right, color: t.muted, size: 18),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                AiRuntimePage(settings: widget.settings, reader: widget.reader),
-          ),
-        ),
-      ),
-    ),
-  );
-
-  /// The enrichment run lives in [ReaderState]; this banner is just its face.
-  /// Cancelling loses nothing — every finished chapter is already on disk.
-  Widget _enrichBanner(ReadingTheme t) {
-    final r = widget.reader;
-    final p = r.enrichProgress;
-    final failed = r.enrichError != null;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: failed
-          ? Text(
-              '摘要生成失败：${r.enrichError}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFB3574D), fontSize: 12),
-            )
-          : BloomProgress(
-              label: p == null
-                  ? '正在启动本机引擎…'
-                  : '《${r.enrichingTitle}》摘要生成中 · ${p.done} / ${p.total}',
-              // Until the first chapter comes back there is nothing to divide,
-              // so the bar sweeps and the flower carries the "alive" signal.
-              detail: p?.title,
-              value: p == null || p.total == 0 ? null : p.done / p.total,
-              color: t.muted,
-              textColor: t.text,
-              trailing: r.enriching
-                  ? TextButton(
-                      onPressed: r.stopEnrich,
-                      child: const Text('停止', style: TextStyle(fontSize: 12)),
-                    )
-                  : null,
-            ),
     );
   }
 
@@ -759,7 +646,35 @@ class _ShelfPageState extends State<ShelfPage> {
       } else {
         await setBookCover(bookId: b.id, src: coverPath!);
       }
+      // A new cover of the same format is written over the old one's path, and
+      // the image cache knows pictures by path: it would keep showing the old.
+      if (b.coverPath != null) forgetCovers();
     }
+    await widget.reader.loadLibrary();
+  }
+
+  /// Draws a cover from the title and genre tags and puts it on the book.
+  Future<void> _drawCover(ShelfItem b) async {
+    if (!await coverGeneratorReady()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('先在 设置 → AI 管理 里装好生图引擎和模型')));
+      return;
+    }
+    if (!mounted) return;
+    final p = await showCoverGenerator(
+      context,
+      theme: widget.settings.theme,
+      genreTags: b.genreTags,
+      title: b.title,
+    );
+    if (p == null) return;
+    await setBookCover(bookId: b.id, src: p);
+    // The image cache knows pictures by path, and a new cover of the same
+    // format is written over the old one's.
+    if (b.coverPath != null) forgetCovers();
+    File(p).delete().ignore();
     await widget.reader.loadLibrary();
   }
 
@@ -798,7 +713,6 @@ class _ShelfPageState extends State<ShelfPage> {
     theme: widget.settings.theme,
     category: _categories.categoryFor(b.id),
     onTap: () => _openBookDetail(b),
-    onReport: () => _openBookDetail(b),
     onDelete: () async {
       await widget.reader.delete(b.id);
       _categories.removeBook(b.id);
@@ -806,6 +720,7 @@ class _ShelfPageState extends State<ShelfPage> {
     onDeleteForever: () => _deleteForever(b),
     onEncoding: () => _pickEncoding(b),
     onRename: () => _editInfo(b),
+    onDrawCover: AppPlatformSupport.isDesktop ? () => _drawCover(b) : null,
     onPin: () => _togglePin(b),
     onCategory: () => _chooseCategory(b),
   );
@@ -824,6 +739,8 @@ class _ShelfPageState extends State<ShelfPage> {
                 (book.pinned ? '取消置顶' : '置顶', () => _togglePin(book)),
                 ('加入分类', () => _chooseCategory(book)),
                 ('编辑信息', () => _editInfo(book)),
+                if (AppPlatformSupport.isDesktop)
+                  ('AI 生成封面', () => _drawCover(book)),
                 ('重新指定编码', () => _pickEncoding(book)),
                 (
                   '删除',
@@ -999,11 +916,6 @@ class _ShelfPageState extends State<ShelfPage> {
     } else if (moved.pinned) {
       await setBookPinned(bookId: moved.id, pinned: false);
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('拖到最顶端可置顶')));
-      }
       return;
     }
     await widget.reader.loadLibrary();
@@ -1066,13 +978,6 @@ class _ShelfPageState extends State<ShelfPage> {
         Icon(Icons.menu_book_outlined, size: 56, color: t.muted),
         const SizedBox(height: 16),
         Text('书架是空的', style: TextStyle(color: t.muted, fontSize: 15)),
-        const SizedBox(height: 6),
-        Text(
-          AppPlatformSupport.supportsBookDrop
-              ? '把 TXT 文件拖进窗口即可导入'
-              : '导入 TXT 小说开始阅读',
-          style: TextStyle(color: t.muted, fontSize: 12),
-        ),
         const SizedBox(height: 20),
         FilledButton.tonal(onPressed: _import, child: const Text('导入 TXT')),
       ],
@@ -1085,10 +990,12 @@ class BookCard extends StatelessWidget {
   final ReadingTheme theme;
   final String? category;
   final VoidCallback onTap;
-  final VoidCallback onReport;
   final VoidCallback onDelete;
   final VoidCallback onDeleteForever;
   final VoidCallback onRename;
+
+  /// Absent where covers cannot be drawn.
+  final VoidCallback? onDrawCover;
   final VoidCallback onEncoding;
   final VoidCallback onPin;
   final VoidCallback onCategory;
@@ -1099,11 +1006,11 @@ class BookCard extends StatelessWidget {
     required this.theme,
     required this.category,
     required this.onTap,
-    required this.onReport,
     required this.onDelete,
     required this.onDeleteForever,
     required this.onEncoding,
     required this.onRename,
+    this.onDrawCover,
     required this.onPin,
     required this.onCategory,
   });
@@ -1181,9 +1088,7 @@ class BookCard extends StatelessWidget {
                               vertical: 1,
                             ),
                             decoration: BoxDecoration(
-                              border: Border.all(
-                                color: theme.muted.withValues(alpha: 0.35),
-                              ),
+                              color: theme.muted.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(3),
                             ),
                             child: Text(
@@ -1237,7 +1142,9 @@ class BookCard extends StatelessWidget {
                                 backgroundColor: theme.muted.withValues(
                                   alpha: 0.2,
                                 ),
-                                valueColor: AlwaysStoppedAnimation(theme.muted),
+                                valueColor: AlwaysStoppedAnimation(
+                                  Theme.of(context).colorScheme.primary,
+                                ),
                               ),
                             ),
                           ),
@@ -1259,7 +1166,7 @@ class BookCard extends StatelessWidget {
                                 : context.tr('尚未开始'),
                             translate: false,
                             style: TextStyle(
-                              color: theme.muted,
+                              color: started ? theme.text : theme.muted,
                               fontSize: 13,
                               height: 1.4,
                             ),
@@ -1352,6 +1259,21 @@ class BookCard extends StatelessWidget {
                               onRename();
                             },
                           ),
+                          if (onDrawCover != null)
+                            ListTile(
+                              leading: Icon(
+                                Icons.auto_awesome_outlined,
+                                color: theme.text,
+                              ),
+                              title: Text(
+                                'AI 生成封面',
+                                style: TextStyle(color: theme.text),
+                              ),
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                onDrawCover!();
+                              },
+                            ),
                           ListTile(
                             leading: Icon(Icons.translate, color: theme.text),
                             title: Text(
@@ -1361,20 +1283,6 @@ class BookCard extends StatelessWidget {
                             onTap: () {
                               Navigator.pop(ctx);
                               onEncoding();
-                            },
-                          ),
-                          ListTile(
-                            leading: Icon(
-                              Icons.fact_check_outlined,
-                              color: theme.text,
-                            ),
-                            title: Text(
-                              '扫书报告',
-                              style: TextStyle(color: theme.text),
-                            ),
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              onReport();
                             },
                           ),
                           ListTile(

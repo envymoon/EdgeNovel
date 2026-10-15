@@ -82,10 +82,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                     '允许后台生成',
                     style: TextStyle(color: t.text, fontSize: 14),
                   ),
-                  subtitle: Text(
-                    '关闭后只手动运行',
-                    style: TextStyle(color: t.muted, fontSize: 11.5),
-                  ),
                 ),
               ],
             ),
@@ -95,13 +91,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
               _modeCard(t, mode),
               if (mode != AiRunMode.values.last) const SizedBox(height: 8),
             ],
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
-              child: Text(
-                '不影响模型与 8K 上下文。',
-                style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.45),
-              ),
-            ),
             const SizedBox(height: 20),
             _section(t, '电量与空闲条件'),
             _panel(
@@ -113,10 +102,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                   title: Text(
                     '仅充电时运行',
                     style: TextStyle(color: t.text, fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    '减少电池消耗',
-                    style: TextStyle(color: t.muted, fontSize: 11.5),
                   ),
                 ),
                 if (!runtime.chargingOnly)
@@ -147,8 +132,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             _section(t, '设备与模型'),
             _deviceCard(t),
             const SizedBox(height: 8),
-            _supportRangeCard(t),
-            const SizedBox(height: 8),
             _panel(
               t,
               children: [
@@ -157,10 +140,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                   title: Text(
                     '标准模型 · Qwen3 0.6B Q8',
                     style: TextStyle(color: t.text, fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    '固定 Q8，不自动降为 Q4',
-                    style: TextStyle(color: t.muted, fontSize: 11.5),
                   ),
                   trailing: const Icon(
                     Icons.check_circle,
@@ -230,9 +209,18 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             style: TextStyle(color: t.muted, fontSize: 12),
           ),
         ],
-        if (reader.enrichProgress != null || reader.indexProgress != null) ...[
+        if (reader.aiActivity case final a?) ...[
           const SizedBox(height: 12),
-          LinearProgressIndicator(value: _progress(reader)),
+          LinearProgressIndicator(value: a.fraction),
+          const SizedBox(height: 6),
+          Text(
+            [
+              a.label,
+              if (a.total > 0) '${a.done} / ${a.total}',
+              if (a.remaining != null) '剩余${formatRemaining(a.remaining!)}',
+            ].join(' · '),
+            style: TextStyle(color: t.muted, fontSize: 11.5),
+          ),
         ],
         if (reader.aiQueuedCount > 0) ...[
           const SizedBox(height: 10),
@@ -295,27 +283,12 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
     if (confirmed == true) await reader.cancelPausedAi();
   }
 
-  double? _progress(ReaderState reader) {
-    final done = reader.enrichProgress?.done ?? reader.indexProgress?.done;
-    final total = reader.enrichProgress?.total ?? reader.indexProgress?.total;
-    if (done == null || total == null || total == 0) return null;
-    return done / total;
-  }
-
   Widget _modeCard(ReadingTheme t, AiRunMode mode) {
     final selected = runtime.mode == mode;
-    final (title, subtitle, icon) = switch (mode) {
-      AiRunMode.quiet => (
-        '无感后台',
-        '空闲时分段处理，阅读时暂停，优先保持低温',
-        Icons.nightlight_round,
-      ),
-      AiRunMode.balanced => (
-        '智能平衡',
-        '自动调整处理速度，兼顾等待时间与设备负担',
-        Icons.auto_mode_outlined,
-      ),
-      AiRunMode.fast => ('立即完成', '连续处理，使用较高性能；温度过高仍会暂停', Icons.bolt),
+    final (title, icon) = switch (mode) {
+      AiRunMode.quiet => ('无感后台', Icons.nightlight_round),
+      AiRunMode.balanced => ('智能平衡', Icons.auto_mode_outlined),
+      AiRunMode.fast => ('立即完成', Icons.bolt),
     };
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -337,27 +310,13 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             Icon(icon, color: selected ? t.text : t.muted, size: 21),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: t.text,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: t.muted,
-                      fontSize: 11.5,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: t.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             Icon(
@@ -396,9 +355,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             style: TextStyle(color: t.text, fontSize: 14),
           ),
           subtitle: Text(
-            d == null
-                ? '稍候'
-                : '$memory · $power\n$idle\nWindows 暂无统一温度读数，移动端将使用系统温控',
+            d == null ? '稍候' : '$memory · $power\n$idle',
             style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
           ),
           isThreeLine: d != null,
@@ -411,33 +368,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
       ],
     );
   }
-
-  Widget _supportRangeCard(ReadingTheme t) => _panel(
-    t,
-    children: [
-      ExpansionTile(
-        iconColor: t.muted,
-        collapsedIconColor: t.muted,
-        leading: Icon(Icons.phone_android_outlined, color: t.muted),
-        title: Text('移动端支持标准', style: TextStyle(color: t.text, fontSize: 14)),
-        subtitle: Text(
-          '完整 AI 以 8GB Android / iPhone 13 级别为主力目标',
-          style: TextStyle(color: t.muted, fontSize: 11.5),
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        children: [
-          Text(
-            '4GB 及以下：阅读功能与语义搜索，不作为生成 AI 支持范围。\n'
-            '6GB：可尝试固定 8K 的标准 Q8，建议前台单任务运行，后台可能被系统中止。\n'
-            '8GB：完整 AI 功能的标准支持范围。\n'
-            '12GB 以上：快速模式与未来增强模型。\n'
-            'iPhone：iPhone 11 为最低测试线，iPhone 13 及以上为推荐范围。',
-            style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.6),
-          ),
-        ],
-      ),
-    ],
-  );
 
   String _duration(int seconds) {
     if (seconds < 60) return '$seconds 秒';
@@ -455,10 +385,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
         title: Text(
           '处理器、线程与模型驻留',
           style: TextStyle(color: t.text, fontSize: 14),
-        ),
-        subtitle: Text(
-          '通常保持自动即可',
-          style: TextStyle(color: t.muted, fontSize: 11.5),
         ),
         children: [
           ListTile(
@@ -523,13 +449,6 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             divisions: 29,
             label: '${runtime.unloadMinutes} 分钟',
             onChanged: (v) => runtime.setUnloadMinutes(v.round()),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
-            child: Text(
-              '更改处理器或线程后，会在下一次模型启动时生效。降低线程主要减少瞬时负担，不保证降低总耗电。',
-              style: TextStyle(color: t.muted, fontSize: 11, height: 1.45),
-            ),
           ),
         ],
       ),

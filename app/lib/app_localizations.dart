@@ -40,7 +40,7 @@ const _english = <String, String>{
   '书架': 'Library',
   '设置': 'Settings',
   '阅读': 'Reading',
-  '本地 AI': 'Local AI',
+  'AI 管理': 'AI Manager',
   '数据与隐私': 'Data & Privacy',
   '关于': 'About',
   '版本': 'Version',
@@ -110,6 +110,56 @@ const _english = <String, String>{
   '编辑信息': 'Edit book details',
   '选择封面': 'Choose cover',
   '用默认封面': 'Use default cover',
+  'AI 生成': 'Draw with AI',
+  'AI 生成封面': 'Draw a cover with AI',
+  '场景': 'Setting',
+  '少女': 'Girl',
+  '少年': 'Boy',
+  '无人物': 'No one',
+  '玄幻': 'Eastern fantasy',
+  '奇幻': 'Fantasy',
+  '武侠': 'Wuxia',
+  '仙侠': 'Xianxia',
+  '都市': 'City',
+  '现实': 'Everyday',
+  '历史': 'Historical',
+  '军事': 'Military',
+  '游戏': 'Game',
+  '体育': 'Sports',
+  '科幻': 'Sci-fi',
+  '悬疑灵异': 'Mystery',
+  '轻小说': 'Light novel',
+  '插画': 'Illustration',
+  '人物（可多选，不选则只画风景）': 'People (any number; none draws scenery)',
+  '题材': 'World',
+  '在封面上印书名': 'Print the title on the cover',
+  '小女孩': 'Little girl',
+  '成年女性': 'Woman',
+  '老婆婆': 'Old woman',
+  '小男孩': 'Little boy',
+  '成年男性': 'Man',
+  '老爷爷': 'Old man',
+  '古风': 'Classical Chinese',
+  '宫廷': 'Imperial court',
+  '和风': 'Japanese',
+  '校园': 'School',
+  '民国': 'Republic era',
+  '末世': 'Post-apocalypse',
+  '赛博朋克': 'Cyberpunk',
+  '蒸汽朋克': 'Steampunk',
+  '童话': 'Fairy tale',
+  '夏日': 'Summer',
+  '表情': 'Expression',
+  '动作': 'Pose',
+  '构图': 'Framing',
+  '画风': 'Style',
+  '生成': 'Draw',
+  '换一张': 'Another',
+  '用这张': 'Use this',
+  '准备中，正在载入模型': 'Loading the model',
+  '正在绘制': 'Drawing',
+  '正在成图': 'Finishing',
+  '在本机生成，不上传任何内容': 'Drawn on this device; nothing is uploaded',
   '留空恢复原名': 'Leave empty to restore the original title',
   '留空恢复原作者': 'Leave empty to restore the original author',
   '从书架移除': 'Remove from library',
@@ -129,15 +179,14 @@ const _english = <String, String>{
   '清空阅读记录': 'Clear reading history',
   '保留书籍': 'Books are kept',
   '清空全部阅读记录？': 'Clear all reading history?',
-  '阅读时长、连续阅读天数和阅读画像所依据的数据都会被删除，且无法恢复。小说文件与阅读进度不会受影响。':
-      'Reading time, streaks and taste-profile data will be permanently deleted. Book files and reading progress will not be affected.',
+  '阅读时长、阅读速度、连续阅读天数和阅读画像所依据的数据都会被删除，且无法恢复。小说文件与阅读进度不会受影响。':
+      'Reading time, reading speed, streaks and taste-profile data will be permanently deleted. Book files and reading progress will not be affected.',
   '阅读记录已清空': 'Reading history cleared',
   '阅读助手': 'Reading Assistant',
   '回顾当前位置，继续理解正在读的故事': 'Recall context and keep track of the story',
   '当前位置': 'Current position',
-  '回忆搜索': 'Recall search',
   '搜索已读内容': 'Search what you have read',
-  '书籍详情': 'Book details',
+  '阅读报告': 'Reading Report',
   '扫书报告、人物与章节概览': 'Scan report, characters and chapter overview',
   '准备阅读助手': 'Prepare assistant',
   '后台处理': 'Background processing',
@@ -149,6 +198,32 @@ const _english = <String, String>{
   '扫书报告': 'Scan Report',
   '分析覆盖': 'Analysis coverage',
   '章节分析': 'Chapter analysis',
+  '章间立绘': 'Chapter illustrations',
+  '每隔几章，在章节之间插一张插画。画什么由书里的内容决定，读到才知道。':
+      'Every few chapters, an illustration between two chapters. What it shows comes from the book; you will see when you get there.',
+  '需要先下载生图引擎和模型': 'Download the image engine and model first',
+  '继续绘制': 'Continue drawing',
+  '轻触继续': 'Tap to continue',
+  '正在画章间立绘': 'Drawing chapter illustrations',
+  '已取消章间立绘': 'Chapter illustrations cancelled',
+  '每隔几章插一张插画，读到才知道画了什么':
+      'An illustration every few chapters, a surprise when you get there',
+  '尚未生成': 'Not generated yet',
+  '取消生成': 'Cancel',
+  '清除已画的立绘': 'Delete illustrations',
+  '清除已画的立绘？': 'Delete the illustrations?',
+  '清除': 'Delete',
+  '标签': 'Tags',
+  '随机': 'Random',
+  '身份': 'Role',
+  '发色': 'Hair colour',
+  '发型': 'Hairstyle',
+  '眼睛': 'Eyes',
+  '服饰': 'Clothes',
+  '手持': 'Holding',
+  '地点': 'Place',
+  '时间天气': 'Time & weather',
+  '景物': 'Scenery',
   '语义索引': 'Semantic index',
   '人物构成与关系': 'Characters & relationships',
   '人物、活跃章节与关系': 'Characters, active chapters and relationships',
@@ -158,6 +233,8 @@ const _english = <String, String>{
   '排雷原文': 'Content-warning evidence',
   '查看候选原文': 'Review matching passages',
   '节奏与氛围': 'Pacing & mood',
+  '节奏': 'Pacing',
+  '全书激烈与平缓的起伏': 'How intensity rises and falls across the book',
   '后台处理设置': 'Background processing settings',
   '生成章节分析': 'Generate chapter analysis',
   '暂停章节分析': 'Pause chapter analysis',
@@ -190,6 +267,10 @@ const _english = <String, String>{
   '跳转到原文': 'Jump to passage',
   '拖动选择要标注的文字': 'Drag to select text to annotate',
   '已选择正文': 'Text selected',
+  '未选择正文': 'No text selected',
+  '未分析': 'Not analyzed',
+  '未建立': 'Not built',
+  '还没有标注': 'No annotations yet',
   '翻页方式': 'Page mode',
   '上下滚动': 'Vertical scroll',
   '左右翻页': 'Horizontal pages',
@@ -197,6 +278,11 @@ const _english = <String, String>{
   '字体': 'Font',
   '按需下载或导入本地字体': 'Download on demand or import a local font',
   '首行缩进': 'First-line indent',
+  '底栏显示全书节奏': 'Book pacing in bottom bar',
+  '在阅读底栏显示全书节奏': 'Show book pacing in the reader bottom bar',
+  '全书节奏 · 点按查看，长按或右键隐藏':
+      'Book pacing · tap to view, long-press or right-click to hide',
+  '已隐藏全书节奏': 'Book pacing hidden',
   '听书': 'Read aloud',
   '暂停朗读': 'Pause narration',
   '收听本章': 'Read this chapter aloud',
@@ -219,10 +305,61 @@ const _english = <String, String>{
   '氛围分布': 'Mood distribution',
   '这本书还没有章节': 'This book has no chapters',
   '还没有氛围标签': 'No mood labels yet',
+  '按每章全文里危机、打斗、悬念、感叹等字词的密度估算激烈程度，和这本书自己的平均比较。只看激烈与平缓，不分辨悲伤、温馨等情绪；不需要 AI 模型。':
+      'Estimated from how densely each chapter uses words of danger, fighting, suspense and exclamation, compared with the book’s own average. It shows intensity only, not moods such as sadness or warmth. No AI model needed.',
+  '点按曲线查看某一章': 'Tap the curve to see a chapter',
+  '全书最激烈的一成': 'Among the most intense 10%',
+  '较激烈': 'More intense than usual',
+  '平缓': 'Calm',
+  '激烈': 'Intense',
+  '篇幅太短，未计算': 'Too short to measure',
+  '最激烈的几段': 'Most intense stretches',
+  '激烈高峰': 'Peak',
+  '读到这里': 'You are here',
+  '从这章读': 'Read from here',
+  '全书节奏': 'Book pacing',
+  '点按查看': 'Tap to view',
+  '章节太少或太短，画不出节奏': 'Too few chapters to chart',
+  '本地模型逐章写一句概括。在后台运行，可随时暂停，已完成的章节会保留。':
+      'The local model writes a one-line summary of each chapter. Runs in the background; pause any time and finished chapters are kept.',
   '过去半年': 'Past six months',
   '各书时长': 'Time by book',
   '换一篇': 'Try another',
-  '生成阅读画像': 'Generate reading profile',
+  '在读': 'Reading',
+  '阅读速度': 'Reading speed',
+  '读完章节': 'Chapters finished',
+  '最长连续': 'Longest streak',
+  '一天中的阅读时段': 'Time of day',
+  '一周七天': 'Day of week',
+  '读完': 'Finished',
+  '搁置': 'Set aside',
+  '没翻开': 'Not started',
+  '纪录': 'Records',
+  '单次最长': 'Longest sitting',
+  '通常一次': 'Typical sitting',
+  '读得最多的一天': 'Biggest day',
+  '累计读完': 'Read in full',
+  '从这一版开始记录。再读一会儿，就能算出你的速度。':
+      'Recorded from this version on. Read a little longer and your speed will appear.',
+  '已记录': 'Recorded',
+  '需要': 'Needed',
+  '有效阅读': 'Time counted',
+  '近 30 天': 'Last 30 days',
+  '更早': 'Before that',
+  '激烈章节': 'Intense chapters',
+  '平缓章节': 'Calm chapters',
+  '读得最快': 'Fastest',
+  '读得最慢': 'Slowest',
+  '快速划过': 'Skimmed',
+  '只算真正在读的时间：5 分钟没动、或每分钟不到 60 字，算作走开了；每分钟超过 3000 字，算作快速翻找。这两种都不计入，剩下的再去掉最快和最慢的各 5%。':
+      'Only time spent actually reading counts. Five minutes without moving, or fewer than 60 characters a minute, counts as stepping away; more than 3,000 a minute counts as hunting through pages. Neither is included, and the fastest and slowest 5% of the rest are dropped.',
+  '一': 'M',
+  '二': 'T',
+  '三': 'W',
+  '四': 'T',
+  '五': 'F',
+  '六': 'S',
+  '日': 'S',
   '还没有足够的阅读记录': 'Not enough reading history yet',
   '少 ': 'Less ',
   ' 多': ' More',
@@ -277,8 +414,6 @@ const _english = <String, String>{
   '有任务失败，等待重试': 'A task failed and is waiting to retry',
   '任务已暂停': 'Tasks paused',
   '等待运行': 'Waiting to run',
-  '章节摘要': 'Chapter summaries',
-  'AI 引擎': 'AI Engine',
   '本地运行，不上传文本。模型按需下载。建议 8 GB 内存。':
       'Runs locally without uploading text. Models download on demand. 8 GB RAM recommended.',
   '当前版本会被保留，之后仍可再次切换回来。':
@@ -294,6 +429,8 @@ const _english = <String, String>{
   '推理引擎 · llama.cpp': 'Inference engine · llama.cpp',
   '模型 · Qwen3 0.6B (Q8) — 摘要 / 氛围':
       'Model · Qwen3 0.6B (Q8) — summaries / mood',
+  '模型 · Qwen3 0.6B (Q8) — 摘要 / 人物':
+      'Model · Qwen3 0.6B (Q8) — summaries / characters',
   '嵌入模型 · BGE small 中文 — 语义搜索':
       'Embedding model · BGE small Chinese — semantic search',
   '朗读引擎 · sherpa-onnx': 'Narration engine · sherpa-onnx',
@@ -318,6 +455,7 @@ const _english = <String, String>{
   '暂无 AI 生成数据': 'No AI-generated data',
   '还没有生成任何 AI 数据': 'No AI-generated data yet',
   '摘要、氛围与索引': 'Summaries, mood and index',
+  '摘要与索引': 'Summaries and index',
   '摘要与氛围': 'Summaries and mood',
   '这些内容都可以重新生成，小说原文与阅读记录不会出现在这里。':
       'All of this data can be regenerated. Book text and reading history are not stored here.',
@@ -326,12 +464,20 @@ const _english = <String, String>{
   '按书管理': 'Manage by book',
   '全部删除': 'Delete all',
   '删除摘要与氛围': 'Delete summaries and mood',
+  '删除章节摘要': 'Delete chapter summaries',
+  '章节摘要': 'Chapter summaries',
   '删除语义索引': 'Delete semantic index',
   '推理引擎': 'Inference engine',
   '嵌入模型': 'Embedding model',
   '摘要模型': 'Summary model',
   '朗读引擎': 'Narration engine',
   '中文语音': 'Chinese voices',
+  '生图模型 · 动漫风 SD1.5': 'Image model · Anime SD 1.5',
+  '生图引擎': 'Image engine',
+  '先在 设置 → AI 管理 里装好生图引擎和模型':
+      'Install the image engine and model in Settings → Local AI first',
+  '在书架书籍的“⋯”菜单里生成封面': 'Draw covers from a book’s “⋯” menu',
+  '打开目录': 'Open folder',
   '正在下载': 'Downloading',
   '下载中断，可继续': 'Download interrupted; can resume',
   '下载失败，点按重试': 'Download failed; tap to retry',
@@ -383,10 +529,6 @@ const _english = <String, String>{
   '中等': 'Moderate',
   '较多': 'A lot',
   '很多': 'Very high',
-  '高可信': 'High confidence',
-  '中等可信': 'Medium confidence',
-  '有限依据': 'Limited evidence',
-  '证据不足': 'Insufficient evidence',
   '无': 'None',
   '感情结构暂时无法生成': 'Relationship structure is not available yet',
   '感情结构生成失败，可稍后重试':
@@ -430,17 +572,15 @@ const _english = <String, String>{
   '连续阅读': 'Reading streak',
   '阅读画像': 'Reading profile',
   '尚无阅读记录': 'No reading history yet',
-  '让本地 AI 根据阅读记录，整理一份只属于你的阅读观察。':
-      'Let local AI turn your reading history into a personal reading profile.',
   '近 7 天': 'Past 7 days',
   '什么都没搜到': 'No results found',
   '只搜索已读内容': 'Search read content only',
   '先为这本书建立索引': 'Build an index for this book first',
-  '建立全文检索': 'Build full-text index',
-  '暂停全文检索': 'Pause full-text indexing',
-  '继续全文检索': 'Resume full-text indexing',
-  '全文检索': 'Full-text search',
-  '全文检索已完成': 'Full-text index complete',
+  '建立语义检索': 'Build semantic index',
+  '暂停语义检索': 'Pause semantic indexing',
+  '继续语义检索': 'Resume semantic indexing',
+  '语义检索': 'Semantic search',
+  '语义检索已完成': 'Semantic index complete',
   '粘贴书源': 'Paste book source',
   '导入书源 JSON': 'Import book-source JSON',
   '还没有书源': 'No book sources yet',
@@ -519,12 +659,44 @@ String translateUi(String source, material.Locale locale) {
   if (hours != null) return '${hours.group(1)} hr';
   final minutes = RegExp(r'^(\d+) 分钟$').firstMatch(source);
   if (minutes != null) return '${minutes.group(1)} min';
+  final seconds = RegExp(r'^(\d+) 秒$').firstMatch(source);
+  if (seconds != null) return '${seconds.group(1)} s';
+  final days = RegExp(r'^(\d+) 天$').firstMatch(source);
+  if (days != null) return '${days.group(1)} days';
+  final books = RegExp(r'^(\d+) 本$').firstMatch(source);
+  if (books != null) return '${books.group(1)}';
+  final notes = RegExp(r'^(\d+) 条$').firstMatch(source);
+  if (notes != null) return '${notes.group(1)}';
+  final speed = RegExp(r'^(\d+) 字/分$').firstMatch(source);
+  if (speed != null) return '${speed.group(1)} chars/min';
+  final wan = RegExp(r'^约 (\d+(?:\.\d+)?) 万字$').firstMatch(source);
+  if (wan != null) {
+    final chars = double.parse(wan.group(1)!) * 10000;
+    return chars >= 1e6
+        ? '~${(chars / 1e6).toStringAsFixed(1)}M chars'
+        : '~${(chars / 1000).round()}k chars';
+  }
   final lowBattery = RegExp(r'^电量低于 (\d+)%$').firstMatch(source);
   if (lowBattery != null) return 'Battery below ${lowBattery.group(1)}%';
   final idle = RegExp(r'^等待设备空闲 (\d+) 分钟$').firstMatch(source);
   if (idle != null) {
     return 'Waiting until device is idle for ${idle.group(1)} min';
   }
+  final everyChapters = RegExp(r'^每 (\d+) 章$').firstMatch(source);
+  if (everyChapters != null) {
+    return 'Every ${everyChapters.group(1)} chapters';
+  }
+  final readUpTo = RegExp(
+    r'^已读 (\d+) 章(?: · 已索引 (\d+)/(\d+) 章)?$',
+  ).firstMatch(source);
+  if (readUpTo != null) {
+    final indexed = readUpTo.group(2) == null
+        ? ''
+        : ' · ${readUpTo.group(2)}/${readUpTo.group(3)} indexed';
+    return '${readUpTo.group(1)} chapters read$indexed';
+  }
+  final drawn = RegExp(r'^已画 (\d+) 张$').firstMatch(source);
+  if (drawn != null) return '${drawn.group(1)} drawn';
   final numberedChapter = RegExp(r'^第 (\d+) 章$').firstMatch(source);
   if (numberedChapter != null) return 'Chapter ${numberedChapter.group(1)}';
   final evidence = RegExp(r'^查看 (\d+) 条原文依据$').firstMatch(source);

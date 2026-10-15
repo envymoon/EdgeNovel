@@ -73,13 +73,17 @@ ThemeData buildAppTheme(ReadingSettings settings) {
       ? interfaceAccents[settings.accentIndex]
       : const Color(0xFF7B6A52);
   final brightness = t.isDark ? Brightness.dark : Brightness.light;
-  final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness)
-      .copyWith(
-        surface: t.surface,
-        surfaceContainerLow: t.surface,
-        surfaceContainer: t.raisedSurface,
-        outline: t.outline,
-      );
+  final seeded = ColorScheme.fromSeed(seedColor: accent, brightness: brightness);
+  final scheme = seeded.copyWith(
+    surface: t.surface,
+    surfaceContainerLow: t.surface,
+    surfaceContainer: t.raisedSurface,
+    outline: t.outline,
+    // One accent. Selected chips and tonal buttons are the primary at low
+    // strength, not the seed's second, muddier container hue.
+    secondaryContainer: seeded.primary.withValues(alpha: t.isDark ? 0.2 : 0.14),
+    onSecondaryContainer: seeded.primary,
+  );
   const cardRadius = 14.0;
   const controlRadius = 12.0;
 
@@ -217,6 +221,10 @@ class ReadingSettings extends ChangeNotifier {
   double lineHeight = 1.9;
   double paragraphSpacing = 14;
   bool firstLineIndent = true;
+
+  /// The whole-book 节奏 curve above the reader's bottom bar. On by default;
+  /// on desktop that bar never hides, so a reader who finds it busy turns it off.
+  bool paceStrip = true;
   PageMode pageMode = PageMode.scroll;
   double pageWidth = 720;
 
@@ -276,6 +284,7 @@ class ReadingSettings extends ChangeNotifier {
     s.lineHeight = p.getDouble('lineHeight') ?? s.lineHeight;
     s.paragraphSpacing = p.getDouble('paragraphSpacing') ?? s.paragraphSpacing;
     s.firstLineIndent = p.getBool('firstLineIndent') ?? s.firstLineIndent;
+    s.paceStrip = p.getBool('paceStrip') ?? s.paceStrip;
     s.pageMode =
         PageMode.values[(p.getInt('pageMode') ?? 0).clamp(
           0,
@@ -310,6 +319,7 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('lineHeight', lineHeight);
     p.setDouble('paragraphSpacing', paragraphSpacing);
     p.setBool('firstLineIndent', firstLineIndent);
+    p.setBool('paceStrip', paceStrip);
     p.setInt('pageMode', pageMode.index);
     p.setDouble('pageWidth', pageWidth);
     p.setDouble('wheelScale', wheelScale);
@@ -419,6 +429,12 @@ class ReadingSettings extends ChangeNotifier {
 
   void setFirstLineIndent(bool v) {
     firstLineIndent = v;
+    notifyListeners();
+    _persist();
+  }
+
+  void setPaceStrip(bool v) {
+    paceStrip = v;
     notifyListeners();
     _persist();
   }

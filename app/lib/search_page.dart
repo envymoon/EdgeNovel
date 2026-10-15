@@ -199,7 +199,7 @@ class _SearchPageState extends State<SearchPage> {
     onSubmitted: (_) => _search(),
     decoration: InputDecoration(
       isDense: true,
-      hintText: context.tr(_mode == _Mode.literal ? '书里的原话' : '用自己的话描述情节或人物'),
+      hintText: context.tr('搜索'),
       hintStyle: TextStyle(color: t.muted, fontSize: 14),
       prefixIcon: Icon(Icons.search, size: 18, color: t.muted),
       suffixIcon: _searching
@@ -215,10 +215,10 @@ class _SearchPageState extends State<SearchPage> {
   Widget _hint(ReadingTheme t, IndexStatus s) {
     final read = widget.reader.chapterIndex + 1;
     final extra = _mode == _Mode.semantic && s.hasModel && s.indexed < s.total
-        ? ' · 索引已覆盖 ${s.indexed}/${s.total} 章'
+        ? ' · 已索引 ${s.indexed}/${s.total} 章'
         : '';
     return Text(
-      '只搜索已读的前 $read 章$extra',
+      '已读 $read 章$extra',
       style: TextStyle(color: t.muted, fontSize: 11),
     );
   }
@@ -294,7 +294,7 @@ class _SearchPageState extends State<SearchPage> {
         child: FilledButton.tonal(
           onPressed: () {
             final b = widget.reader.info!;
-            widget.reader.startIndex(b.id, b.path);
+            widget.reader.startIndex(b.id, b.path, title: b.title);
           },
           child: const Text('建立索引'),
         ),

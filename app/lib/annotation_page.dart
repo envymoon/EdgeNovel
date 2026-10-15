@@ -290,7 +290,7 @@ class AnnotationPage extends StatelessWidget {
           body: info == null || annotations.isEmpty
               ? Center(
                   child: Text(
-                    '点击右上角，返回正文选择要标注的内容',
+                    '还没有标注',
                     style: TextStyle(color: t.muted, fontSize: 13),
                   ),
                 )

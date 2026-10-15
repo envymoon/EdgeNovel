@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart' hide Text;
 
+import 'analysis_run_card.dart';
 import 'app_localizations.dart';
 import 'bloom.dart';
+import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
 
 /// 氛围图 — the book's pacing, big enough to actually read.
+///
+/// HIDDEN since 2026-10, kept for later: nothing links here any more. Measured
+/// on 80 hand-labelled chapters, the 0.6B model's mood label was right no more
+/// often than answering 轻松 every time, and the chapter pass no longer asks for
+/// it (`ai::MOOD_LABELS`). The 节奏 chart (pace_page.dart) replaced it with
+/// intensity counted from the text. To revive this page, turn the labels back
+/// on and link it from the scan report again.
 ///
 /// This used to be a 44-pixel strip at the top of the table of contents, which
 /// for a 1300-chapter book meant a thousand dots in a few hundred pixels: a
@@ -18,9 +27,15 @@ import 'theme.dart';
 /// tells you something happens there, and you did not ask.
 class MoodPage extends StatefulWidget {
   final ShelfItem book;
+  final ReaderState reader;
   final ReadingSettings settings;
 
-  const MoodPage({super.key, required this.book, required this.settings});
+  const MoodPage({
+    super.key,
+    required this.book,
+    required this.reader,
+    required this.settings,
+  });
 
   @override
   State<MoodPage> createState() => _MoodPageState();
@@ -44,11 +59,33 @@ class _MoodPageState extends State<MoodPage> {
   BookInfo? _info;
   String? _error;
   int? _selected;
+  AiTaskState? _lastState;
+  int _lastDone = -1;
 
   @override
   void initState() {
     super.initState();
+    widget.reader.addListener(_onReader);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.reader.removeListener(_onReader);
+    super.dispose();
+  }
+
+  /// Redraw as the chapter pass fills the chart in: when the task changes
+  /// state, and every twenty chapters while it runs.
+  void _onReader() {
+    final state = widget.reader.enrichStateFor(widget.book.id);
+    final done = widget.reader.enrichProgress?.done ?? 0;
+    final changed = state != _lastState;
+    final stepped =
+        state == AiTaskState.running && done != _lastDone && done % 20 == 0;
+    _lastState = state;
+    _lastDone = done;
+    if (changed || stepped) _load();
   }
 
   Future<void> _load() async {
@@ -93,7 +130,23 @@ class _MoodPageState extends State<MoodPage> {
             )
           : _info == null
           ? Center(child: Bloom(color: t.muted, size: 34))
-          : _body(t, _info!),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+                  child: ChapterAnalysisCard(
+                    book: widget.book,
+                    reader: widget.reader,
+                    settings: widget.settings,
+                    done: _info!.chapters
+                        .where((c) => (c.mood ?? '').trim().isNotEmpty)
+                        .length,
+                    total: _info!.chapters.length,
+                  ),
+                ),
+                Expanded(child: _body(t, _info!)),
+              ],
+            ),
     );
   }
 

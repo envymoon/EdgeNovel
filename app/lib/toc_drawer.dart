@@ -4,6 +4,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'app_localizations.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/image.dart';
 import 'theme.dart';
 
 /// One flat list, because a nested list of 1500 chapters is worse to scroll than
@@ -18,6 +19,12 @@ class _VolumeRow extends _Row {
   const _VolumeRow(this.title);
 }
 
+/// A 章间立绘, listed after the chapter it follows.
+class _PlateRow extends _Row {
+  final int chapter;
+  const _PlateRow(this.chapter);
+}
+
 class _ChapterRow extends _Row {
   final int index;
   final String title;
@@ -25,7 +32,7 @@ class _ChapterRow extends _Row {
   /// Shown only for chapters the reader has moved past: ahead of them a summary
   /// is a spoiler, behind them it is a memory aid. The mood label used to ride
   /// in front of it and no longer does — a table of contents is for finding a
-  /// chapter, and 氛围 has its own page now, where it is legible.
+  /// chapter. (Mood labels are gone altogether now; 节奏 is counted instead.)
   final String? summary;
   final bool completed;
   final bool reading;
@@ -44,7 +51,15 @@ class TocDrawer extends StatefulWidget {
   final ReaderState reader;
   final ReadingSettings settings;
 
-  const TocDrawer({super.key, required this.reader, required this.settings});
+  /// Show the plate drawn after a chapter.
+  final ValueChanged<int>? onPlate;
+
+  const TocDrawer({
+    super.key,
+    required this.reader,
+    required this.settings,
+    this.onPlate,
+  });
 
   @override
   State<TocDrawer> createState() => _TocDrawerState();
@@ -53,6 +68,24 @@ class TocDrawer extends StatefulWidget {
 class _TocDrawerState extends State<TocDrawer> {
   final _scroll = ItemScrollController();
   String _query = '';
+
+  /// The chapters a plate follows.
+  Set<int> _plates = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlates();
+  }
+
+  Future<void> _loadPlates() async {
+    final id = widget.reader.info?.id;
+    if (id == null || widget.onPlate == null) return;
+    try {
+      final chapters = await plateChapters(bookId: id);
+      if (mounted) setState(() => _plates = chapters.toSet());
+    } catch (_) {}
+  }
 
   List<_Row> _rows(BookInfo info) {
     final q = _query.trim();
@@ -87,6 +120,7 @@ class _TocDrawerState extends State<TocDrawer> {
       for (var i = 0; i < chapters.length; i++) ...[
         if (volumeAt.containsKey(i)) _VolumeRow(volumeAt[i]!),
         chapterRow(i),
+        if (_plates.contains(i)) _PlateRow(i),
       ],
     ];
   }
@@ -145,6 +179,24 @@ class _TocDrawerState extends State<TocDrawer> {
                               letterSpacing: 1.5,
                             ),
                           ),
+                        ),
+                        _PlateRow(:final chapter) => ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          leading: Icon(
+                            Icons.image_outlined,
+                            color: t.muted,
+                            size: 16,
+                          ),
+                          minLeadingWidth: 0,
+                          title: Text(
+                            '章间立绘',
+                            style: TextStyle(color: t.muted, fontSize: 13),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            widget.onPlate?.call(chapter);
+                          },
                         ),
                         _ChapterRow(
                           :final index,

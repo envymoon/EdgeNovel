@@ -124,11 +124,6 @@ class _FontPageState extends State<FontPage> {
           body: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
-              Text(
-                '字体不会随应用安装。需要哪一款再下载，也可以导入自己的 TTF / OTF。',
-                style: TextStyle(color: t.muted, fontSize: 12.5, height: 1.5),
-              ),
-              const SizedBox(height: 14),
               for (final pack in manager.packs) ...[
                 _fontCard(pack, t),
                 const SizedBox(height: 10),
@@ -220,7 +215,7 @@ class _FontPageState extends State<FontPage> {
               ),
               const SizedBox(height: 7),
               Text(
-                '${pack.description}  ·  ${pack.sizeLabel}',
+                pack.sizeLabel,
                 style: TextStyle(color: t.muted, fontSize: 11.5),
               ),
               if (pack.license.isNotEmpty) ...[

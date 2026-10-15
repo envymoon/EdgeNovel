@@ -4,11 +4,11 @@ import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
 import 'bloom.dart';
-import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/stats.dart';
 import 'theme.dart';
 
-/// Reading statistics, built entirely from reading_events. Everything here is
+/// Reading statistics, built entirely from the reading log. Everything here is
 /// arithmetic over recorded sessions — no AI, no estimates, nothing invented.
 class StatsPage extends StatefulWidget {
   final ReadingSettings settings;
@@ -25,8 +25,9 @@ class _Stats {
   /// Seconds read per local day, keyed by days-since-epoch of the local date.
   final Map<int, int> byDay;
   final List<BookTime> byBook;
+  final ReadingInsights insights;
 
-  _Stats(this.byDay, this.byBook);
+  _Stats(this.byDay, this.byBook, this.insights);
 }
 
 /// Local-date day number. Deliberately not epoch-based: dividing a local
@@ -41,23 +42,41 @@ int _dayKey(DateTime local) => DateTime(
 /// Inverse of [_dayKey]; the constructor normalizes the overflowing day.
 DateTime _dayDate(int key) => DateTime(2020, 1, 1 + key);
 
+int get _tzSecs => DateTime.now().timeZoneOffset.inSeconds;
+
 class _StatsPageState extends State<StatsPage> {
   _Stats? _stats;
   String? _error;
 
-  /// The generated 阅读画像 — the counted facts above, woven into a paragraph.
-  /// On-demand: nothing runs the model until the reader asks, and 换一篇 rotates
-  /// the angle so it reads differently each time rather than being cached.
+  /// The 阅读画像 — the counted facts, woven into two short paragraphs by
+  /// hand-written templates. Instant and model-free, so it is written as soon
+  /// as the page opens; 换一篇 draws a new seed, which picks other facts and
+  /// other phrasings.
   String? _portrait;
   String? _portraitError;
   bool _portraitBusy = false;
-  int _angle = math.Random().nextInt(5);
+  final _random = math.Random();
+
+  /// Speed in intense vs calm chapters. Decodes books from disk, so it is
+  /// asked for once, after the rest, and the portrait waits for it briefly.
+  PaceSpeed? _pace;
+  Future<void>? _paceAsked;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _genPortrait();
   }
+
+  Future<void> _askPace() => _paceAsked ??= () async {
+    try {
+      final p = await paceSpeed().timeout(const Duration(seconds: 8));
+      if (mounted) setState(() => _pace = p);
+    } catch (_) {
+      // Too slow or a book would not decode: the page simply goes without.
+    }
+  }();
 
   Future<void> _genPortrait() async {
     if (_portraitBusy) return;
@@ -66,17 +85,12 @@ class _StatsPageState extends State<StatsPage> {
       _portraitError = null;
     });
     try {
+      await _askPace();
       final text = await readerPortrait(
-        angle: _angle,
-        tzSecs: DateTime.now().timeZoneOffset.inSeconds,
+        angle: _random.nextInt(1 << 31),
+        tzSecs: _tzSecs,
       );
-      if (mounted) {
-        setState(() {
-          _portrait = text.trim();
-          // Move the lens on for next time, so 换一篇 is a new read, not a reword.
-          _angle = (_angle + 1 + math.Random().nextInt(4)) % 5;
-        });
-      }
+      if (mounted) setState(() => _portrait = text.trim());
     } catch (e) {
       if (mounted) setState(() => _portraitError = '$e');
     } finally {
@@ -93,6 +107,7 @@ class _StatsPageState extends State<StatsPage> {
         since: since.millisecondsSinceEpoch ~/ 1000,
       );
       final byBook = await timePerBook();
+      final insights = await readingInsights(tzSecs: _tzSecs);
 
       final byDay = <int, int>{};
       for (final e in events) {
@@ -103,9 +118,9 @@ class _StatsPageState extends State<StatsPage> {
         );
         byDay[day] = (byDay[day] ?? 0) + (e.ended - e.started);
       }
-      setState(() => _stats = _Stats(byDay, byBook));
+      if (mounted) setState(() => _stats = _Stats(byDay, byBook, insights));
     } catch (e) {
-      setState(() => _error = '$e');
+      if (mounted) setState(() => _error = '$e');
     }
   }
 
@@ -132,6 +147,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _body(_Stats s, ReadingTheme t) {
+    final i = s.insights;
     final today = _dayKey(DateTime.now());
     final total = s.byDay.values.fold(0, (a, b) => a + b);
     final week = List.generate(
@@ -149,33 +165,207 @@ class _StatsPageState extends State<StatsPage> {
       streak++;
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        _portraitSection(t),
-        const SizedBox(height: 28),
-        Divider(color: t.muted.withValues(alpha: 0.16), height: 1),
-        const SizedBox(height: 28),
-        Row(
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: ListView(
+          padding: const EdgeInsets.all(20),
           children: [
-            _metric(t, _fmtDuration(total), '总时长'),
-            _metric(t, _fmtDuration(week), '近 7 天'),
-            _metric(t, '$streak 天', '连续阅读'),
+            _portraitSection(t),
+            const SizedBox(height: 28),
+            Divider(color: t.muted.withValues(alpha: 0.16), height: 1),
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                _metric(t, _fmtDuration(total), '总时长'),
+                _metric(t, _fmtDuration(week), '近 7 天'),
+                _metric(t, '$streak 天', '连续阅读'),
+              ],
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                _metric(
+                  t,
+                  i.speed == null ? '—' : '${_cpm(i.speed!)} 字/分',
+                  '阅读速度',
+                ),
+                _metric(t, '${i.chaptersFinished} 章', '读完章节'),
+                _metric(t, '${i.bestStreak} 天', '最长连续'),
+              ],
+            ),
+            const SizedBox(height: 28),
+            _label(t, '过去半年'),
+            const SizedBox(height: 10),
+            _Heatmap(byDay: s.byDay, today: today, theme: t),
+            if (i.hours.any((h) => h.toInt() > 0)) ...[
+              const SizedBox(height: 28),
+              _label(t, '一天中的阅读时段'),
+              const SizedBox(height: 10),
+              _Bars(
+                values: i.hours.map((v) => v.toInt()).toList(),
+                labels: {
+                  for (final h in [0, 6, 12, 18, 23]) h: '$h',
+                },
+                tooltip: (h, v) => '$h:00 · ${_fmtDuration(v)}',
+                theme: t,
+              ),
+              const SizedBox(height: 18),
+              _label(t, '一周七天'),
+              const SizedBox(height: 10),
+              _Bars(
+                values: i.weekdays.map((v) => v.toInt()).toList(),
+                labels: {
+                  for (var d = 0; d < 7; d++)
+                    d: const ['一', '二', '三', '四', '五', '六', '日'][d],
+                },
+                tooltip: (d, v) => _fmtDuration(v),
+                theme: t,
+                height: 44,
+              ),
+            ],
+            const SizedBox(height: 28),
+            _speedSection(i, t),
+            const SizedBox(height: 28),
+            _label(t, '书架'),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _metric(t, '${i.booksFinished} 本', '读完'),
+                _metric(t, '${i.booksReading} 本', '在读'),
+                _metric(t, '${i.booksShelved} 本', '搁置'),
+                _metric(t, '${i.booksUnopened} 本', '没翻开'),
+              ],
+            ),
+            const SizedBox(height: 28),
+            _label(t, '纪录'),
+            const SizedBox(height: 6),
+            if (i.longestSitting > 0)
+              _row(t, '单次最长', _fmtDuration(i.longestSitting.toInt())),
+            if (i.typicalSitting != null)
+              _row(t, '通常一次', _fmtDuration(i.typicalSitting!.toInt())),
+            if (i.topDay case final d?)
+              _row(
+                t,
+                '读得最多的一天',
+                _fmtDuration(d.secs.toInt()),
+                note: '${d.year}/${d.month}/${d.day}',
+              ),
+            if (i.chaptersFinished > 0)
+              _row(
+                t,
+                '累计读完',
+                '${i.chaptersFinished} 章',
+                note: '约 ${_wan(i.charsFinished.toInt())} 万字',
+              ),
+            if (i.annotations > 0) _row(t, '标注', '${i.annotations} 条'),
+            const SizedBox(height: 28),
+            if (s.byBook.isNotEmpty) ...[
+              _label(t, '各书时长'),
+              const SizedBox(height: 4),
+              for (final b in s.byBook.take(10)) _bookRow(b, s.byBook.first, t),
+            ],
           ],
         ),
-        const SizedBox(height: 28),
-        Text('过去半年', style: TextStyle(color: t.muted, fontSize: 12)),
-        const SizedBox(height: 10),
-        _Heatmap(byDay: s.byDay, today: today, theme: t),
-        const SizedBox(height: 28),
-        if (s.byBook.isNotEmpty) ...[
-          Text('各书时长', style: TextStyle(color: t.muted, fontSize: 12)),
-          const SizedBox(height: 4),
-          for (final b in s.byBook.take(10)) _bookRow(b, s.byBook.first, t),
-        ],
-      ],
+      ),
     );
   }
+
+  Widget _label(ReadingTheme t, String text) =>
+      Text(text, style: TextStyle(color: t.muted, fontSize: 12));
+
+  Widget _speedSection(ReadingInsights i, ReadingTheme t) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: t.surface,
+        border: Border.all(color: t.outline),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.speed, color: t.muted, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                '阅读速度',
+                style: TextStyle(
+                  color: t.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (i.speed == null) ...[
+            _row(t, '已记录', '${i.speedMinutes} 分钟'),
+            _row(t, '需要', _fmtDuration(10 * 60)),
+          ] else ...[
+            Text(
+              '${_cpm(i.speed!)} 字/分',
+              style: TextStyle(
+                color: t.text,
+                fontSize: 26,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            _row(t, '有效阅读', _fmtDuration(i.speedMinutes.toInt() * 60)),
+            if (i.recentSpeed != null && i.earlierSpeed != null) ...[
+              _row(t, '近 30 天', '${_cpm(i.recentSpeed!)} 字/分'),
+              _row(t, '更早', '${_cpm(i.earlierSpeed!)} 字/分'),
+            ],
+            if (_pace case final p?) ...[
+              _row(t, '激烈章节', '${_cpm(p.intenseCpm)} 字/分'),
+              _row(t, '平缓章节', '${_cpm(p.calmCpm)} 字/分'),
+            ],
+            if (i.fastestBook case final f?)
+              _row(t, '读得最快', '${_cpm(f.cpm)} 字/分', book: f.title),
+            if (i.slowestBook case final s?)
+              _row(t, '读得最慢', '${_cpm(s.cpm)} 字/分', book: s.title),
+            _row(t, '快速划过', '${(i.skimShare * 100).round()}%'),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// A label and its number, with an optional date, book or aside after it.
+  Widget _row(
+    ReadingTheme t,
+    String label,
+    String value, {
+    String? note,
+    String? book,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Text(label, style: TextStyle(color: t.muted, fontSize: 13)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: book == null
+              ? const SizedBox.shrink()
+              : Text(
+                  '《$book》',
+                  translate: false,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: t.text, fontSize: 13),
+                ),
+        ),
+        if (note != null) ...[
+          Text(note, style: TextStyle(color: t.muted, fontSize: 12)),
+          const SizedBox(width: 10),
+        ],
+        Text(value, style: TextStyle(color: t.text, fontSize: 13)),
+      ],
+    ),
+  );
 
   Widget _portraitSection(ReadingTheme t) {
     return Container(
@@ -202,7 +392,7 @@ class _StatsPageState extends State<StatsPage> {
                 ),
               ),
               const Spacer(),
-              if (_portrait != null && !_portraitBusy)
+              if (_portrait != null && _portrait!.isNotEmpty && !_portraitBusy)
                 TextButton(
                   onPressed: _genPortrait,
                   child: const Text('换一篇', style: TextStyle(fontSize: 12)),
@@ -217,27 +407,17 @@ class _StatsPageState extends State<StatsPage> {
             ),
             const SizedBox(height: 8),
             OutlinedButton(onPressed: _genPortrait, child: const Text('重试')),
-          ] else if (_portraitBusy)
+          ] else if (_portraitBusy || _portrait == null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Center(child: Bloom(color: t.muted, size: 30)),
             )
-          else if (_portrait == null) ...[
-            Text(
-              '让本地 AI 根据阅读记录，整理一份只属于你的阅读观察。',
-              style: TextStyle(color: t.muted, fontSize: 13, height: 1.5),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: _genPortrait,
-              icon: const Icon(Icons.auto_awesome, size: 17),
-              label: const Text('生成阅读画像'),
-            ),
-          ] else if (_portrait!.isEmpty)
+          else if (_portrait!.isEmpty)
             Text('还没有足够的阅读记录', style: TextStyle(color: t.muted, fontSize: 13))
           else
             Text(
               _portrait!,
+              translate: false,
               style: TextStyle(color: t.text, fontSize: 15, height: 1.7),
             ),
         ],
@@ -274,6 +454,7 @@ class _StatsPageState extends State<StatsPage> {
               children: [
                 Text(
                   b.title,
+                  translate: false,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: t.text, fontSize: 13),
@@ -304,12 +485,95 @@ class _StatsPageState extends State<StatsPage> {
   }
 }
 
+/// Speeds to the nearest ten: 617 字/分 claims a precision the windows do not
+/// have.
+String _cpm(double cpm) => '${(cpm / 10).round() * 10}';
+
+String _wan(int chars) {
+  final w = chars / 10000;
+  return w >= 100 ? '${w.round()}' : w.toStringAsFixed(1);
+}
+
 String _fmtDuration(int seconds) {
   if (seconds < 60) return '$seconds 秒';
   final m = seconds ~/ 60;
   if (m < 60) return '$m 分钟';
   final h = m / 60;
-  return h >= 10 ? '${h.round()} 小时' : '${h.toStringAsFixed(1)} 小时';
+  if (h >= 10) return '${h.round()} 小时';
+  final tenths = (h * 10).round();
+  return tenths % 10 == 0 ? '${tenths ~/ 10} 小时' : '${h.toStringAsFixed(1)} 小时';
+}
+
+Color _ink(ReadingTheme theme) =>
+    theme.isDark ? theme.text : const Color(0xFF2E7D32);
+
+/// A row of bars, tallest one solid, with a few labels underneath.
+class _Bars extends StatelessWidget {
+  final List<int> values;
+  final Map<int, String> labels;
+  final String Function(int index, int value) tooltip;
+  final ReadingTheme theme;
+  final double height;
+
+  const _Bars({
+    required this.values,
+    required this.labels,
+    required this.tooltip,
+    required this.theme,
+    this.height = 64,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final top = values.fold<int>(0, math.max);
+    final ink = _ink(theme);
+    return Column(
+      children: [
+        SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var i = 0; i < values.length; i++)
+                Expanded(
+                  child: Tooltip(
+                    waitDuration: const Duration(milliseconds: 300),
+                    message: tooltip(i, values[i]),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                      height: top == 0
+                          ? 2
+                          : math.max(2.0, height * values[i] / top),
+                      decoration: BoxDecoration(
+                        color: values[i] == top && top > 0
+                            ? ink.withValues(alpha: 0.85)
+                            : values[i] == 0
+                            ? theme.muted.withValues(alpha: 0.12)
+                            : ink.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            for (var i = 0; i < values.length; i++)
+              Expanded(
+                child: Text(
+                  labels[i] ?? '',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: theme.muted, fontSize: 10),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 /// GitHub-style grid: one column per week, one row per weekday, intensity by
@@ -333,8 +597,7 @@ class _Heatmap extends StatelessWidget {
       < 60 * 60 => 0.75,
       _ => 1.0,
     };
-    final base = theme.isDark ? theme.text : const Color(0xFF2E7D32);
-    return base.withValues(alpha: alpha);
+    return _ink(theme).withValues(alpha: alpha);
   }
 
   @override

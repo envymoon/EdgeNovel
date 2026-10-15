@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import 'ai_runtime_page.dart';
+import 'background_task_bar.dart';
 import 'data_guard.dart';
 import 'font_manager.dart';
 import 'ai_runtime.dart';
@@ -15,6 +17,7 @@ import 'shelf_categories.dart';
 import 'shelf_page.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/image.dart';
 import 'src/rust/api/tts.dart';
 import 'src/rust/frb_generated.dart';
 import 'theme.dart';
@@ -43,6 +46,7 @@ Future<void> main() async {
   await initStore(dir: storage.support.path);
   await initAi(dir: storage.supportChild('ai').path);
   await initTts(dir: storage.supportChild('tts').path);
+  await initImage(dir: storage.supportChild('image').path);
   // Read-aloud used to grind chapters into WAVs here ahead of time. It no longer
   // keeps anything, so reclaim whatever an older build left behind rather than
   // leave gigabytes stranded in a directory nothing will ever open again.
@@ -115,6 +119,49 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   late final ReadingSettings settings = widget.settings;
   late bool _reading = widget.initialReading;
   final _executionPolicy = AppExecutionPolicy.current();
+  final _navigator = GlobalKey<NavigatorState>();
+  bool _runtimeOpen = false;
+
+  Future<void> _openBackgroundSettings() async {
+    final nav = _navigator.currentState;
+    if (nav == null || _runtimeOpen) return;
+    _runtimeOpen = true;
+    await nav.push(
+      MaterialPageRoute(
+        builder: (_) => AiRuntimePage(settings: settings, reader: reader),
+      ),
+    );
+    _runtimeOpen = false;
+  }
+
+  /// Every screen but the reader's page gets the background-work bar on top.
+  /// The tree keeps the same shape whether the bar shows or not, so the
+  /// navigator below it is never rebuilt and no screen loses its place.
+  Widget _withTaskBar(Widget child) => ListenableBuilder(
+    listenable: reader,
+    builder: (context, _) {
+      final shown = !_reading && BackgroundTaskBar.shows(reader);
+      return Column(
+        children: [
+          if (shown)
+            BackgroundTaskBar(
+              reader: reader,
+              settings: settings,
+              onOpen: _openBackgroundSettings,
+            )
+          else
+            const SizedBox.shrink(),
+          Expanded(
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: shown,
+              child: child,
+            ),
+          ),
+        ],
+      );
+    },
+  );
 
   void _leaveReader(ShelfItem? _) {
     reader.setReadingActive(false);
@@ -173,9 +220,10 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
+          navigatorKey: _navigator,
           builder: (context, child) => AppLanguageScope(
             language: settings.language,
-            child: child ?? const SizedBox.shrink(),
+            child: _withTaskBar(child ?? const SizedBox.shrink()),
           ),
           theme: buildAppTheme(settings),
           home: _reading

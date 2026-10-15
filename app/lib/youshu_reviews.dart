@@ -236,7 +236,6 @@ class _YoushuReviewsPageState extends State<YoushuReviewsPage> {
                       '优书网 · ${_snapshot.updated.toLocal().toString().substring(0, 16)}',
                       translate: false,
                     ),
-                    const Text('包含旧站存档和新评论，可能涉及剧透。已加载内容保存在本地，仅手动更新。'),
                     Row(
                       children: [
                         Expanded(
@@ -339,7 +338,6 @@ class _YoushuReviewsPageState extends State<YoushuReviewsPage> {
       ),
     ),
   );
-
 }
 
 class YoushuRatingsView extends StatelessWidget {

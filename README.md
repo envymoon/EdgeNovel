@@ -16,7 +16,7 @@ A local-first novel reader designed for Chinese web fiction, with mobile as its 
 
 The project brings small language models, rule-based retrieval, and reading data onto the user's own device. Its goal is to make AI useful both before and during reading—without turning reading into a permanently connected cloud conversation.
 
-> This project is in early development. The Windows version is currently used to refine the complete experience. The Android version has completed its first migration and emulator validation. iOS development will continue once a macOS build environment is available.
+> This project is in early development. Windows is the most complete version and is used for daily reading. The Android version has completed its first migration and emulator validation. iOS development is starting on a cloud Mac.
 
 ## Why This Project Exists
 
@@ -29,20 +29,20 @@ Readers of long-form Chinese web fiction often need answers to questions more sp
 
 The product is therefore organized into two distinct layers.
 
-### Pre-reading Report
+### Reading Report
 
-The report appears on the book details page before the reader starts the novel. It currently covers the cast graph, romance structure, narrative focus, chapter overview, mood and pacing, potentially sensitive plot excerpts, and links to the supporting passages.
+The report appears on the book details page, so it can be read before starting the novel. It currently covers the cast and their relationships, the romance structure (the heroines by name), chapter overviews, a pacing chart counted from the text (no model needed), and links to the supporting passages. Potentially sensitive plot excerpts are parked until they are reliable enough to show readers.
 
 A small model cannot reliably make unrestricted, book-wide judgments about a very long novel. This project therefore does not delegate every conclusion to AI. Rules and retrieval provide stable, inspectable results; the lightweight model is reserved for bounded tasks it can handle. Whenever possible, users can return to the original chapter and make the final judgment themselves.
 
 ### Reading Assistant
 
-The in-reader assistant provides character lookup, chapter overviews, semantic search, and reading-related tools. It is kept separate from the pre-reading report so that choosing a book and reading a book do not become the same workflow.
+The in-reader assistant provides search, the reading report, background work, and reading appearance. It is kept separate from the book page so that choosing a book and reading a book do not become the same workflow.
 
 ## See It in the Reader
 
 <p align="center">
-  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and pre-reading report">
+  <img src="docs/assets/android-book-detail.png" width="31%" alt="Book details and reading report">
   <img src="docs/assets/android-reader-open.png" width="31%" alt="Mobile reading view">
   <img src="docs/assets/android-test-annotation-saved.png" width="31%" alt="An annotation saved in the novel">
 </p>
@@ -55,7 +55,7 @@ The same flow moves from **book choice** to **reading** to **personal annotation
 
 This short English passage is original showcase copy. It is not a bundled test novel.
 
-### Inside the scan report
+### Inside the reading report
 
 <p align="center">
   <img src="docs/assets/cast-graph-real.png" width="100%" alt="Cast composition and relationship structure">
@@ -73,7 +73,7 @@ The cast graph and chapter overview above are real captures from the app. The un
 
 ## Current Content Support
 
-The interface can be switched to English in the current source, but an English interface does not automatically add English novel support; the current analysis pipeline is dedicated to **Chinese web fiction**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and scan reports may be incomplete or fail.
+The interface can be switched to English in the current source, but an English interface does not automatically add English novel support; the current analysis pipeline is dedicated to **Chinese web fiction**. English novels such as *The Great Gatsby* are not a supported content target yet: chapter detection, retrieval, relationship analysis, and reading reports may be incomplete or fail.
 
 ## Features
 
@@ -81,9 +81,13 @@ The interface can be switched to English in the current source, but an English i
 - Reading-position recovery, latest-chapter tracking, and completion marks for chapters actually read
 - Chapter navigation and a shortcut back to the current reading position
 - Inline annotations with management and source-location navigation
-- Cast graph, romance structure, and narrative-focus analysis
-- Potentially sensitive plot excerpts with neighboring context and chapter links
-- Chapter overviews, mood and pacing views, and full-text semantic search
+- Cast, relationship, and romance-structure analysis
+- Chapter overviews, a whole-book pacing curve (also under the reader), and full-text semantic search
+- Reading statistics computed from the reader's own reading log
+- AI covers drawn by an on-device image model, and illustrations placed between chapters
+- Optional Youshu (优书网) reviews, fetched only when the reader opens them
+- Themes, accent colors, backgrounds, interface fonts, and a Chinese/English interface
+- A snapshot of the library and settings before a new build first opens them
 - Recoverable local AI task queue with pause, retry, and chapter-level checkpoints
 - Low-impact background, balanced, and finish-now workload modes
 - Charging, battery, idle-time, and thermal constraints
@@ -94,11 +98,13 @@ The interface can be switched to English in the current source, but an English i
 
 | Before reading | While reading | Under the hood |
 | --- | --- | --- |
-| Cast graph, romance structure, pacing, and potential spoiler evidence | Chapter jump, current-position recovery, annotations, and semantic search | On-device models, resumable tasks, workload limits, and model rollback |
+| Cast and romance structure, chapter overviews, and pacing | Chapter jump, current-position recovery, annotations, and semantic search | On-device models, resumable tasks, workload limits, and model rollback |
 
 ## AI on Edge Devices
 
-The current generation baseline is **Qwen3 0.6B Q8**, with **BGE small Chinese F16** for semantic retrieval. Generative features retain the tuned **8K context window**. Workload modes adjust threads, scheduling, intervals, and model unloading; they do not reduce context length to gain speed.
+The current generation baseline is **Qwen3 0.6B Q8**, with **BGE small Chinese F16** for semantic retrieval. Cast and relationship tasks read up to **8K tokens** of sampled evidence. Chapter summaries read a fixed excerpt and run in a **2K window**: measured against 8K, the summaries are word-for-word identical (78 chapters on GPU, 48 on CPU) while the KV cache is a quarter of the size. Workload modes adjust threads, scheduling, intervals, and model unloading; they never change what the model reads.
+
+AI covers use an anime-style SD 1.5 model quantized to 0.70 GB, run by a patched [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (Vulkan on Windows). The recipe is in `experiments/anime-cover-model/`.
 
 Models are not bundled with the installer. They are downloaded only when the related feature is requested, keeping the application package smaller and allowing model updates or rollbacks independently of app releases.
 
@@ -107,7 +113,7 @@ Target device tiers (pending broader physical-device testing):
 | Tier | Suggested device | Local AI support |
 | --- | --- | --- |
 | Reading first | 4GB RAM or less | Core reading features; generative AI is not guaranteed |
-| Experimental minimum | 6GB RAM, ARM64, Android 10+ | Fixed 8K context and one foreground task at a time |
+| Experimental minimum | 6GB RAM, ARM64, Android 10+ | One foreground AI task at a time |
 | Standard | 8GB RAM or more | Full local AI feature set |
 | High performance | 12GB RAM or more | Fast mode and future enhanced models |
 
@@ -121,7 +127,7 @@ Edge computing is not only about placing a model on the device. Novel continuous
 - **Quiet idle** works in small slices, yields to the reader, and unloads the model between longer intervals when possible.
 - **Balanced** keeps a steady background pace for chapter analysis and retrieval.
 - **Finish now** uses the available resources to complete a requested result sooner, while still respecting device safety limits.
-- These modes change scheduling, thread count, intervals, and model residency—not the tuned 8K context or the meaning of the result.
+- These modes change scheduling, thread count, intervals, and model residency—not what the model reads or the meaning of the result.
 
 The goal is not to pretend that inference has no cost. It is to make that cost adaptive, visible, and appropriate for a phone that is also being used for reading.
 
@@ -131,12 +137,12 @@ Windows and Android use separate GitHub Releases. Their packages and release tag
 
 ### Windows
 
-**Release tag:** [`windows-v1.0.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.0.0)  
-**Download:** `Novel-Windows-x64-1.0.0.zip`
+**Release tag:** [`windows-v1.1.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.1.0)  
+**Download:** `Novel-Windows-x64-1.1.0.zip`
 
 Windows is currently the most complete version. The `novel.exe` file must remain beside the bundled `data` directory and DLL files; copying or downloading the executable alone will not work.
 
-Current status: the first public Windows 1.0.0 release is available. The source now includes the interface-language switch, but this published package predates that change; a new Windows package is required for the switch to appear in the installed app. Download the complete ZIP; the executable must stay beside its `data` directory and DLL files.
+Upgrading keeps the bookshelf: reading data lives in `%APPDATA%\com.novel\novel\`, not beside the executable, so replacing the extracted folder does not touch it. The first launch of a new build also copies the library and settings to `backups/` there.
 
 ### Android
 
@@ -149,7 +155,7 @@ Current status: the first ARM64 Android preview is available. It uses a developm
 
 ### iOS
 
-There is no distributable iOS build yet. The shared UI and data layers are being prepared for mobile, while the native project, Metal inference, background scheduling, signing, and device testing require macOS and Xcode.
+There is no iOS build yet. Development is starting on a cloud Mac, with a TestFlight build on a physical iPhone as the first goal and the Windows design carried over. iOS does not allow helper processes, so the inference engine will run inside the app on Metal.
 
 See the [release guide](docs/RELEASING.md) for platform-specific packaging rules.
 
@@ -164,14 +170,14 @@ See the [release guide](docs/RELEASING.md) for platform-specific packaging rules
 ## Current Limitations
 
 - A 0.6B model cannot independently understand an entire long-form web novel with consistent accuracy. Some analysis may still miss evidence or produce incorrect results.
-- The pre-reading report supports decision-making; it is not a definitive statement about a novel. Important results should be checked against their source passages.
+- The reading report supports decision-making; it is not a definitive statement about a novel. Important results should be checked against their source passages.
 - Android has not yet undergone physical-device testing for memory use, temperature, battery consumption, or long-running background behavior.
-- Native iOS development has not started.
+- iOS is in early development and has no build yet.
 - No open-source license has been selected yet. Until a license is added, no permission is granted to copy, modify, or redistribute the code.
 
 ## Roadmap
 
-The short-term priority is physical-device validation while keeping the Windows version stable. The next stage will fine-tune a model on purpose-built Chinese web-fiction data to improve character, relationship, chapter, and content-screening tasks instead of simply increasing the on-device model size.
+The short-term priority is the iOS version on a physical iPhone while keeping the Windows version stable; Android follows. The next stage will fine-tune a model on purpose-built Chinese web-fiction data to improve character, relationship, chapter, and content-screening tasks instead of simply increasing the on-device model size.
 
 ## Content and Privacy
 

@@ -9,7 +9,7 @@
 use novel_core::book::{self, LineKind};
 use novel_core::fingerprint::ParagraphStyle;
 use novel_core::store::{self, BookRecord, ChapterRecord, Store};
-use novel_core::{chunk, decode, fingerprint, focus, genre, meta, repair};
+use novel_core::{chunk, decode, fingerprint, focus, genre, meta, pace, repair};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -128,8 +128,10 @@ pub fn drop_summaries(book_id: i64) -> Result<(), String> {
     with_store!(s => s.vacuum())
 }
 
-/// Both, in one go, for the "清空这本书的 AI 数据" button.
+/// All of it, in one go, for the "清空这本书的 AI 数据" button: summaries, the
+/// index and the drawn 章间立绘, which are drawn again if it is still on.
 pub fn drop_book_cache(book_id: i64) -> Result<(), String> {
+    crate::api::image::drop_plates(book_id);
     with_store!(s => s.drop_summaries(book_id))?;
     with_store!(s => s.drop_index(book_id))?;
     with_store!(s => s.vacuum())
@@ -156,6 +158,8 @@ pub struct ChapterInfo {
     pub summary: Option<String>,
     /// One-word mood label from the same pass, from a fixed vocabulary. Same
     /// rule: absent until enrichment has been here, and absence must render fine.
+    /// No longer written (see `ai::MOOD_LABELS`) and no page shows it; labels
+    /// from before are still read back.
     pub mood: Option<String>,
 }
 
@@ -700,6 +704,7 @@ pub fn remove_book(book_id: i64) -> Result<(), String> {
     if let Some(cover) = with_store!(s => s.cover_path(book_id))? {
         let _ = std::fs::remove_file(&cover);
     }
+    crate::api::image::drop_plates(book_id);
     with_store!(s => s.remove_book(book_id))
 }
 
@@ -716,6 +721,7 @@ pub fn delete_book(book_id: i64) -> Result<(), String> {
     if let Some(cover) = with_store!(s => s.cover_path(book_id))? {
         let _ = std::fs::remove_file(&cover);
     }
+    crate::api::image::drop_plates(book_id);
     with_store!(s => s.remove_book(book_id))?;
     if let Some(path) = path {
         let ours = data_dir()?.join("books");
@@ -937,6 +943,49 @@ pub(crate) fn snippet(
     })
 }
 
+/// 节奏图: one intensity score per chapter, in table-of-contents order — 0 is
+/// this book's average, higher is more intense. `None` for a chapter too short
+/// to say (an author's note). Counted from the whole text by
+/// `novel_core::pace`, no model, a few dozen milliseconds for a long book, so it
+/// is ready the moment the book is and is never stored.
+pub fn chapter_pace(path: String) -> Result<Vec<Option<f64>>, String> {
+    ensure_loaded(&path)?;
+    let guard = cache().read().unwrap();
+    let l = guard.get(&path).ok_or("书未打开")?;
+    Ok(pace::scores(&l.text, &l.chapters))
+}
+
+/// The same scores for a book that may not be open, without opening it: the
+/// statistics page asks about several books, and putting each one into the
+/// cache would hold their whole text in memory for nothing — while closing one
+/// afterwards could pull it out from under the reader.
+pub(crate) fn pace_scores_quietly(path: &str) -> Result<Vec<Option<f64>>, String> {
+    read_quietly(path, |text, chapters| pace::scores(text, chapters))
+}
+
+/// Run `f` over a book's text and chapters, from the reader's cache when the
+/// book is open and from the file when it is not, without opening it: see
+/// [`pace_scores_quietly`].
+pub(crate) fn read_quietly<T>(
+    path: &str,
+    f: impl FnOnce(&str, &[book::Chapter]) -> T,
+) -> Result<T, String> {
+    if let Some(l) = cache().read().unwrap().get(path) {
+        return Ok(f(&l.text, &l.chapters));
+    }
+    let raw = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
+    let forced = with_store!(s => s.encoding_override(path))?;
+    let d = match forced {
+        Some(label) => {
+            decode::decode_as(&raw, &label).ok_or_else(|| format!("未知编码: {label}"))?
+        }
+        None => decode::decode(&raw),
+    };
+    let fp = fingerprint::fingerprint(d.encoding, &d.text);
+    let b = book::build(&d.text, &fp);
+    Ok(f(&d.text, &b.chapters))
+}
+
 /// The slice of a chapter the summarizer reads: the opening carries the scene,
 /// the closing carries the outcome; the middle is where the token budget dies.
 pub(crate) fn chapter_excerpt(
@@ -1000,6 +1049,13 @@ pub struct CastPerson {
     /// The model's prose account of who this character is, or None until it has
     /// written one. Every UI must render correctly when this is None.
     pub background: Option<String>,
+    /// What [`Self::background`] was written from, said for the reader
+    /// (章节概览 / 章节概览与原文摘句 / 原文摘句), or None when unknown.
+    pub background_source: Option<String>,
+    /// The background could now be written from better material — more
+    /// chapter summaries than when it was written, or it predates them. The old
+    /// one is still shown until the reader asks for a new one.
+    pub background_outdated: bool,
     /// The sentences that account rests on — shown to the reader, so a claim
     /// about a character can always be traced back to the book.
     pub evidence: Vec<RelEvidence>,
@@ -1126,6 +1182,7 @@ pub fn cast_graph(path: String, book_id: i64, up_to_chapter: i64) -> Result<Cast
         .unwrap_or_default()
         .into_iter()
         .collect();
+    let sources = background_sources(book_id, upto)?;
 
     // Renumber around anyone the model threw out.
     let keep: Vec<bool> = cast
@@ -1149,6 +1206,12 @@ pub fn cast_graph(path: String, book_id: i64, up_to_chapter: i64) -> Result<Cast
             // A verdict of "yes" settles it; only an unjudged one stays dim.
             uncertain: p.uncertain && !verdicts.contains_key(&p.name),
             background: backgrounds.get(&p.name).cloned(),
+            background_source: sources
+                .get(&p.name)
+                .and_then(|(source, _)| source.as_deref())
+                .and_then(source_label)
+                .map(str::to_string),
+            background_outdated: sources.get(&p.name).is_some_and(|(_, stale)| *stale),
             evidence: p
                 .evidence
                 .iter()
@@ -1190,6 +1253,54 @@ pub fn cast_graph(path: String, book_id: i64, up_to_chapter: i64) -> Result<Cast
         edges,
         upto: upto as u32,
     })
+}
+
+/// A book's genre tags, and the chapter its reader is in: where 章间立绘
+/// takes its scene from, and where it starts drawing.
+pub(crate) fn plate_context(book_id: i64) -> Result<(Vec<String>, usize), String> {
+    let tags = with_store!(s => s.genre_tags(book_id))?
+        .unwrap_or_default()
+        .split('、')
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect();
+    let (chapter, _) = with_store!(s => s.progress(book_id))?;
+    Ok((tags, chapter.max(0) as usize))
+}
+
+/// How many leads 章间立绘 takes turns between, from the top of the roster.
+const PLATE_LEADS: usize = 8;
+
+/// 章间立绘's plan for a book: what to draw after which chapters. The leads are
+/// the whole book's roster, the same cached scan 扫书报告 reads, less anyone
+/// the model has ruled is not a person; [`novel_core::interlude`] only ever
+/// reads text before each plate.
+pub(crate) fn plate_plan(
+    path: &str,
+    book_id: i64,
+    every: usize,
+) -> Result<Vec<novel_core::interlude::Plate>, String> {
+    ensure_loaded(path)?;
+    let last_chapter = {
+        let guard = cache().read().unwrap();
+        let l = guard.get(path).ok_or("书未打开")?;
+        l.chapters.len().saturating_sub(1) as i64
+    };
+    let (cast, _) = scan_cached(path, book_id, last_chapter)?;
+    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let leads: Vec<Vec<String>> = cast
+        .people
+        .iter()
+        .filter(|p| *verdicts.get(&p.name).unwrap_or(&true))
+        .take(PLATE_LEADS)
+        .map(|p| std::iter::once(p.name.clone()).chain(p.aliases.iter().cloned()).collect())
+        .collect();
+    let guard = cache().read().unwrap();
+    let l = guard.get(path).ok_or("书未打开")?;
+    Ok(novel_core::interlude::plan(&l.text, &l.chapters, &leads, every))
 }
 
 /// The pre-reading relationship structure always scans the whole available
@@ -1301,20 +1412,81 @@ pub(crate) fn residual_relations(
         .collect())
 }
 
-/// Every character the model has not written a background for, each with their
-/// aliases and their sampled sentences — what the summarizer needs and nothing
-/// more. Recomputed from the same scan, so the model layer never works off a
-/// graph handed across the bridge and gone stale.
+/// Chapters with a usable summary right now.
+fn summarized_chapters(book_id: i64) -> Result<usize, String> {
+    Ok(with_store!(s => s.chapter_summaries(book_id))
+        .unwrap_or_default()
+        .iter()
+        .filter(|(_, t)| !t.trim().is_empty())
+        .count())
+}
+
+/// Has the material a background could be written from improved since it was?
+/// A background written before sources were recorded always has: it came from
+/// the older, cruder sentence sample. Otherwise it is worth rewriting once the
+/// chapter summaries have grown by a real step — a tenth of the book, and at
+/// least twenty chapters — so a pass that is still running does not flag every
+/// background again after each chapter.
+fn background_outdated(
+    source: Option<&str>,
+    basis: Option<i64>,
+    now: usize,
+    chapters: usize,
+) -> bool {
+    match source {
+        None => true,
+        Some(_) => now as i64 >= basis.unwrap_or(0) + (chapters / 10).max(20) as i64,
+    }
+}
+
+fn source_label(source: &str) -> Option<&'static str> {
+    match source {
+        "summaries" => Some("章节概览"),
+        "mixed" => Some("章节概览与原文摘句"),
+        "sentences" => Some("原文摘句"),
+        _ => None,
+    }
+}
+
+/// Per character with a background: (source, outdated).
+fn background_sources(
+    book_id: i64,
+    chapters: usize,
+) -> Result<HashMap<String, (Option<String>, bool)>, String> {
+    let now = summarized_chapters(book_id)?;
+    Ok(with_store!(s => s.person_summary_sources(book_id))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, source, basis)| {
+            let stale = background_outdated(source.as_deref(), basis, now, chapters);
+            (name, (source, stale))
+        })
+        .collect())
+}
+
+/// The book's chapter summaries, by chapter index — the better material a
+/// background is written from when the reader has run 章节分析. Empty when
+/// they have not; the writer then falls back to the person's own sentences.
+pub(crate) fn chapter_digest(book_id: i64) -> Result<Vec<(usize, String)>, String> {
+    Ok(with_store!(s => s.chapter_summaries(book_id))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, t)| !t.trim().is_empty())
+        .map(|(i, t)| (i as usize, t.trim().to_string()))
+        .collect())
+}
+
+/// Every character the model has not written a background for — or whose
+/// background could now be written from better material — each with their
+/// aliases and their sampled sentences. Recomputed from the same scan, so the
+/// model layer never works off a graph handed across the bridge and gone stale.
 pub(crate) fn residual_people(
     path: &str,
     book_id: i64,
     up_to_chapter: i64,
 ) -> Result<Vec<(String, Vec<String>, Vec<(usize, String)>)>, String> {
-    let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
-    let done: HashMap<String, String> = with_store!(s => s.person_summaries(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let (cast, upto) = scan_cached(path, book_id, up_to_chapter)?;
+    let sources = background_sources(book_id, upto)?;
     // Anyone the model has already thrown out is not worth a biography.
     let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
         .unwrap_or_default()
@@ -1323,7 +1495,10 @@ pub(crate) fn residual_people(
     Ok(cast
         .people
         .iter()
-        .filter(|p| !done.contains_key(&p.name) && *verdicts.get(&p.name).unwrap_or(&true))
+        .filter(|p| {
+            sources.get(&p.name).is_none_or(|(_, stale)| *stale)
+                && *verdicts.get(&p.name).unwrap_or(&true)
+        })
         .map(|p| {
             (
                 p.name.clone(),
@@ -1335,8 +1510,14 @@ pub(crate) fn residual_people(
 }
 
 /// Persist one model-written character background.
-pub(crate) fn remember_person(book_id: i64, name: &str, summary: &str) -> Result<(), String> {
-    with_store!(s => s.set_person_summary(book_id, name, summary))
+pub(crate) fn remember_person(
+    book_id: i64,
+    name: &str,
+    summary: &str,
+    source: &str,
+    basis: usize,
+) -> Result<(), String> {
+    with_store!(s => s.set_person_summary(book_id, name, summary, source, basis as i64))
         .map_err(|e| format!("保存人物背景失败: {e}"))
 }
 

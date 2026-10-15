@@ -155,11 +155,6 @@ class _LandminePageState extends State<LandminePage> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                Text(
-                  '排雷仅展示相关嫌疑片段，仅作参考。',
-                  style: TextStyle(color: t.muted, fontSize: 12, height: 1.6),
-                ),
-                const SizedBox(height: 14),
                 if (!s.hasModel)
                   _needModel(t)
                 else if (widget.reader.indexing)

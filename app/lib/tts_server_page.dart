@@ -123,7 +123,7 @@ class _TtsServerPageState extends State<TtsServerPage> {
             ),
             const SizedBox(height: 8),
             _field(t, _url, '服务端地址', 'http://192.168.1.8:8880'),
-            _field(t, _model, '模型（可选）', '留空用服务端默认'),
+            _field(t, _model, '模型（可选）', ''),
             _field(t, _key, '密钥（可选）', '', obscure: true),
             const SizedBox(height: 8),
             Row(

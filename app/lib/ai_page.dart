@@ -8,10 +8,12 @@ import 'ai_cache_page.dart';
 import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
 import 'bloom.dart';
+import 'image_download.dart';
 import 'model_download.dart';
 import 'model_manager.dart';
 import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
+import 'src/rust/api/image.dart';
 import 'src/rust/api/tts.dart';
 import 'theme.dart';
 import 'tts_server_page.dart';
@@ -68,6 +70,7 @@ class _AiPageState extends State<AiPage> {
   static const _models = ModelManager();
   AiStatus? _status;
   TtsStatus? _ts;
+  ImageStatus? _img;
   ManagedModelState? _chatModel;
   ManagedModelState? _embeddingModel;
   double? _engineProgress;
@@ -86,6 +89,13 @@ class _AiPageState extends State<AiPage> {
   int _embedPendingBytes = 0;
   ResumableFileDownload? _chatTransfer;
   ResumableFileDownload? _embedTransfer;
+  double? _imgEngineProgress;
+  String? _imgEngineError;
+  double? _imgModelProgress;
+  String? _imgModelError;
+  int _imgPendingBytes = 0;
+  ResumableFileDownload? _imgTransfer;
+  var _imgCancelled = false;
 
   Timer? _poll;
 
@@ -103,12 +113,15 @@ class _AiPageState extends State<AiPage> {
     _poll?.cancel();
     _chatTransfer?.pause();
     _embedTransfer?.pause();
+    _imgTransfer?.pause();
     super.dispose();
   }
 
   Future<void> _refresh() async {
     final s = await aiStatus();
-    final ts = await ttsStatus();
+    final ts = AppPlatformSupport.hasReadAloud ? await ttsStatus() : null;
+    final img = await imageStatus();
+    final imgPending = await pendingImageModelBytes(img.dir);
     final states = await Future.wait([
       _models.inspect(s.dir, chatModelPackage),
       _models.inspect(s.dir, embeddingModelPackage),
@@ -121,6 +134,8 @@ class _AiPageState extends State<AiPage> {
       setState(() {
         _status = s;
         _ts = ts;
+        _img = img;
+        _imgPendingBytes = imgPending;
         _chatModel = states[0];
         _embeddingModel = states[1];
         _chatPendingBytes = pending[0];
@@ -206,6 +221,61 @@ class _AiPageState extends State<AiPage> {
     } finally {
       if (zip != null && await zip.exists()) await zip.delete();
       _engineProgress = null;
+      await _refresh();
+    }
+  }
+
+  Future<void> _downloadImageEngine() async {
+    setState(() {
+      _imgEngineProgress = 0;
+      _imgEngineError = null;
+    });
+    try {
+      await downloadImageEngine(_img!.dir, (p) {
+        if (mounted) setState(() => _imgEngineProgress = p);
+      });
+    } catch (e) {
+      _imgEngineError = '$e';
+    } finally {
+      _imgEngineProgress = null;
+      await _refresh();
+    }
+  }
+
+  /// The model is 740 MB: it can be paused, and picks up where it stopped.
+  Future<void> _downloadImageModel() async {
+    if (_imgTransfer != null) return;
+    final transfer = _imgTransfer = ResumableFileDownload();
+    _imgCancelled = false;
+    setState(() {
+      _imgModelProgress = 0;
+      _imgModelError = null;
+    });
+    final dir = _img!.dir;
+    try {
+      await downloadImageModel(dir, transfer, (p) {
+        if (mounted) setState(() => _imgModelProgress = p);
+      });
+    } on DownloadStopped {
+      // Paused or cancelled; what is left is shown on the button.
+    } catch (e) {
+      _imgModelError = '$e';
+    } finally {
+      _imgTransfer = null;
+      _imgModelProgress = null;
+      if (_imgCancelled) await discardImageModelDownload(dir);
+      await _refresh();
+    }
+  }
+
+  Future<void> _cancelImageModel() async {
+    final transfer = _imgTransfer;
+    if (transfer != null) {
+      // The download throws it away once it has stopped writing.
+      _imgCancelled = true;
+      transfer.pause();
+    } else {
+      await discardImageModelDownload(_img!.dir);
       await _refresh();
     }
   }
@@ -400,9 +470,7 @@ class _AiPageState extends State<AiPage> {
     int bytes,
   ) {
     if (state?.installed != true && detectedName == null) {
-      return package.role == ManagedModelRole.chat
-          ? '约 640 MB，下载后自动校验'
-          : '约 48 MB，下载后自动校验';
+      return package.role == ManagedModelRole.chat ? '约 640 MB' : '约 48 MB';
     }
     final version = state?.activeVersion ?? '现有版本';
     final verified = state?.isVerifiedCurrent(package) == true
@@ -419,7 +487,6 @@ class _AiPageState extends State<AiPage> {
       builder: (dialogContext) => AlertDialog(
         backgroundColor: t.raisedSurface,
         title: Text('恢复旧版$label？'),
-        content: const Text('当前版本会被保留，之后仍可再次切换回来。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -471,7 +538,7 @@ class _AiPageState extends State<AiPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
-        title: Text('AI 引擎', style: TextStyle(color: t.text, fontSize: 17)),
+        title: Text('AI 管理', style: TextStyle(color: t.text, fontSize: 17)),
       ),
       body: s == null
           ? Center(child: Bloom(color: t.muted, size: 34))
@@ -483,25 +550,12 @@ class _AiPageState extends State<AiPage> {
                   child: ListView(
                     padding: EdgeInsets.all(compact ? 16 : 20),
                     children: [
-                      Text(
-                        '本地运行，不上传文本。模型按需下载。建议 8 GB 内存。',
-                        style: TextStyle(
-                          color: t.muted,
-                          fontSize: 13,
-                          height: 1.6,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(Icons.tune, size: 20, color: t.muted),
                         title: Text(
                           'AI 运行与设备',
                           style: TextStyle(color: t.text, fontSize: 14),
-                        ),
-                        subtitle: Text(
-                          '速度、电量与后台',
-                          style: TextStyle(color: t.muted, fontSize: 12),
                         ),
                         trailing: Icon(Icons.chevron_right, color: t.muted),
                         onTap: () => Navigator.push(
@@ -536,7 +590,7 @@ class _AiPageState extends State<AiPage> {
                           title: '推理引擎 · llama.cpp',
                           subtitle: s.engine
                               ? '已安装 · ${_size(s.engineBytes)}'
-                              : '约 30–90 MB，从 GitHub 下载',
+                              : '约 30–90 MB',
                           progress: _engineProgress,
                           error: _engineError,
                           onDownload: _downloadEngine,
@@ -547,7 +601,7 @@ class _AiPageState extends State<AiPage> {
                       _item(
                         t,
                         ok: chatInstalled,
-                        title: '模型 · Qwen3 0.6B (Q8) — 摘要 / 氛围',
+                        title: '模型 · Qwen3 0.6B (Q8)',
                         subtitle: _withPending(
                           _modelSubtitle(
                             chatModelPackage,
@@ -588,7 +642,7 @@ class _AiPageState extends State<AiPage> {
                       _item(
                         t,
                         ok: embeddingInstalled,
-                        title: '嵌入模型 · BGE small 中文 — 语义搜索',
+                        title: '嵌入模型 · BGE small 中文',
                         subtitle: _withPending(
                           _modelSubtitle(
                             embeddingModelPackage,
@@ -628,6 +682,47 @@ class _AiPageState extends State<AiPage> {
                               )
                             : null,
                       ),
+                      // Pictures: covers and 章间立绘. Desktop only.
+                      if (AppPlatformSupport.isDesktop) ...[
+                        _item(
+                          t,
+                          ok: _img?.engine ?? false,
+                          title: '生图引擎 · stable-diffusion.cpp',
+                          subtitle: (_img?.engine ?? false)
+                              ? '已安装 · ${_size(_img!.engineBytes)}'
+                              : '约 29 MB',
+                          progress: _imgEngineProgress,
+                          error: _imgEngineError,
+                          onDownload: _downloadImageEngine,
+                          onDelete: (_img?.engine ?? false)
+                              ? () => _delete('生图引擎', deleteImageEngine)
+                              : null,
+                        ),
+                        _item(
+                          t,
+                          ok: _img?.model != null && _img!.decoder,
+                          title: '生图模型 · 动漫风 SD1.5',
+                          subtitle: _withPending(
+                            _img?.model != null && _img!.decoder
+                                ? '已安装 · ${_size(_img!.modelBytes)}'
+                                : '约 740 MB',
+                            _imgPendingBytes,
+                          ),
+                          progress: _imgModelProgress,
+                          progressText: _imgModelProgress == null
+                              ? null
+                              : '正在下载',
+                          error: _imgModelError,
+                          onDownload: _downloadImageModel,
+                          downloadLabel: _imgPendingBytes > 0 ? '继续' : '下载',
+                          hasPendingDownload: _imgPendingBytes > 0,
+                          onPause: () => _imgTransfer?.pause(),
+                          onCancel: _cancelImageModel,
+                          onDelete: (_img?.modelBytes ?? 0) > 0
+                              ? () => _delete('生图模型', deleteImageModel)
+                              : null,
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -640,10 +735,6 @@ class _AiPageState extends State<AiPage> {
                           'AI 生成数据',
                           style: TextStyle(color: t.text, fontSize: 14),
                         ),
-                        subtitle: Text(
-                          '摘要、氛围与索引',
-                          style: TextStyle(color: t.muted, fontSize: 12),
-                        ),
                         trailing: Icon(Icons.chevron_right, color: t.muted),
                         onTap: () => Navigator.push(
                           context,
@@ -653,7 +744,8 @@ class _AiPageState extends State<AiPage> {
                           ),
                         ),
                       ),
-                      if (AppPlatformSupport.isDesktop) ...[
+                      if (AppPlatformSupport.isDesktop &&
+                          AppPlatformSupport.hasReadAloud) ...[
                         const Divider(height: 32),
                         // The bundled engine is honestly labelled as the fallback it is:
                         // it works with zero setup and sounds like it. The good voices
@@ -685,7 +777,7 @@ class _AiPageState extends State<AiPage> {
                           title: '朗读引擎 · sherpa-onnx',
                           subtitle: (_ts?.engine ?? false)
                               ? '已安装 · ${_size(_ts!.engineBytes)}'
-                              : '约 20 MB，从 GitHub 下载',
+                              : '约 20 MB',
                           progress: _piperProgress,
                           error: _piperError,
                           onDownload: _downloadTtsEngine,
@@ -696,9 +788,9 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _ts?.voice != null,
-                          title: '中文语音 · Kokoro（8 音色，含男声旁白）',
+                          title: '中文语音 · Kokoro',
                           subtitle: _ts?.voice == null
-                              ? '约 340 MB，从 GitHub 下载'
+                              ? '约 340 MB'
                               : '${_ts!.voice} · ${_size(_ts!.voiceBytes)}',
                           progress: _voiceProgress,
                           error: _voiceError,

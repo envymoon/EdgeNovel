@@ -84,7 +84,6 @@ class AppearancePage extends StatelessWidget {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('统一界面字重'),
-                  subtitle: const Text('菜单和标题使用常规粗细'),
                   value: settings.uniformInterfaceWeight,
                   onChanged: settings.setUniformInterfaceWeight,
                 ),
@@ -144,11 +143,6 @@ class AppearancePage extends StatelessWidget {
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        '界面与阅读字体分别设置',
-                        style: TextStyle(color: t.muted, fontSize: 14),
                       ),
                       const SizedBox(height: 14),
                       Container(

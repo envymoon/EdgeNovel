@@ -71,6 +71,11 @@ fn runtime_config() -> &'static Mutex<AiRuntimeConfig> {
     C.get_or_init(|| Mutex::new(AiRuntimeConfig::default()))
 }
 
+/// The reader chose 仅 CPU. Every local engine honours it, not just this one.
+pub(crate) fn cpu_only() -> bool {
+    runtime_config().lock().unwrap().backend == 1
+}
+
 pub fn set_ai_runtime_config(
     mode: u8,
     backend: u8,
@@ -647,6 +652,12 @@ fn chat_engine_args<'a>(context: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
         "-c",
         context,
         "--jinja",
+        // The server keeps every finished prompt's KV in RAM (up to 8 GB) in
+        // case it comes back. Ours never do — each is another chapter — so
+        // that cache only grew, about 350 MB a chapter on a 6K prompt, and
+        // would get the engine killed on a phone within a few.
+        "--cache-ram",
+        "0",
         "--cache-type-k",
         kv_cache,
         "--cache-type-v",
@@ -660,15 +671,25 @@ fn chat_engine_args<'a>(context: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
     args
 }
 
-/// The tuned generation features depend on the full 8K evidence window.
-/// Runtime profiles may change scheduling pressure, never the information the
-/// model can read.
-fn ensure_engine() -> Result<(), String> {
+/// The window for the passes that read sampled evidence (人物、关系): their
+/// tuning depends on the full 8K of it.
+const FULL_CONTEXT: u32 = 8192;
+
+/// The chapter pass reads a fixed 1400+400-character excerpt: at most 1507
+/// tokens over 3,628 chapters measured, plus 76 of chat template and 120 of
+/// answer. A quarter of the KV cache, about 360 MB back on a phone.
+const SUMMARY_CONTEXT: u32 = 2048;
+
+/// The window is sized to what a task reads, never the other way round, and
+/// inside it the model computes the same thing at any size: measured word for
+/// word identical at 2K, 4K and 8K on 78 chapters (GPU) and 27 (CPU). Runtime
+/// profiles may change scheduling pressure, never the information the model
+/// can read.
+fn ensure_engine(context: u32) -> Result<(), String> {
     #[cfg(target_os = "android")]
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
-    const CONTEXT: u32 = 8192;
     const F16_KV: &str = "f16";
     #[cfg(any(windows, target_os = "android"))]
     const PREFERRED_KV: &str = "q8_0";
@@ -677,7 +698,7 @@ fn ensure_engine() -> Result<(), String> {
 
     if health(PORT)
         && engine_state().lock().unwrap().is_some_and(|state| {
-            state.context == CONTEXT && matches!(state.kv_cache, "q8_0" | "f16")
+            state.context == context && matches!(state.kv_cache, "q8_0" | "f16")
         })
     {
         return Ok(());
@@ -686,7 +707,7 @@ fn ensure_engine() -> Result<(), String> {
         stop_chat_engine();
     }
     let model = find_model(ai_dir()?).ok_or("模型未安装（缺 .gguf 文件）")?;
-    let context_arg = CONTEXT.to_string();
+    let context_arg = context.to_string();
     let start = |kv_cache: &'static str| {
         let args = chat_engine_args(&context_arg, kv_cache);
         ensure(
@@ -719,7 +740,7 @@ fn ensure_engine() -> Result<(), String> {
         Err(error) => return Err(error),
     };
     *engine_state().lock().unwrap() = Some(ChatEngineState {
-        context: CONTEXT,
+        context,
         kv_cache: active_kv,
     });
     Ok(())
@@ -905,7 +926,7 @@ fn dechunk(mut b: &[u8]) -> Vec<u8> {
 #[flutter_rust_bridge::frb(ignore)]
 trait LocalInferenceBackend: Sync {
     #[flutter_rust_bridge::frb(ignore)]
-    fn prepare_chat(&self) -> Result<(), String>;
+    fn prepare_chat(&self, context: u32) -> Result<(), String>;
     #[flutter_rust_bridge::frb(ignore)]
     fn prepare_embeddings(&self) -> Result<(), String>;
     #[flutter_rust_bridge::frb(ignore)]
@@ -919,8 +940,8 @@ struct LlamaServerBackend;
 // Internal engine plumbing is not part of the Dart API.
 #[flutter_rust_bridge::frb(ignore)]
 impl LocalInferenceBackend for LlamaServerBackend {
-    fn prepare_chat(&self) -> Result<(), String> {
-        ensure_engine()
+    fn prepare_chat(&self, context: u32) -> Result<(), String> {
+        ensure_engine(context)
     }
 
     fn prepare_embeddings(&self) -> Result<(), String> {
@@ -955,7 +976,10 @@ fn inference_backend() -> &'static dyn LocalInferenceBackend {
 }
 
 /// One closed task: chapter excerpt in, one sentence out, temperature 0.
-fn summarize_excerpt(excerpt: &str) -> Result<String, String> {
+/// `None` when the engine's window of `context` was too small for this excerpt:
+/// the prompt did not fit, or the answer ran into the window's end — which the
+/// engine reports as an ordinary finish, so it is checked here.
+fn summarize_excerpt(excerpt: &str, context: u32) -> Result<Option<String>, String> {
     let body = json!({
         "messages": [
             {
@@ -971,14 +995,20 @@ fn summarize_excerpt(excerpt: &str) -> Result<String, String> {
         "max_tokens": 120,
     });
     let (status, resp) = inference_backend().chat_completion(&body, 300)?;
+    if status == 400 && String::from_utf8_lossy(&resp).contains("exceed_context_size_error") {
+        return Ok(None);
+    }
     if status != 200 {
         return Err(format!("引擎返回 {status}"));
     }
     let v: Value = serde_json::from_slice(&resp).map_err(|e| format!("引擎响应不是 JSON: {e}"))?;
+    if v["usage"]["total_tokens"].as_u64() >= Some(context as u64) {
+        return Ok(None);
+    }
     let content = v["choices"][0]["message"]["content"]
         .as_str()
         .ok_or("引擎响应缺少内容")?;
-    Ok(clean_summary(content))
+    Ok(Some(clean_summary(content)))
 }
 
 /// The model's paperwork, removed: think-block residue, wrapper quotes, label
@@ -999,6 +1029,14 @@ fn clean_summary(raw: &str) -> String {
         .trim();
     s.chars().take(60).collect()
 }
+
+/// Whether the chapter pass still asks for a mood label. Off since 2026-10:
+/// measured on 80 hand-labelled chapters, the label was right no more often
+/// than answering 轻松 every time, so it cost half of every chapter's model time
+/// for nothing. The 节奏 chart is counted from the text instead
+/// (`novel_core::pace`). Kept switchable, with the moods already stored left in
+/// place, in case a better model makes it worth asking again.
+const MOOD_LABELS: bool = false;
 
 /// The mood vocabulary. Closed on purpose: the model picks, never invents.
 /// Anything it says outside this list is discarded — a missing label degrades
@@ -1063,7 +1101,8 @@ pub fn enrich_book(
     sink: StreamSink<EnrichProgress>,
 ) -> Result<(), String> {
     CANCEL.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat()?;
+    let mut context = SUMMARY_CONTEXT;
+    inference_backend().prepare_chat(context)?;
     if !book::is_loaded(&path) {
         book::open_book(path.clone())?;
     }
@@ -1071,7 +1110,7 @@ pub fn enrich_book(
     let missing: Vec<(i64, String, bool, bool)> = {
         let mut guard = book::store().lock().unwrap();
         let s = guard.as_mut().ok_or("数据库未初始化")?;
-        s.chapters_needing_enrich(book_id)
+        s.chapters_needing_enrich(book_id, MOOD_LABELS)
             .map_err(|e| format!("{e}"))?
     };
     let total = missing.len() as u32;
@@ -1082,15 +1121,33 @@ pub fn enrich_book(
         if CANCEL.load(Ordering::SeqCst) {
             break;
         }
-        // One excerpt, up to two closed tasks over it. Each piece is written
-        // only when it was missing, so a re-run never re-pays finished work.
+        // One excerpt, a summary and (while [MOOD_LABELS] is on) a mood over
+        // it. Each piece is written only when it was missing, so a re-run never
+        // re-pays finished work.
         let result = book::chapter_excerpt(&path, idx as u32, 1400, 400).and_then(|ex| {
             let summary = if need_summary {
-                Some(summarize_excerpt(&ex)?)
+                match summarize_excerpt(&ex, context)? {
+                    Some(s) => Some(s),
+                    // An excerpt that tokenizes unusually long: widen the
+                    // window for the rest of the run and ask again.
+                    None if context < FULL_CONTEXT => {
+                        context = FULL_CONTEXT;
+                        inference_backend().prepare_chat(context)?;
+                        Some(
+                            summarize_excerpt(&ex, context)?
+                                .ok_or("章节摘录超出上下文")?,
+                        )
+                    }
+                    None => return Err("章节摘录超出上下文".into()),
+                }
             } else {
                 None
             };
-            let mood = if need_mood { classify_mood(&ex)? } else { None };
+            let mood = if MOOD_LABELS && need_mood {
+                classify_mood(&ex)?
+            } else {
+                None
+            };
             Ok((summary, mood))
         });
 
@@ -1284,6 +1341,8 @@ fn summarize_person(
          请通读全部片段、前后联系起来，用两三句话（不超过 80 字）介绍这个人物。要点：\
          优先说清楚 TA 的身份来历（出身、门派、职位、称号）、性情为人、以及经历过的重要转折；\
          只依据给出的片段，如实概括，片段里没提到的一律不写，不要编造、不要推测、不要联想到别的作品；\
+         片段彼此并不相连，不要把它们硬串成因果；同一句里别的人物的身份、外貌和举动不要安到 TA 身上；\
+         一时的衣着打扮和琐碎动作不用写；\
          不要评价 TA 是主角还是配角、是好人还是坏人，只说原文里看得到的；\
          若片段实在看不出这个人是谁，就如实说「原文片段里看不出 TA 的来历」。\
          先在心里分析，最后只输出那两三句介绍，不要复述原文、不要分点、不要加引号。"
@@ -1307,6 +1366,212 @@ fn summarize_person(
         }
     }
     Ok(format!("{name}多次出场，模型没能概括出 TA 的来历。"))
+}
+
+/// A background needs this many chapter summaries that name the person before
+/// they are worth more than the person's own sentences. Below it the person is
+/// a walk-on the summaries hardly mention, and the sentences say more.
+const MIN_DIGEST_LINES: usize = 8;
+/// Lines per model call: about 3k tokens of 「概括：……」, which leaves the 8k
+/// window room for thinking.
+const PHASE_LINES: usize = 80;
+/// Beyond this many stages a lead's lines are thinned evenly instead: eight
+/// stages are enough to say how a life went, and each one is another call.
+const MAX_PHASES: usize = 8;
+
+/// A background, and what it was written from (`summaries`, `mixed` or
+/// `sentences`, as stored). None when the run was cancelled part-way.
+///
+/// Uses what is there. With 章节分析 run, the person's story is read from the
+/// chapter summaries that name them — each written with the whole chapter in
+/// view, so they carry the plot the sampled sentences miss, and none of the
+/// one-scene clothes or bystander descriptions that sentences drag in. Chapters
+/// without a summary are filled with the person's own sentences from those
+/// chapters. Without 章节分析, the sentences alone, as before.
+///
+/// The two sources are good at different things, so each is asked for what it
+/// knows, and the answers are kept as two paragraphs: who the person is, from
+/// their own sentences, then what happened to them, from the summaries. The
+/// summaries rarely say where someone started, and a small model reading only
+/// them opens with whatever title the story ends on (陈平安 came back as 大骊国师
+/// who 守泥瓶巷老宅 — true only of the last hundred chapters). Asked to merge the
+/// two paragraphs into one, it copied the first and dropped the story, so they
+/// are not merged.
+///
+/// A long life is read in stages and then put together: a small model given
+/// 900 summaries at once could not hold them, and one given a thinned sample
+/// would be back to reading scattered moments.
+fn write_background(
+    name: &str,
+    aliases: &[String],
+    evidence: &[(usize, String)],
+    digest: &[(usize, String)],
+) -> Result<Option<(String, &'static str)>, String> {
+    let names: Vec<&str> = std::iter::once(name)
+        .chain(aliases.iter().map(String::as_str))
+        .collect();
+    let mut lines: Vec<(usize, String)> = digest
+        .iter()
+        .filter(|(_, t)| names.iter().any(|n| t.contains(n)))
+        .map(|(c, t)| (*c, format!("概括：{t}")))
+        .collect();
+    if lines.len() < MIN_DIGEST_LINES {
+        let text = summarize_person(name, aliases, evidence)?;
+        return Ok(Some((text, "sentences")));
+    }
+    let covered: std::collections::HashSet<usize> = digest.iter().map(|(c, _)| *c).collect();
+    let from_digest = lines.len();
+    lines.extend(
+        evidence
+            .iter()
+            .filter(|(c, _)| !covered.contains(c))
+            .map(|(c, t)| (*c, format!("原文：{t}"))),
+    );
+    let source = if lines.len() == from_digest {
+        "summaries"
+    } else {
+        "mixed"
+    };
+    lines.sort_by_key(|(c, _)| *c);
+
+    let cap = PHASE_LINES * MAX_PHASES;
+    if lines.len() > cap {
+        let n = lines.len();
+        lines = (0..cap).map(|i| lines[i * n / cap].clone()).collect();
+    }
+    let who = summarize_person(name, aliases, evidence)?;
+    if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let phases = lines.len().div_ceil(PHASE_LINES);
+    let story = if phases == 1 {
+        story_from_lines(name, aliases, &lines)?
+    } else {
+        let size = lines.len().div_ceil(phases);
+        let mut stages = Vec::new();
+        for chunk in lines.chunks(size) {
+            if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            let (from, to) = (chunk[0].0 + 1, chunk[chunk.len() - 1].0 + 1);
+            stages.push((from, to, stage_from_lines(name, aliases, from, to, chunk)?));
+        }
+        if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        story_from_stages(name, aliases, &stages)?
+    };
+    Ok(Some((format!("{who}\n{story}"), source)))
+}
+
+fn also_called(aliases: &[String]) -> String {
+    if aliases.is_empty() {
+        String::new()
+    } else {
+        format!("（书中也称作 {}）", aliases.join("、"))
+    }
+}
+
+/// The ground rules every digest prompt shares, worded for any genre. Two
+/// wordings were tried and dropped on real books: asking outright for the
+/// person's 身份 made the model invent one when the summaries never said it
+/// (宁姚 became a 武术家), and numbering each line made it list chapters back
+/// instead of summarizing them.
+const DIGEST_RULES: &str = "不要逐章罗列，也不要写出章节号，要概括成连贯的几句话；\
+不要用「探索未知」「展现智慧」「经历成长」这类空泛的说法；\
+只写这个人本人的事，同一句里别的人物的身份、外貌和举动不要安到 TA 身上；\
+只依据给出的内容，不要编造、不要推测、不要联想到别的作品；\
+一时的衣着打扮和琐碎动作不用写；不要评价 TA 是主角还是配角、是好人还是坏人。\
+先在心里分析，最后只输出那段文字，不要复述原文、不要分点、不要加引号。";
+
+/// One considered pass, retried once if it comes back empty (all thinking, no
+/// answer) — the same footing as [`summarize_person`].
+fn ask_for_text(system: &str, user: &str, max_chars: usize) -> Result<String, String> {
+    for _ in 0..2 {
+        let raw = chat_once(system, user, 1400, 0.4)?;
+        let text = after_think(&raw, max_chars);
+        if !text.is_empty() {
+            return Ok(text);
+        }
+    }
+    Err("模型没有给出可用的概括".into())
+}
+
+fn joined(lines: &[(usize, String)]) -> String {
+    lines
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One call: the whole of a short story, straight to what happened. Never who
+/// the person is — that paragraph comes from their own sentences — but a rise
+/// or fall in standing is part of the story (陈平安 becoming 大骊国师 at the end).
+fn story_from_lines(
+    name: &str,
+    aliases: &[String],
+    lines: &[(usize, String)],
+) -> Result<String, String> {
+    let also = also_called(aliases);
+    let system = format!(
+        "你是小说人物档案整理助手。下面按章节顺序给出小说里与【{name}】{also}有关的内容：\
+         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
+         请通读全部内容，用三四句话（不超过 120 字）按时间顺序写出 TA 一路上的经历：\
+         不用介绍 TA 是谁，从最早的事写起，一直写到最后，身份地位的变化也算经历。\
+         要点：{DIGEST_RULES}"
+    );
+    let user = format!(
+        "{}\n\n用三四句话写出【{name}】一路上的经历。",
+        joined(lines)
+    );
+    ask_for_text(&system, &user, 160)
+}
+
+/// One stage of a long story: what happened to the person in these chapters.
+fn stage_from_lines(
+    name: &str,
+    aliases: &[String],
+    from: usize,
+    to: usize,
+    lines: &[(usize, String)],
+) -> Result<String, String> {
+    let also = also_called(aliases);
+    let system = format!(
+        "你是小说人物档案整理助手。下面按章节顺序给出小说第 {from}–{to} 章里与【{name}】{also}有关的内容：\
+         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
+         请通读，用两三句话（不超过 80 字）写出【{name}】在这一段里的处境和经历，\
+         身份地位的变化也要写。要点：{DIGEST_RULES}"
+    );
+    let user = format!(
+        "{}\n\n用两三句话写出【{name}】在第 {from}–{to} 章的经历。",
+        joined(lines)
+    );
+    ask_for_text(&system, &user, 120)
+}
+
+/// The stages of a long story, joined into one account of what happened —
+/// the last stage as much as the first, which is where a background read from
+/// scattered moments used to stop.
+fn story_from_stages(
+    name: &str,
+    aliases: &[String],
+    stages: &[(usize, usize, String)],
+) -> Result<String, String> {
+    let also = also_called(aliases);
+    let system = format!(
+        "你是小说人物档案整理助手。下面按时间顺序给出【{name}】{also}在小说各个阶段的经历。\
+         请把它们按时间顺序连起来，用三四句话（不超过 120 字）写出 TA 一路上的经历：\
+         不用介绍 TA 是谁，从最早的阶段写起，一直写到最后一个阶段，后面的阶段同样重要，\
+         身份地位的变化也算经历。要点：{DIGEST_RULES}"
+    );
+    let body = stages
+        .iter()
+        .map(|(from, to, text)| format!("第 {from}–{to} 章：{text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let user = format!("{body}\n\n用三四句话写出【{name}】一路上的经历。");
+    ask_for_text(&system, &user, 160)
 }
 
 #[derive(Debug, Clone)]
@@ -1335,21 +1600,23 @@ pub fn describe_people(
     sink: StreamSink<DescribeProgress>,
 ) -> Result<(), String> {
     CANCEL_DESCRIBE.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat()?;
+    inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
     let residual = book::residual_people(&path, book_id, up_to_chapter)?;
     let total = residual.len() as u32;
+    let digest = book::chapter_digest(book_id)?;
 
     let mut consecutive_errors = 0;
     for (done, (name, aliases, evidence)) in residual.into_iter().enumerate() {
         if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
             break;
         }
-        let (background, error) = match summarize_person(&name, &aliases, &evidence) {
-            Ok(b) => {
+        let (background, error) = match write_background(&name, &aliases, &evidence, &digest) {
+            Ok(None) => break,
+            Ok(Some((b, source))) => {
                 consecutive_errors = 0;
-                let _ = book::remember_person(book_id, &name, &b);
+                let _ = book::remember_person(book_id, &name, &b, source, digest.len());
                 (b, None)
             }
             Err(e) => {
@@ -1411,7 +1678,7 @@ pub fn label_relations(
     sink: StreamSink<RelabelProgress>,
 ) -> Result<(), String> {
     CANCEL_RELABEL.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat()?;
+    inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
     let residual = book::residual_relations(&path, book_id, up_to_chapter)?;
@@ -1515,7 +1782,7 @@ pub fn vet_names(
     sink: StreamSink<VetProgress>,
 ) -> Result<(), String> {
     CANCEL_VET.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat()?;
+    inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
     let pending = book::unjudged_names(&path, book_id, up_to_chapter)?;
@@ -2070,6 +2337,8 @@ mod tests {
                 "-c",
                 "8192",
                 "--jinja",
+                "--cache-ram",
+                "0",
                 "--cache-type-k",
                 "q8_0",
                 "--cache-type-v",
@@ -2088,6 +2357,8 @@ mod tests {
                 "-c",
                 "8192",
                 "--jinja",
+                "--cache-ram",
+                "0",
                 "--cache-type-k",
                 "f16",
                 "--cache-type-v",
@@ -2142,7 +2413,12 @@ mod tests {
     #[test]
     #[ignore]
     fn live_engine_roundtrip() {
-        let s = summarize_excerpt("王小明在山下捡到一把剑，剑里住着一位老爷爷。老爷爷说要收他为徒，王小明拜师后连夜进山修炼。").unwrap();
+        let s = summarize_excerpt(
+            "王小明在山下捡到一把剑，剑里住着一位老爷爷。老爷爷说要收他为徒，王小明拜师后连夜进山修炼。",
+            FULL_CONTEXT,
+        )
+        .unwrap()
+        .unwrap();
         println!("summary: {s}");
         assert!(!s.is_empty() && s.chars().count() <= 60);
     }
@@ -2159,8 +2435,27 @@ mod spawn_tests {
     fn live_spawn() {
         init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
         assert!(!health(PORT), "kill the running server first");
-        inference_backend().prepare_chat().unwrap();
+        inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
         assert!(health(PORT));
+        stop_ai();
+    }
+
+    /// The chapter pass on its own window, and the signal that widens it.
+    /// Same requirements as [`live_spawn`].
+    #[test]
+    #[ignore]
+    fn live_summary_window() {
+        init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
+        assert!(!health(PORT), "kill the running server first");
+        inference_backend().prepare_chat(SUMMARY_CONTEXT).unwrap();
+        let short = "王小明在山下捡到一把剑，剑里住着一位老爷爷。老爷爷说要收他为徒，王小明拜师后连夜进山修炼。";
+        let s = summarize_excerpt(short, SUMMARY_CONTEXT).unwrap();
+        println!("summary: {s:?}");
+        assert!(s.is_some_and(|s| !s.is_empty()));
+        let long = "鬱鬯龘齉".repeat(700);
+        assert_eq!(summarize_excerpt(&long, SUMMARY_CONTEXT).unwrap(), None);
+        inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
+        assert!(summarize_excerpt(&long, FULL_CONTEXT).unwrap().is_some());
         stop_ai();
     }
 }
@@ -2504,7 +2799,7 @@ mod judge {
     #[ignore]
     fn probe_judge() {
         init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
-        inference_backend().prepare_chat().unwrap();
+        inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
 
         let strategies: [(&str, Strategy); 2] = [
             ("思考模式（基线）", judge_thinking),
@@ -2695,422 +2990,6 @@ mod probe {
         }
         stop_ai();
     }
-}
-
-// ── 读者画像 ─────────────────────────────────────────────────────────────────
-//
-// The facts are counted here from reading_events, the library and the mood tags
-// — never guessed. The prose is a pure template: every 唯美 sentence is written
-// below by hand, the numbers are slotted in from the rules, and a rotating seed
-// (from 换一篇) chooses among phrasings so the same data reads freshly each time.
-// No model is involved — a 0.6B can't hold a second-person 唯美 register steady,
-// and here the beauty has to be reliable, not occasionally lucky. Bonus: the
-// portrait is instant and works even when the model isn't installed.
-
-struct PortraitFacts {
-    total_secs: i64,
-    active_days: i64,
-    streak: i64,
-    longest_session_secs: i64,
-    night_share: f64,
-    dominant_bucket: &'static str,
-    finished: usize,
-    top_book: Option<(String, i64)>,
-    top_genres: Vec<String>,
-    top_authors: Vec<String>,
-    top_moods: Vec<String>,
-    /// Local month/day the reader's very first session began — the story's
-    /// opening line. 0 when there are no events.
-    first_month: i64,
-    first_day: i64,
-}
-
-/// Civil date from a Unix timestamp, no chrono dependency (Howard Hinnant's
-/// days→y/m/d). Only month and day are used, but the year keeps it correct.
-fn ymd_from_epoch(secs: i64) -> (i64, i64, i64) {
-    let z = secs.div_euclid(86400) + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-fn hour_bucket(h: i64) -> &'static str {
-    match h {
-        5..=7 => "清晨",
-        8..=11 => "上午",
-        12..=13 => "中午",
-        14..=17 => "下午",
-        18..=21 => "晚上",
-        _ => "深夜",
-    }
-}
-
-fn build_portrait_facts(
-    s: &novel_core::store::Store,
-    tz_secs: i64,
-) -> Result<PortraitFacts, String> {
-    use std::collections::{HashMap, HashSet};
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let events = s.events_since(0).map_err(|e| format!("{e}"))?;
-    let mut total_secs = 0i64;
-    let mut longest = 0i64;
-    let mut by_book: HashMap<i64, i64> = HashMap::new();
-    let mut by_bucket: HashMap<&'static str, i64> = HashMap::new();
-    let mut night = 0i64;
-    let mut days: HashSet<i64> = HashSet::new();
-    let mut first_ts = i64::MAX;
-    for (book_id, started, ended) in &events {
-        let dur = (ended - started).max(0);
-        total_secs += dur;
-        longest = longest.max(dur);
-        first_ts = first_ts.min(*started);
-        *by_book.entry(*book_id).or_default() += dur;
-        let local = started + tz_secs;
-        let hour = local.rem_euclid(86400) / 3600;
-        by_bucket
-            .entry(hour_bucket(hour))
-            .and_modify(|v| *v += dur)
-            .or_insert(dur);
-        if !(5..=21).contains(&hour) {
-            night += dur;
-        }
-        days.insert(local.div_euclid(86400));
-    }
-
-    // Current streak: consecutive local days ending today (or yesterday, so a
-    // quiet today doesn't wipe it) that have any reading.
-    let today = (now + tz_secs).div_euclid(86400);
-    let mut streak = 0i64;
-    let mut d = if days.contains(&today) {
-        today
-    } else {
-        today - 1
-    };
-    while days.contains(&d) {
-        streak += 1;
-        d -= 1;
-    }
-
-    let dominant_bucket = by_bucket
-        .iter()
-        .max_by_key(|(_, v)| **v)
-        .map(|(k, _)| *k)
-        .unwrap_or("深夜");
-    let night_share = if total_secs > 0 {
-        night as f64 / total_secs as f64
-    } else {
-        0.0
-    };
-
-    // Library-side facts, weighted by how long each book was actually read.
-    let books = s.library().map_err(|e| format!("{e}"))?;
-    let mut genre_secs: HashMap<String, i64> = HashMap::new();
-    let mut author_secs: HashMap<String, i64> = HashMap::new();
-    let mut mood_count: HashMap<String, i64> = HashMap::new();
-    let mut finished = 0usize;
-    let mut top_book: Option<(String, i64)> = None;
-    for b in &books {
-        let secs = by_book.get(&b.id).copied().unwrap_or(0);
-        if secs > 0 {
-            if top_book.as_ref().map(|(_, t)| secs > *t).unwrap_or(true) {
-                top_book = Some((b.title.clone(), secs));
-            }
-            if let Some(tags) = &b.genre_tags {
-                for g in tags
-                    .split(&[',', '，', '、', ' '][..])
-                    .filter(|x| !x.trim().is_empty())
-                {
-                    *genre_secs.entry(g.trim().to_string()).or_default() += secs;
-                }
-            }
-            if let Some(a) = &b.author {
-                let a = a.trim();
-                if !a.is_empty() && a != "佚名" && a != "未知" {
-                    *author_secs.entry(a.to_string()).or_default() += secs;
-                }
-            }
-        }
-        // Progress classification uses last_chapter regardless of logged time:
-        // a book read on another device still counts as read.
-        if b.chapter_count > 0 {
-            if b.last_chapter + 1 >= b.chapter_count {
-                finished += 1;
-            }
-        }
-        // Mood texture of what's been read: tags on chapters up to where the
-        // reader has reached.
-        if secs > 0 {
-            if let Ok(moods) = s.chapter_moods(b.id) {
-                for (idx, m) in moods {
-                    if idx > b.last_chapter {
-                        continue;
-                    }
-                    for tag in m
-                        .split(&[',', '，', '、', ' '][..])
-                        .filter(|x| !x.trim().is_empty())
-                    {
-                        *mood_count.entry(tag.trim().to_string()).or_default() += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    let top_n = |m: HashMap<String, i64>, n: usize| -> Vec<String> {
-        let mut v: Vec<(String, i64)> = m.into_iter().collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        v.into_iter().take(n).map(|(k, _)| k).collect()
-    };
-
-    Ok(PortraitFacts {
-        total_secs,
-        active_days: days.len() as i64,
-        streak,
-        longest_session_secs: longest,
-        night_share,
-        dominant_bucket,
-        finished,
-        top_book,
-        top_genres: top_n(genre_secs, 3),
-        top_authors: top_n(author_secs, 2),
-        top_moods: top_n(mood_count, 3),
-        first_month: if first_ts == i64::MAX {
-            0
-        } else {
-            ymd_from_epoch(first_ts + tz_secs).1
-        },
-        first_day: if first_ts == i64::MAX {
-            0
-        } else {
-            ymd_from_epoch(first_ts + tz_secs).2
-        },
-    })
-}
-
-fn fmt_dur(secs: i64) -> String {
-    if secs < 3600 {
-        format!("{} 分钟", (secs / 60).max(1))
-    } else {
-        let h = secs as f64 / 3600.0;
-        if h >= 10.0 {
-            format!("{} 小时", h.round() as i64)
-        } else {
-            format!("{h:.1} 小时")
-        }
-    }
-}
-
-impl PortraitFacts {
-    /// Weave the counted facts into a short second-person 阅读小传. Pure template:
-    /// every sentence is written here, the numbers are slotted in from the rules,
-    /// and `seed` (rotated by 换一篇) picks among phrasings so the same data reads
-    /// freshly each time — no model to wobble the register. Each sentence is
-    /// self-contained (ends in 。), so a slot with no data is simply skipped
-    /// without leaving a dangling clause.
-    fn compose(&self, seed: u64) -> String {
-        fn pick<'a>(pool: &[&'a str], seed: u64, salt: u64) -> &'a str {
-            pool[(seed.wrapping_add(salt) % pool.len() as u64) as usize]
-        }
-        let mut s = String::new();
-
-        // 1. 开篇：故事开始的那天。
-        if self.first_month > 0 {
-            s.push_str(
-                &pick(
-                    &[
-                        "从 {M} 月 {D} 日翻开第一页起，你便与这里的故事有了牵绊。",
-                        "故事要从 {M} 月 {D} 日说起——那天，你在这里读下了第一行字。",
-                        "{M} 月 {D} 日，你合上现实，翻开了这里的第一个故事。",
-                    ],
-                    seed,
-                    1,
-                )
-                .replace("{M}", &self.first_month.to_string())
-                .replace("{D}", &self.first_day.to_string()),
-            );
-        } else {
-            s.push_str(pick(
-                &[
-                    "你与这里的故事，早已相识。",
-                    "不知从哪一天起，你就爱上了在这里读书。",
-                ],
-                seed,
-                1,
-            ));
-        }
-
-        // 2. 总时长 + 有书相伴的天数。
-        s.push_str(
-            &pick(
-                &[
-                    "至今，你已在字里行间停留了 {T}，散落在 {N} 个有书相伴的日子里。",
-                    "到今天，你交给阅读的光阴累计有 {T}，落在 {N} 个日子之中。",
-                    "算下来，你已读了 {T}，这些时光分布在 {N} 个日子里。",
-                ],
-                seed,
-                2,
-            )
-            .replace("{T}", &fmt_dur(self.total_secs))
-            .replace("{N}", &self.active_days.to_string()),
-        );
-
-        // 3. 节奏：偏爱的时段。
-        if self.dominant_bucket == "深夜" || self.night_share >= 0.4 {
-            s.push_str(pick(
-                &[
-                    "你偏爱在夜深时读书，万籁俱寂，故事才刚刚醒来。",
-                    "夜色是你读书的底色——旁人入睡时，你正翻到最要紧的那一页。",
-                ],
-                seed,
-                3,
-            ));
-        } else {
-            s.push_str(
-                &pick(
-                    &[
-                        "你习惯在{B}翻开书页，让文字陪你度过那段时光。",
-                        "{B}是你与书相处最多的时候，安安静静，刚刚好。",
-                    ],
-                    seed,
-                    3,
-                )
-                .replace("{B}", self.dominant_bucket),
-            );
-        }
-        if self.streak >= 3 {
-            s.push_str(
-                &pick(
-                    &[
-                        "最近这 {S} 天，你一天也不曾落下。",
-                        "连着 {S} 天，你都没有错过与书的约定。",
-                    ],
-                    seed,
-                    4,
-                )
-                .replace("{S}", &self.streak.to_string()),
-            );
-        } else if self.longest_session_secs >= 1800 {
-            s.push_str(
-                &pick(
-                    &[
-                        "有一回，你一口气读了 {L}，舍不得停下。",
-                        "你曾一头扎进故事里 {L}，浑然忘了时间。",
-                    ],
-                    seed,
-                    4,
-                )
-                .replace("{L}", &fmt_dur(self.longest_session_secs)),
-            );
-        }
-
-        // 4. 读的是什么：类型 / 情绪 / 作者。
-        if !self.top_genres.is_empty() {
-            s.push_str(
-                &pick(
-                    &[
-                        "你的偏爱写在书目里——{G}，是你一次次回去的地方。",
-                        "翻得最多的，是{G}这样的故事。",
-                    ],
-                    seed,
-                    5,
-                )
-                .replace("{G}", &self.top_genres.join("、")),
-            );
-        }
-        if !self.top_moods.is_empty() {
-            s.push_str(
-                &pick(
-                    &["那些{Md}的段落，最能把你留住。", "你格外偏爱{Md}的滋味。"],
-                    seed,
-                    6,
-                )
-                .replace("{Md}", &self.top_moods.join("、")),
-            );
-        }
-        if !self.top_authors.is_empty() {
-            s.push_str(
-                &pick(
-                    &[
-                        "{A} 的字，你读得格外投入。",
-                        "遇上 {A}，你总愿意多留一会儿。",
-                    ],
-                    seed,
-                    7,
-                )
-                .replace("{A}", &self.top_authors.join("、")),
-            );
-        }
-
-        // 5. 宝藏之书。
-        if let Some((title, secs)) = &self.top_book {
-            s.push_str(
-                &pick(
-                    &[
-                        "而在所有故事里，《{Bk}》是你的心头好，你为它停留了 {Bt}。",
-                        "《{Bk}》大概是你的宝藏——{Bt} 的陪伴，别的书都比不上。",
-                        "若要挑一本珍藏，那一定是《{Bk}》，你在它身上花了 {Bt}。",
-                    ],
-                    seed,
-                    8,
-                )
-                .replace("{Bk}", title)
-                .replace("{Bt}", &fmt_dur(*secs)),
-            );
-        }
-
-        // 6. 结语。
-        if self.finished > 0 {
-            s.push_str(
-                &pick(
-                    &[
-                        "你已读完 {F} 本，也曾在一些书前浅尝辄止——每一次翻开，都是一次出发。",
-                        "这一路，你读完了 {F} 本书，剩下的故事，还在等你。",
-                    ],
-                    seed,
-                    9,
-                )
-                .replace("{F}", &self.finished.to_string()),
-            );
-        } else {
-            s.push_str(pick(
-                &[
-                    "还有很多故事在等你翻开，慢慢来，不必着急。",
-                    "长夜与好书都还很长，愿你读得尽兴。",
-                ],
-                seed,
-                9,
-            ));
-        }
-
-        s
-    }
-}
-
-/// A 阅读画像 paragraph, grounded entirely in counted facts. `angle` is a rotating
-/// seed (advanced by 换一篇) that varies the phrasing; `tz_secs` is the reader's
-/// UTC offset so session times and the opening date land on their local clock.
-/// Pure template — no engine needed. Empty string when nothing has been read yet.
-pub fn reader_portrait(angle: i32, tz_secs: i64) -> Result<String, String> {
-    let facts = {
-        let mut guard = book::store().lock().unwrap();
-        let s = guard.as_mut().ok_or("数据库未初始化")?;
-        build_portrait_facts(s, tz_secs)?
-    };
-    if facts.total_secs == 0 {
-        return Ok(String::new());
-    }
-    let seed = (angle as i64).rem_euclid(9973) as u64;
-    Ok(facts.compose(seed))
 }
 
 /// Can a 0.6B put a web novel in one of the thirteen boxes the Chinese web-novel
@@ -3326,7 +3205,7 @@ mod genre {
     fn probe_genre() {
         init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
         let dir = std::env::var("NOVEL_BOOKS").expect("set NOVEL_BOOKS");
-        inference_backend().prepare_chat().unwrap();
+        inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
 
         let mut files: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -3437,7 +3316,7 @@ mod relprobe {
             cast.edges.len(),
         );
 
-        inference_backend().prepare_chat().unwrap();
+        inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
         let t0 = std::time::Instant::now();
         for e in &cast.edges {
             let (a, bn) = (&cast.people[e.a].name, &cast.people[e.b].name);
