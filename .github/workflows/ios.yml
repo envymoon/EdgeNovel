@@ -121,9 +121,15 @@ jobs:
       - name: Engine test
         env:
           TEST_TEXT: ${{ secrets.ENGINE_TEST_TEXT }}
+        # Under the debugger: the engine shares the test's process, so a crash
+        # in it ends the test, and the backtrace says where.
         run: |
           printf '%s' "$TEST_TEXT" > "$RUNNER_TEMP/chapters.txt"
-          NOVEL_AI_DIR=~/models NOVEL_TEST_TEXT="$RUNNER_TEMP/chapters.txt"             cargo test --locked --lib engine_bench -- --ignored --nocapture
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          sudo DevToolsSecurity -enable || true
+          NOVEL_AI_DIR=~/models NOVEL_TEST_TEXT="$RUNNER_TEMP/chapters.txt"             lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" engine_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/bench.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/bench.log"
 
   # The Rust shared with the Windows app must still compile for Windows.
   rust-windows:
