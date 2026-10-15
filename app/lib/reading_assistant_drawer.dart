@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'theme.dart';
 
@@ -86,21 +87,23 @@ class ReadingAssistantDrawer extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              _section(t, '准备阅读助手'),
-              _group(
-                t,
-                children: [
-                  _entry(
-                    t,
-                    icon: Icons.tune,
-                    title: '后台处理',
-                    subtitle:
-                        '${reader.aiQueueState} · ${reader.aiRuntime.modeName}',
-                    onTap: () => _run(context, onAiRuntime),
-                  ),
-                ],
-              ),
+              if (AppPlatformSupport.hasAiEngine) ...[
+                const SizedBox(height: 18),
+                _section(t, '准备阅读助手'),
+                _group(
+                  t,
+                  children: [
+                    _entry(
+                      t,
+                      icon: Icons.tune,
+                      title: '后台处理',
+                      subtitle:
+                          '${reader.aiQueueState} · ${reader.aiRuntime.modeName}',
+                      onTap: () => _run(context, onAiRuntime),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 18),
               _section(t, '阅读设置'),
               _group(

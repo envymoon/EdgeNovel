@@ -162,14 +162,15 @@ class _ShelfPageState extends State<ShelfPage> {
                         contentPadding: EdgeInsets.zero,
                       ),
                     ),
-                  PopupMenuItem(
-                    value: 'ai',
-                    child: ListTile(
-                      leading: Icon(Icons.auto_awesome_outlined),
-                      title: Text('AI 管理'),
-                      contentPadding: EdgeInsets.zero,
+                  if (AppPlatformSupport.hasAiEngine)
+                    PopupMenuItem(
+                      value: 'ai',
+                      child: ListTile(
+                        leading: Icon(Icons.auto_awesome_outlined),
+                        title: Text('AI 管理'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     ),
-                  ),
                   PopupMenuItem(
                     value: 'stats',
                     child: ListTile(

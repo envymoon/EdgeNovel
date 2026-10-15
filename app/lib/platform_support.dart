@@ -12,7 +12,10 @@ abstract final class AppPlatformSupport {
 
   static bool get supportsBookDrop => isDesktop;
 
-  static bool get usesExternalAiProcess => isDesktop || hasBundledAiEngine;
+  /// Whether the local model can run here at all. iOS may not start the
+  /// engine as a process of its own and has no in-app engine yet, so every
+  /// way into the model passes stays hidden there.
+  static bool get hasAiEngine => isDesktop || hasBundledAiEngine;
 
   static bool get canDownloadAiEngine => isDesktop;
 

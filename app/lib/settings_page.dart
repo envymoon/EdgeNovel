@@ -131,17 +131,18 @@ class SettingsPage extends StatelessWidget {
                           : '简体中文',
                       onTap: () => _chooseLanguage(context, t),
                     ),
-                    _entry(
-                      t,
-                      icon: Icons.tune,
-                      title: 'AI 运行与设备',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AiRuntimePage(settings: settings),
+                    if (AppPlatformSupport.hasAiEngine)
+                      _entry(
+                        t,
+                        icon: Icons.tune,
+                        title: 'AI 运行与设备',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AiRuntimePage(settings: settings),
+                          ),
                         ),
                       ),
-                    ),
                     _entry(
                       t,
                       icon: Icons.font_download_outlined,
@@ -166,24 +167,26 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                _sectionLabel(t, 'AI 管理'),
-                _group(
-                  t,
-                  children: [
-                    _entry(
-                      t,
-                      icon: Icons.auto_awesome_outlined,
-                      title: '模型、引擎与生成数据',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AiPage(settings: settings),
+                if (AppPlatformSupport.hasAiEngine) ...[
+                  const SizedBox(height: 24),
+                  _sectionLabel(t, 'AI 管理'),
+                  _group(
+                    t,
+                    children: [
+                      _entry(
+                        t,
+                        icon: Icons.auto_awesome_outlined,
+                        title: '模型、引擎与生成数据',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AiPage(settings: settings),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 24),
                 _sectionLabel(t, '数据与隐私'),
                 _group(

@@ -61,8 +61,17 @@ const interfaceAccents = <Color>[
   Color(0xFF996154),
 ];
 
-/// Only Windows opts into the new appearance until mobile validation.
-bool get windowsAppearance => defaultTargetPlatform == TargetPlatform.windows;
+/// Windows and iOS use the new appearance; Android keeps the old one until it
+/// has been checked on a phone.
+bool get windowsAppearance =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.iOS;
+
+/// The face interface and body text fall back to: 微软雅黑 on Windows, the
+/// system's own 苹方 on iOS.
+String get defaultFontFamily => defaultTargetPlatform == TargetPlatform.iOS
+    ? 'PingFang SC'
+    : 'Microsoft YaHei';
 
 /// The shared, deliberately static visual system. It gives backgrounds, bars,
 /// cards, controls and icons one rhythm while remaining as cheap to render as
@@ -90,7 +99,7 @@ ThemeData buildAppTheme(ReadingSettings settings) {
   return ThemeData(
     useMaterial3: true,
     fontFamily: windowsAppearance ? settings.resolvedInterfaceFont : null,
-    fontFamilyFallback: windowsAppearance
+    fontFamilyFallback: defaultTargetPlatform == TargetPlatform.windows
         ? const ['Microsoft YaHei', 'Segoe UI', 'Segoe UI Emoji']
         : null,
     extensions: [
@@ -209,14 +218,14 @@ class ReadingSettings extends ChangeNotifier {
   int accentIndex = 0;
 
   String get resolvedInterfaceFont => interfaceFontFamily.isEmpty
-      ? 'Microsoft YaHei'
+      ? defaultFontFamily
       : interfaceFontFamily.replaceFirst('system:', '');
 
   // Explicit body family prevents interface font inheritance and keeps page
   // measurement identical to rendering when the interface font changes.
   String? get resolvedReadingFont => fontFamily.isNotEmpty
       ? fontFamily
-      : (windowsAppearance ? 'Microsoft YaHei' : null);
+      : (windowsAppearance ? defaultFontFamily : null);
   double fontSize = 19;
   double lineHeight = 1.9;
   double paragraphSpacing = 14;

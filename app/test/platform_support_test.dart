@@ -9,15 +9,15 @@ void main() {
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
-    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
-    expect(AppPlatformSupport.usesExternalAiProcess, isFalse);
+    expect(AppPlatformSupport.hasAiEngine, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
-    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
   });
   test('mobile and desktop capabilities stay separate', () {
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.iOS), isTrue);

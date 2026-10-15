@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'ai_page.dart';
 import 'bloom.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -375,6 +376,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
     int unwritten,
     int outdated,
   ) {
+    if (!AppPlatformSupport.hasAiEngine) return const [];
     final r = widget.reader;
     final state = _castState;
     final small = TextStyle(color: t.muted, fontSize: 11, height: 1.5);

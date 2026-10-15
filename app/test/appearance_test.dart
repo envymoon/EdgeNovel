@@ -26,6 +26,8 @@ void main() {
       expect(restored.uniformInterfaceWeight, false);
       restored.setFontFamily('');
       expect(restored.resolvedReadingFont, 'Microsoft YaHei');
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(restored.resolvedReadingFont, 'PingFang SC');
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       expect(restored.resolvedReadingFont, isNull);
     },

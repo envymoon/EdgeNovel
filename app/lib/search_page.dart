@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'ai_page.dart';
 import 'app_localizations.dart';
 import 'bloom.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -147,30 +148,32 @@ class _SearchPageState extends State<SearchPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SegmentedButton<_Mode>(
-                    showSelectedIcon: false,
-                    style: ButtonStyle(
-                      textStyle: WidgetStateProperty.all(
-                        const TextStyle(fontSize: 12),
+                  if (AppPlatformSupport.hasAiEngine) ...[
+                    SegmentedButton<_Mode>(
+                      showSelectedIcon: false,
+                      style: ButtonStyle(
+                        textStyle: WidgetStateProperty.all(
+                          const TextStyle(fontSize: 12),
+                        ),
+                        visualDensity: VisualDensity.compact,
                       ),
-                      visualDensity: VisualDensity.compact,
+                      segments: const [
+                        ButtonSegment(
+                          value: _Mode.literal,
+                          label: Text('原文'),
+                          icon: Icon(Icons.search, size: 16),
+                        ),
+                        ButtonSegment(
+                          value: _Mode.semantic,
+                          label: Text('语义'),
+                          icon: Icon(Icons.auto_awesome, size: 16),
+                        ),
+                      ],
+                      selected: {_mode},
+                      onSelectionChanged: (v) => _setMode(v.first),
                     ),
-                    segments: const [
-                      ButtonSegment(
-                        value: _Mode.literal,
-                        label: Text('原文'),
-                        icon: Icon(Icons.search, size: 16),
-                      ),
-                      ButtonSegment(
-                        value: _Mode.semantic,
-                        label: Text('语义'),
-                        icon: Icon(Icons.auto_awesome, size: 16),
-                      ),
-                    ],
-                    selected: {_mode},
-                    onSelectionChanged: (v) => _setMode(v.first),
-                  ),
-                  const SizedBox(height: 14),
+                    const SizedBox(height: 14),
+                  ],
                   _field(t),
                   const SizedBox(height: 10),
                   _hint(t, s),

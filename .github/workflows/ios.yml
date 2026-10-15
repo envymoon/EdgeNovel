@@ -32,6 +32,16 @@ jobs:
 
       - run: flutter pub get
 
+      # The tests that pin down what each platform shows.
+      - name: Platform tests
+        run: >-
+          flutter test
+          test/platform_support_test.dart
+          test/appearance_test.dart
+          test/app_language_test.dart
+          test/mobile_compact_flow_test.dart
+          test/shelf_summary_test.dart
+
       - name: Build for the simulator
         run: flutter build ios --simulator --debug
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
 import 'app_localizations.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -185,6 +186,7 @@ class AnalysisRunCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!AppPlatformSupport.hasAiEngine) return const SizedBox.shrink();
     final t = settings.theme;
     final activity = state == AiTaskState.running ? reader.aiActivity : null;
     return Container(
