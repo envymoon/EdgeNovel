@@ -1659,6 +1659,13 @@ pub fn describe_people(
         if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
             break;
         }
+        let _ = sink.add(DescribeProgress {
+            name: name.clone(),
+            background: String::new(),
+            done: done as u32,
+            total,
+            error: None,
+        });
         let (background, error) = match write_background(&name, &aliases, &evidence, &digest) {
             Ok(None) => break,
             Ok(Some((b, source))) => {
@@ -1736,6 +1743,16 @@ pub fn label_relations(
         if CANCEL_RELABEL.load(Ordering::SeqCst) {
             break;
         }
+        // A pair takes the better part of a minute on a phone: say which one
+        // is under way, or the screen sits on 0 / 0 as if nothing started.
+        let _ = sink.add(RelabelProgress {
+            a: a.clone(),
+            b: b.clone(),
+            label: String::new(),
+            done: done as u32,
+            total,
+            error: None,
+        });
         let (label, error) = match summarize_relation(&a, &b, &evidence) {
             Ok(l) => {
                 consecutive_errors = 0;

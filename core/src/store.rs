@@ -881,6 +881,16 @@ impl Store {
         Ok(())
     }
 
+    /// The same book, now read from another file: everything hangs off the id,
+    /// so only the path changes.
+    pub fn move_book(&self, book_id: i64, path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE books SET path = ?2 WHERE id = ?1",
+            params![book_id, path],
+        )?;
+        Ok(())
+    }
+
     /// The TXT this book was read from. Needed to delete a book properly: the
     /// row goes with a cascade, the file has to be gone after by hand.
     pub fn book_path(&self, book_id: i64) -> Result<Option<String>> {

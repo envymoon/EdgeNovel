@@ -37,12 +37,38 @@ class AppStoragePaths {
 class AppFileAccess {
   const AppFileAccess();
 
-  Future<List<String>> pickBooks() => _pick(
-    title: '导入 TXT 小说',
-    type: FileType.custom,
-    extensions: const ['txt'],
-    multiple: true,
-  );
+  Future<List<String>> pickBooks() async {
+    final picked = await _pick(
+      title: '导入 TXT 小说',
+      type: FileType.custom,
+      extensions: const ['txt'],
+      multiple: true,
+    );
+    if (!AppPlatformSupport.isMobile) return picked;
+    // A phone hands over a copy in the temporary folder, which the system may
+    // empty at any time: the shelf keeps its own.
+    final books = (await AppStoragePaths.discover()).supportChild('books');
+    await books.create(recursive: true);
+    final kept = <String>[];
+    for (final p in picked) {
+      final source = File(p);
+      final name = p.split(Platform.pathSeparator).last;
+      final dot = name.lastIndexOf('.');
+      final stem = dot > 0 ? name.substring(0, dot) : name;
+      final ext = dot > 0 ? name.substring(dot) : '';
+      final length = await source.length();
+      var target = File('${books.path}${Platform.pathSeparator}$name');
+      // The same file picked again is the same book; another file by the same
+      // name gets a name of its own.
+      for (var n = 2; await target.exists(); n++) {
+        if (await target.length() == length) break;
+        target = File('${books.path}${Platform.pathSeparator}$stem ($n)$ext');
+      }
+      await source.copy(target.path);
+      kept.add(target.path);
+    }
+    return kept;
+  }
 
   Future<String?> pickCoverImage() async {
     final paths = await _pick(title: '选择封面图片', type: FileType.image);

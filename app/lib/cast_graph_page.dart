@@ -31,11 +31,16 @@ class CastGraphPage extends StatefulWidget {
   final ReaderState reader;
   final ReadingSettings settings;
 
+  /// Every chapter has its overview: the people's backgrounds are read from
+  /// them, so without it the graph is thinner than it could be.
+  final bool overviewDone;
+
   const CastGraphPage({
     super.key,
     required this.book,
     required this.reader,
     required this.settings,
+    this.overviewDone = true,
   });
 
   @override
@@ -356,6 +361,13 @@ class _CastGraphPageState extends State<CastGraphPage> {
             '全书 ${g.upto} 章 · ${g.people.length} 人 · ${g.edges.length} 段关系',
             style: TextStyle(color: t.muted, fontSize: 12),
           ),
+          if (!widget.overviewDone && AppPlatformSupport.hasAiEngine) ...[
+            const SizedBox(height: 4),
+            Text(
+              '跑完章节概览，人物关系更完整',
+              style: TextStyle(color: t.muted, fontSize: 11),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 8),
             Text(

@@ -513,7 +513,11 @@ class ReaderState extends ChangeNotifier {
           CastStep.label,
           p.done,
           p.total,
-          p.a.isEmpty ? '' : '${p.a} ↔ ${p.b} → ${p.label}',
+          p.a.isEmpty
+              ? ''
+              : p.label.isEmpty
+              ? '${p.a} ↔ ${p.b}…'
+              : '${p.a} ↔ ${p.b} → ${p.label}',
         );
         _pace('cast-label', p.done, p.total);
         notifyListeners();
@@ -538,7 +542,11 @@ class ReaderState extends ChangeNotifier {
           p.total,
           // A background read from chapter summaries is two paragraphs (who,
           // then what happened); the progress line has room for the first.
-          p.name.isEmpty ? '' : '${p.name} → ${p.background.split('\n').first}',
+          p.name.isEmpty
+              ? ''
+              : p.background.isEmpty
+              ? '${p.name}…'
+              : '${p.name} → ${p.background.split('\n').first}',
         );
         _pace('cast-describe', p.done, p.total);
         notifyListeners();

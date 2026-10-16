@@ -304,6 +304,7 @@ const _english = <String, String>{
   '建立索引': 'Build index',
   '正在打开书籍…': 'Opening book…',
   '正在启动本机引擎…': 'Starting local engine…',
+  '跑完章节概览，人物关系更完整': 'Finish the chapter overview for fuller relationships',
   '中断': 'Interrupt',
   '排雷需要嵌入模型': 'Content-warning search requires an embedding model',
   '纯粹相关嫌疑片段，仅作参考': 'Potentially relevant passages for reference only',

@@ -58,7 +58,95 @@ pub fn init_store(dir: String) -> Result<(), String> {
     let s = Store::open(&p).map_err(|e| format!("打开数据库失败: {e}"))?;
     *store().lock().unwrap() = Some(s);
     let _ = db_path().set(p);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    adopt_books();
     Ok(())
+}
+
+/// On a phone the picker hands over a copy in the app's temporary folder,
+/// which the system empties when it likes, and iOS moves the whole container
+/// to a new path when the app is reinstalled. Either way the shelf would point
+/// at nothing. Bring every such book into our own `books/` and repoint its row;
+/// a book the user keeps anywhere else is left where it is.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn adopt_books() {
+    let Ok(dir) = data_dir() else { return };
+    let ours = dir.join("books");
+    // iOS: <container>/Library/Application Support; Android: <package>/files.
+    let container = if cfg!(target_os = "ios") {
+        dir.parent().and_then(|p| p.parent())
+    } else {
+        dir.parent()
+    };
+    let Some(container) = container.map(PathBuf::from) else { return };
+    let temp = [container.join("tmp"), container.join("cache")];
+    let plain = |p: &std::path::Path| {
+        PathBuf::from(p.to_string_lossy().trim_start_matches("/private").to_string())
+    };
+    let temp: Vec<PathBuf> = temp.iter().map(|p| plain(p)).collect();
+
+    let books = {
+        let guard = store().lock().unwrap();
+        let Some(s) = guard.as_ref() else { return };
+        s.library().unwrap_or_default()
+    };
+    for b in books {
+        let path = plain(std::path::Path::new(&b.path));
+        // An earlier install's container: the same file under this one.
+        let path = if path.exists() {
+            path
+        } else {
+            let s = path.to_string_lossy();
+            match s.find("/Containers/Data/Application/").and_then(|i| {
+                let rest = &s[i + "/Containers/Data/Application/".len()..];
+                rest.find('/').map(|j| rest[j..].to_string())
+            }) {
+                Some(inside) => {
+                    let moved = PathBuf::from(format!(
+                        "{}{}",
+                        plain(&container).to_string_lossy(),
+                        inside
+                    ));
+                    if !moved.exists() {
+                        continue;
+                    }
+                    moved
+                }
+                None => continue,
+            }
+        };
+        let target = if temp.iter().any(|t| path.starts_with(t)) {
+            let Some(name) = path.file_name() else { continue };
+            if std::fs::create_dir_all(&ours).is_err() {
+                return;
+            }
+            let mut target = ours.join(name);
+            let mut n = 2;
+            while target.exists() {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                target = ours.join(format!("{stem} ({n}).txt"));
+                n += 1;
+            }
+            if std::fs::copy(&path, &target).is_err() {
+                continue;
+            }
+            target
+        } else {
+            path.clone()
+        };
+        let target = target.to_string_lossy().to_string();
+        if target != b.path {
+            let moved = {
+                let guard = store().lock().unwrap();
+                guard.as_ref().is_some_and(|s| s.move_book(b.id, &target).is_ok())
+            };
+            // The picker's own copy, not the user's file. Left behind it would
+            // be imported a second time the next time something opens it.
+            if moved && temp.iter().any(|t| path.starts_with(t)) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 /// Where the library lives, so the settings page can weigh it.

@@ -632,6 +632,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 book: widget.book,
                 reader: widget.reader,
                 settings: widget.settings,
+                overviewDone: summaryCount >= total,
               ),
             ),
           ),
