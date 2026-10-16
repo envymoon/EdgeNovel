@@ -39,9 +39,16 @@ abstract final class AppPlatformSupport {
   /// then mobile AI is intentionally foreground-only.
   static bool get supportsBackgroundAi => isDesktop;
 
-  /// 听书 runs Qwen3-TTS locally, and its engine is built for Windows only so
-  /// far. Elsewhere every entry stays hidden.
-  static bool get hasReadAloud => defaultTargetPlatform == TargetPlatform.windows;
+  /// 听书 runs Qwen3-TTS locally: a downloaded engine on Windows, one compiled
+  /// into the app on iOS, from the same 16.4 the AI engine needs. Elsewhere
+  /// every entry stays hidden.
+  static bool get hasReadAloud =>
+      defaultTargetPlatform == TargetPlatform.windows ||
+      (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
+
+  /// The 听书 engine ships inside the app, so only the voice is a download.
+  static bool get hasBundledTtsEngine =>
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   static bool isMobilePlatform(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.iOS;

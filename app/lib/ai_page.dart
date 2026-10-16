@@ -744,8 +744,7 @@ class _AiPageState extends State<AiPage> {
                           ),
                         ),
                       ),
-                      if (AppPlatformSupport.isDesktop &&
-                          AppPlatformSupport.hasReadAloud) ...[
+                      if (AppPlatformSupport.hasReadAloud) ...[
                         const Divider(height: 32),
                         // Voice, pace and a server elsewhere are one page away; the
                         // engine and the voice it runs are the two rows below.
@@ -770,20 +769,21 @@ class _AiPageState extends State<AiPage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        _item(
-                          t,
-                          ok: _ts?.engine ?? false,
-                          title: '朗读引擎 · qwentts.cpp',
-                          subtitle: (_ts?.engine ?? false)
-                              ? '已安装 · ${_size(_ts!.engineBytes)}'
-                              : '约 15 MB',
-                          progress: _ttsEngineProgress,
-                          error: _ttsEngineError,
-                          onDownload: _downloadTtsEngine,
-                          onDelete: (_ts?.engine ?? false)
-                              ? () => _delete('朗读引擎', deleteTtsEngine)
-                              : null,
-                        ),
+                        if (!AppPlatformSupport.hasBundledTtsEngine)
+                          _item(
+                            t,
+                            ok: _ts?.engine ?? false,
+                            title: '朗读引擎 · qwentts.cpp',
+                            subtitle: (_ts?.engine ?? false)
+                                ? '已安装 · ${_size(_ts!.engineBytes)}'
+                                : '约 15 MB',
+                            progress: _ttsEngineProgress,
+                            error: _ttsEngineError,
+                            onDownload: _downloadTtsEngine,
+                            onDelete: (_ts?.engine ?? false)
+                                ? () => _delete('朗读引擎', deleteTtsEngine)
+                                : null,
+                          ),
                         _item(
                           t,
                           ok: _ts?.voice != null,

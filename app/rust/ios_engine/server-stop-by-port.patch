@@ -1,3 +1,162 @@
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1269,6 +1269,13 @@
+ }
+ 
+ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
++    // Asked to stop: before each ubatch, not only inside a graph, which the
++    // Metal backend never checks.
++    if (abort_callback && abort_callback(abort_callback_data)) {
++        ret = GGML_STATUS_ABORTED;
++        return nullptr;
++    }
++
+     if (mctx && !mctx->apply()) {
+         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
+         ret = GGML_STATUS_FAILED;
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -18,6 +18,7 @@
+ #include "mtmd-helper.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cstddef>
+ #include <cinttypes>
+ #include <exception>
+@@ -895,6 +896,9 @@
+ 
+     llama_context * ctx_tgt = nullptr;
+ 
++    // set by terminate(): the batch being computed ends at its next ubatch
++    std::atomic<bool> stopping{false};
++
+     server_batch batch;
+ 
+     llama_model   * model_dft = nullptr;
+@@ -1153,11 +1157,17 @@
+         model_tgt = llama_init->model();
+         ctx_tgt   = llama_init->context();
+ 
+-        if (model_tgt == nullptr) {
++        // A model that loads but gets no context (a KV type this GPU cannot
++        // run) must fail here too: it crashed below, and in an app that is the app.
++        if (model_tgt == nullptr || ctx_tgt == nullptr) {
+             SRV_ERR("failed to load model, '%s'\n", params_base.model.path.c_str());
+             return false;
+         }
+ 
++        llama_set_abort_callback(ctx_tgt, [](void * stopping) {
++            return static_cast<std::atomic<bool> *>(stopping)->load();
++        }, &stopping);
++
+         vocab = llama_model_get_vocab(model_tgt);
+ 
+         n_ctx = llama_n_ctx(ctx_tgt);
+@@ -3587,7 +3597,9 @@
+                     err = "Compute error.";
+                 }
+ 
+-                // TODO: handle ret == 2 (abort) when we start aborting
++                if (ret == 2) {
++                    err = "Server is stopping.";
++                }
+ 
+                 if (!err.empty()) {
+                     SRV_ERR("%s off = %d, n_batch = %d, ret = %d\n", err.c_str(), off, n_batch, ret);
+@@ -3922,7 +3934,12 @@
+ }
+ 
+ void server_context::terminate() {
++    impl->stopping = true;
+     impl->queue_tasks.terminate();
++    // A request still waiting would wait for good, and the HTTP server waits
++    // for it before it stops: in an app the engine never ends, and nothing
++    // after it starts.
++    impl->queue_results.fail_waiting();
+ }
+ 
+ llama_context * server_context::get_llama_context() const {
+--- a/tools/server/server-queue.cpp
++++ b/tools/server/server-queue.cpp
+@@ -225,11 +225,24 @@
+ // server_response
+ //
+ 
++// the answer to a task the server will never process (see fail_waiting)
++static server_task_result_ptr stopping_error(int id_task) {
++    auto res = std::make_unique<server_task_result_error>();
++    res->id       = id_task;
++    res->err_type = ERROR_TYPE_UNAVAILABLE;
++    res->err_msg  = "server is stopping";
++    return res;
++}
++
+ void server_response::add_waiting_task_id(int id_task) {
+     RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
+ 
+     std::unique_lock<std::mutex> lock(mutex_results);
+     waiting_task_ids.insert(id_task);
++    if (stopping) {
++        queue_results.emplace_back(stopping_error(id_task));
++        condition_results.notify_all();
++    }
+ }
+ 
+ void server_response::add_waiting_task_ids(const std::unordered_set<int> & id_tasks) {
+@@ -238,6 +251,12 @@
+     for (const auto & id_task : id_tasks) {
+         RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
+         waiting_task_ids.insert(id_task);
++        if (stopping) {
++            queue_results.emplace_back(stopping_error(id_task));
++        }
++    }
++    if (stopping) {
++        condition_results.notify_all();
+     }
+ }
+ 
+@@ -347,6 +366,15 @@
+     condition_results.notify_all();
+ }
+ 
++void server_response::fail_waiting() {
++    std::unique_lock<std::mutex> lock(mutex_results);
++    stopping = true;
++    for (const auto & id_task : waiting_task_ids) {
++        queue_results.emplace_back(stopping_error(id_task));
++    }
++    condition_results.notify_all();
++}
++
+ //
+ // server_response_reader
+ //
+--- a/tools/server/server-queue.h
++++ b/tools/server/server-queue.h
+@@ -120,6 +120,9 @@
+ private:
+     bool running = true;
+ 
++    // set by fail_waiting(): the server is going away and answers no more tasks
++    bool stopping = false;
++
+     // for keeping track of all tasks waiting for the result
+     std::unordered_set<int> waiting_task_ids;
+ 
+@@ -160,6 +163,11 @@
+ 
+     // terminate the waiting loop
+     void terminate();
++
++    // answer every task waiting now, and every one that waits from now on,
++    // with an error: a server stopped without its process (one thread of an
++    // app) must not leave a request waiting for a result that never comes
++    void fail_waiting();
+ };
+ 
+ // RAII wrapper to make working with server_queue and server_response easier
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
 @@ -16,6 +16,8 @@
@@ -55,107 +214,3 @@
  
          clean_up();
          if (ctx_http.thread.joinable()) {
---- a/tools/server/server-context.cpp
-+++ b/tools/server/server-context.cpp
-@@ -1153,7 +1153,9 @@
-         model_tgt = llama_init->model();
-         ctx_tgt   = llama_init->context();
- 
--        if (model_tgt == nullptr) {
-+        // A model that loads but gets no context (a KV type this GPU cannot
-+        // run) must fail here too: it crashed below, and in an app that is the app.
-+        if (model_tgt == nullptr || ctx_tgt == nullptr) {
-             SRV_ERR("failed to load model, '%s'\n", params_base.model.path.c_str());
-             return false;
-         }
-@@ -3923,6 +3925,10 @@
- 
- void server_context::terminate() {
-     impl->queue_tasks.terminate();
-+    // A request still waiting would wait for good, and the HTTP server waits
-+    // for it before it stops: in an app the engine never ends, and nothing
-+    // after it starts.
-+    impl->queue_results.fail_waiting();
- }
- 
- llama_context * server_context::get_llama_context() const {
---- a/tools/server/server-queue.h
-+++ b/tools/server/server-queue.h
-@@ -120,6 +120,9 @@
- private:
-     bool running = true;
- 
-+    // set by fail_waiting(): the server is going away and answers no more tasks
-+    bool stopping = false;
-+
-     // for keeping track of all tasks waiting for the result
-     std::unordered_set<int> waiting_task_ids;
- 
-@@ -160,6 +163,11 @@
- 
-     // terminate the waiting loop
-     void terminate();
-+
-+    // answer every task waiting now, and every one that waits from now on,
-+    // with an error: a server stopped without its process (one thread of an
-+    // app) must not leave a request waiting for a result that never comes
-+    void fail_waiting();
- };
- 
- // RAII wrapper to make working with server_queue and server_response easier
---- a/tools/server/server-queue.cpp
-+++ b/tools/server/server-queue.cpp
-@@ -225,11 +225,24 @@
- // server_response
- //
- 
-+// the answer to a task the server will never process (see fail_waiting)
-+static server_task_result_ptr stopping_error(int id_task) {
-+    auto res = std::make_unique<server_task_result_error>();
-+    res->id       = id_task;
-+    res->err_type = ERROR_TYPE_UNAVAILABLE;
-+    res->err_msg  = "server is stopping";
-+    return res;
-+}
-+
- void server_response::add_waiting_task_id(int id_task) {
-     RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
- 
-     std::unique_lock<std::mutex> lock(mutex_results);
-     waiting_task_ids.insert(id_task);
-+    if (stopping) {
-+        queue_results.emplace_back(stopping_error(id_task));
-+        condition_results.notify_all();
-+    }
- }
- 
- void server_response::add_waiting_task_ids(const std::unordered_set<int> & id_tasks) {
-@@ -238,6 +251,12 @@
-     for (const auto & id_task : id_tasks) {
-         RES_DBG("add task %d to waiting list. current waiting = %d (before add)\n", id_task, (int) waiting_task_ids.size());
-         waiting_task_ids.insert(id_task);
-+        if (stopping) {
-+            queue_results.emplace_back(stopping_error(id_task));
-+        }
-+    }
-+    if (stopping) {
-+        condition_results.notify_all();
-     }
- }
- 
-@@ -347,6 +366,15 @@
-     condition_results.notify_all();
- }
- 
-+void server_response::fail_waiting() {
-+    std::unique_lock<std::mutex> lock(mutex_results);
-+    stopping = true;
-+    for (const auto & id_task : waiting_task_ids) {
-+        queue_results.emplace_back(stopping_error(id_task));
-+    }
-+    condition_results.notify_all();
-+}
-+
- //
- // server_response_reader
- //

@@ -108,8 +108,8 @@ class _ReaderPageState extends State<ReaderPage> {
     setState(() => _chromeVisible = !_chromeVisible);
   }
 
-  /// Follow the spoken paragraph: scroll it into view (scroll mode only; the
-  /// paged reader paginates independently).
+  /// Follow the spoken paragraph: scroll it into view (scroll mode; the paged
+  /// reader turns its own pages to it).
   void _onTtsTick() {
     final msg = _tts.notice;
     if (msg != null) {
@@ -759,6 +759,7 @@ class _ReaderPageState extends State<ReaderPage> {
                               onAnnotationSelection: _setAnnotationDraft,
                               compactTapZones: compact,
                               onToggleControls: _toggleChrome,
+                              tts: _tts,
                             )
                           // The list is rebuilt per chapter and opens directly on the
                           // restored paragraph: scrolling to it after building would be

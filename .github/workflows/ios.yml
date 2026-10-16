@@ -32,6 +32,14 @@ jobs:
       - name: Rust targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
+      # The engines' Metal kernels are compiled at build time; from Xcode 26
+      # on, the compiler is a download of its own.
+      - name: Metal compiler
+        run: |
+          xcodebuild -version
+          xcrun metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
       - run: flutter pub get
 
       # The tests that pin down what each platform shows.
@@ -102,6 +110,11 @@ jobs:
           path: ~/models
           key: models-qwen3-0.6b-q8-bge-small-zh-f16
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/tts
+          key: tts-qwen3-tts-0.6b-customvoice-q8
+
       - name: Models
         run: |
           mkdir -p ~/models && cd ~/models
@@ -112,11 +125,24 @@ jobs:
           get Qwen3-0.6B-Q8_0.gguf             https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf             9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031
           get bge-small-zh-v1.5-f16.gguf             https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/bge-small-zh-v1.5-f16.gguf             ab9b81d9cd329c712eee379cf0068eabe6a5e2a01d0def61535eba9384085e2c
           ls -l
+          # 听书: the voice the app downloads.
+          mkdir -p ~/tts && cd ~/tts
+          get qwen-talker-0.6b-customvoice-Q8_0.gguf https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-talker-0.6b-customvoice-Q8_0.gguf 4eb38675c736ed6ac72012846ac8d6ef80e5af8bc05726870f0b3a6569588519
+          get qwen-tokenizer-12hz-dec-Q8_0.gguf      https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-tokenizer-12hz-dec-Q8_0.gguf      72b05f6436093f4698fc7b2e69d726a26008c78d2cf7007413e39e9f4cd6b556
+          ls -l
 
       - name: Machine
         run: |
           sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
           system_profiler SPDisplaysDataType
+
+      # The engines' Metal kernels are compiled at build time; from Xcode 26
+      # on, the compiler is a download of its own.
+      - name: Metal compiler
+        run: |
+          xcodebuild -version
+          xcrun metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
 
       - name: Engine test
         env:
@@ -130,6 +156,15 @@ jobs:
           sudo DevToolsSecurity -enable || true
           NOVEL_AI_DIR=~/models NOVEL_TEST_TEXT="$RUNNER_TEMP/chapters.txt"             lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" engine_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/bench.log"
           grep -q "test result: ok" "$RUNNER_TEMP/bench.log"
+
+      # 听书 the way iOS runs it: on the GPU, on the CPU behind the screen, and
+      # a sentence moved from one to the other halfway.
+      - name: TTS test
+        run: |
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          NOVEL_TTS_DIR=~/tts lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" tts_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/tts.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/tts.log"
 
   # The Rust shared with the Windows app must still compile for Windows.
   rust-windows:

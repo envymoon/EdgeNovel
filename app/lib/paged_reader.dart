@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'reader_interaction.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'theme.dart';
+import 'tts_controller.dart';
 
 /// One piece of a paragraph on one page. Usually the whole paragraph; a
 /// paragraph taller than the remaining space is split at a line boundary and
@@ -223,6 +225,9 @@ class PagedReader extends StatefulWidget {
   final bool compactTapZones;
   final VoidCallback? onToggleControls;
 
+  /// 听书: the page follows the sentence being spoken, and shows it.
+  final TtsController? tts;
+
   const PagedReader({
     super.key,
     required this.reader,
@@ -233,6 +238,7 @@ class PagedReader extends StatefulWidget {
     this.onAnnotationSelection,
     this.compactTapZones = false,
     this.onToggleControls,
+    this.tts,
   });
 
   @override
@@ -266,6 +272,47 @@ class PagedReaderState extends State<PagedReader> {
   /// the gesture arena — arbitration against the PageView's drag recognizer is
   /// exactly the tap latency being avoided here.
   Offset _downAt = Offset.zero;
+
+  /// The sentence being spoken, as (paragraph, start): the page turns when
+  /// it moves on to the next one.
+  (int, int) _spoken = (-1, -1);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.tts?.addListener(_onSpeech);
+  }
+
+  @override
+  void didUpdateWidget(PagedReader old) {
+    super.didUpdateWidget(old);
+    if (old.tts != widget.tts) {
+      old.tts?.removeListener(_onSpeech);
+      widget.tts?.addListener(_onSpeech);
+    }
+  }
+
+  void _onSpeech() {
+    final tts = widget.tts!;
+    final now = (tts.activeParagraph, tts.activeStart);
+    if (now == _spoken || !mounted) return;
+    _spoken = now;
+    if (now.$1 >= 0) {
+      final page = _pageOf(now.$1, now.$2);
+      if (page != _page) _ctrl?.jumpToPage(page);
+    }
+    setState(() {});
+  }
+
+  /// The page on which [start] of paragraph [para] is.
+  int _pageOf(int para, int start) {
+    for (var i = 0; i < _pages.length; i++) {
+      for (final c in _pages[i].chunks) {
+        if (c.paraIndex == para && start < c.sourceEnd) return i;
+      }
+    }
+    return _pageContaining(para);
+  }
 
   int get _page => _ctrl?.hasClients == true
       ? _ctrl!.page!.round()
@@ -401,6 +448,7 @@ class PagedReaderState extends State<PagedReader> {
 
   @override
   void dispose() {
+    widget.tts?.removeListener(_onSpeech);
     _ctrl?.dispose();
     super.dispose();
   }
@@ -511,6 +559,7 @@ class PagedReaderState extends State<PagedReader> {
             reader: widget.reader,
             annotationMode: widget.annotationMode,
             onAnnotationSelection: widget.onAnnotationSelection,
+            spoken: widget.tts,
           ),
         ),
       ),
@@ -530,6 +579,9 @@ class _PageView extends StatelessWidget {
   /// reader's paragraphs: no annotation tags.
   final bool plain;
 
+  /// The sentence being spoken is shown the way the scrolling reader shows it.
+  final TtsController? spoken;
+
   const _PageView({
     required this.page,
     required this.settings,
@@ -538,7 +590,39 @@ class _PageView extends StatelessWidget {
     required this.annotationMode,
     this.onAnnotationSelection,
     this.plain = false,
+    this.spoken,
   });
+
+  /// [c]'s text with the spoken sentence marked, when it is on this chunk.
+  /// Only a background: the lines must break where pagination measured them.
+  Widget _body(PageChunk c, TextStyle style) {
+    final tts = spoken;
+    if (tts == null ||
+        tts.activeParagraph != c.paraIndex ||
+        tts.activeEnd <= c.sourceStart ||
+        tts.activeStart >= c.sourceEnd) {
+      return Text(c.text, style: style);
+    }
+    int at(int source) =>
+        (source - c.sourceStart + c.leadingNonSource).clamp(0, c.text.length);
+    final a = at(math.max(tts.activeStart, c.sourceStart));
+    final b = at(math.min(tts.activeEnd, c.sourceEnd));
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          TextSpan(text: c.text.substring(0, a)),
+          TextSpan(
+            text: c.text.substring(a, b),
+            style: TextStyle(
+              backgroundColor: theme.text.withValues(alpha: 0.13),
+            ),
+          ),
+          TextSpan(text: c.text.substring(b)),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -569,6 +653,7 @@ class _PageView extends StatelessWidget {
           ),
           child: Text(c.text, style: ty.style(c.kind)),
         ),
+        ParaKind.body => _body(c, ty.style(c.kind)),
         _ => Text(c.text, style: ty.style(c.kind)),
       };
       final text = annotationMode && c.kind == ParaKind.body

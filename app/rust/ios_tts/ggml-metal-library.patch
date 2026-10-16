@@ -1,0 +1,32 @@
+--- a/src/ggml-metal/CMakeLists.txt
++++ b/src/ggml-metal/CMakeLists.txt
+@@ -193,9 +193,13 @@
+     if (GGML_METAL_MACOSX_VERSION_MIN)
+         message(STATUS "Adding  -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN} flag to metal compilation")
+         list   (APPEND XC_FLAGS -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN})
+-    elseif (NOT GGML_METAL_TARGET_OS STREQUAL "macos" AND CMAKE_OSX_DEPLOYMENT_TARGET)
+-        message(STATUS "Adding  -mtargetos=${GGML_METAL_TARGET_OS}${CMAKE_OSX_DEPLOYMENT_TARGET}${METAL_TARGET_SIM} flag to metal compilation")
+-        list   (APPEND XC_FLAGS -mtargetos=${GGML_METAL_TARGET_OS}${CMAKE_OSX_DEPLOYMENT_TARGET}${METAL_TARGET_SIM})
++    elseif (NOT GGML_METAL_TARGET_OS STREQUAL "macos" AND (GGML_METAL_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET))
++        # the kernels' own floor, which may be above the app's
++        if (NOT GGML_METAL_DEPLOYMENT_TARGET)
++            set(GGML_METAL_DEPLOYMENT_TARGET ${CMAKE_OSX_DEPLOYMENT_TARGET})
++        endif()
++        message(STATUS "Adding  -mtargetos=${GGML_METAL_TARGET_OS}${GGML_METAL_DEPLOYMENT_TARGET}${METAL_TARGET_SIM} flag to metal compilation")
++        list   (APPEND XC_FLAGS -mtargetos=${GGML_METAL_TARGET_OS}${GGML_METAL_DEPLOYMENT_TARGET}${METAL_TARGET_SIM})
+     endif()
+ 
+     if (GGML_METAL_STD)
+--- a/src/ggml-metal/ggml-metal-device.m
++++ b/src/ggml-metal/ggml-metal-device.m
+@@ -507,7 +507,9 @@
+     const int64_t t_start = ggml_time_us();
+ 
+     NSError * error = nil;
+-    NSString * path_lib = ggml_metal_find_metallib(bundle, @"default");
++    // an app keeps the library where it likes, beside another ggml's
++    const char * env_lib = getenv("GGML_METAL_LIBRARY");
++    NSString * path_lib = env_lib ? [NSString stringWithUTF8String:env_lib] : ggml_metal_find_metallib(bundle, @"default");
+ 
+     if (path_lib != nil) {
+         // pre-compiled library found: a single combined default.metallib

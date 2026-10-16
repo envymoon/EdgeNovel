@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -34,9 +35,18 @@ class TtsController extends ChangeNotifier {
     bool enableIo = true,
   }) : _localSpeech = localSpeech ?? AppServices.instance.localSpeech,
        _player = enableIo ? AudioPlayer() : null,
+       _silence = enableIo && defaultTargetPlatform == TargetPlatform.iOS
+           ? AudioPlayer()
+           : null,
        _remote = enableIo ? TtsRemoteClient() : null;
 
   final AudioPlayer? _player;
+
+  /// iOS lets an app behind the screen run only while it plays something.
+  /// While the voice waits for its next sentence — behind the screen it comes
+  /// from the slower CPU — this plays silence, so listening with the screen
+  /// locked does not end at the first wait.
+  final AudioPlayer? _silence;
   final TtsRemoteClient? _remote;
 
   /// How far ahead of the voice to synthesize. Three sentences is enough to
@@ -312,6 +322,7 @@ class TtsController extends ChangeNotifier {
       if (!_inflight.contains(i) && _needed() == null) return null;
       if (!buffering) {
         buffering = true;
+        unawaited(_holdOn(true));
         notifyListeners();
       }
       _arrived = Completer<void>();
@@ -346,6 +357,7 @@ class TtsController extends ChangeNotifier {
       if (gen != _gen) return;
       if (buffering) {
         buffering = false;
+        unawaited(_holdOn(false));
         notifyListeners();
       }
       if (bytes != null) {
@@ -389,13 +401,18 @@ class TtsController extends ChangeNotifier {
     await Future.any([complete, if (_stop != null) _stop!.future]);
   }
 
-  Future<String> _scratchPath() async {
+  Future<Directory> _scratchDir() async {
     var d = _scratch;
     if (d == null) {
       d = AppServices.instance.storage.temporaryChild('tts_play');
       await d.create(recursive: true);
       _scratch = d;
     }
+    return d;
+  }
+
+  Future<String> _scratchPath() async {
+    final d = await _scratchDir();
     _scratchSlot = (_scratchSlot + 1) % 4;
     return '${d.path}${Platform.pathSeparator}$_scratchSlot.wav';
   }
@@ -417,8 +434,44 @@ class TtsController extends ChangeNotifier {
     ]);
   }
 
+  /// See [_silence].
+  Future<void> _holdOn(bool on) async {
+    final silence = _silence;
+    if (silence == null) return;
+    if (!on) return silence.stop();
+    final file = File(
+      '${(await _scratchDir()).path}${Platform.pathSeparator}silence.wav',
+    );
+    if (!await file.exists()) {
+      // A second of 24 kHz 16-bit mono, all zeros.
+      final wav = BytesBuilder()
+        ..add('RIFF'.codeUnits)
+        ..add(_le32(36 + 48000))
+        ..add('WAVEfmt '.codeUnits)
+        ..add(_le32(16))
+        ..add([1, 0, 1, 0])
+        ..add(_le32(24000))
+        ..add(_le32(48000))
+        ..add([2, 0, 16, 0])
+        ..add('data'.codeUnits)
+        ..add(_le32(48000))
+        ..add(Uint8List(48000));
+      await file.writeAsBytes(wav.takeBytes(), flush: true);
+    }
+    await silence.setReleaseMode(ReleaseMode.loop);
+    if (!buffering) return;
+    await silence.play(DeviceFileSource(file.path));
+    // The sentence came while it started.
+    if (!buffering) await silence.stop();
+  }
+
+  static List<int> _le32(int v) => [
+    for (final shift in [0, 8, 16, 24]) (v >> shift) & 0xff,
+  ];
+
   void _release() {
     if (_stop != null && !_stop!.isCompleted) _stop!.complete();
+    unawaited(_holdOn(false));
     _wake();
   }
 
@@ -442,6 +495,7 @@ class TtsController extends ChangeNotifier {
     _gen++;
     _release();
     _player?.dispose();
+    _silence?.dispose();
     _remote?.close();
     _scratch?.delete(recursive: true).ignore();
     super.dispose();

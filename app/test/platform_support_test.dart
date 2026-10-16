@@ -17,10 +17,13 @@ void main() {
     expect(AppPlatformSupport.bundledEngineIsCpuOnly, isTrue);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     expect(AppPlatformSupport.hasAiEngine, isFalse);
+    expect(AppPlatformSupport.hasReadAloud, isFalse);
     AppPlatformSupport.iosEngineAvailable = true;
     addTearDown(() => AppPlatformSupport.iosEngineAvailable = false);
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
     expect(AppPlatformSupport.hasAiEngine, isTrue);
+    expect(AppPlatformSupport.hasReadAloud, isTrue);
+    expect(AppPlatformSupport.hasBundledTtsEngine, isTrue);
     expect(AppPlatformSupport.bundledEngineIsCpuOnly, isFalse);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
