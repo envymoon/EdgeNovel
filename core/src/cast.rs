@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 14;
+pub const SCAN_VERSION: u32 = 15;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -1638,12 +1638,15 @@ fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
     // (赵玖 76%, where junk tops out at 37%) and acted upon at the usual rate
     // is a person whichever way the clause ends. Rarely is not never: the
     // head of longer names (玄鉴仙族's 李玄, 李渊) passes all of that and ends a
-    // clause 0.0% of the time.
+    // clause 0.0% of the time. And a name is whole on its own: 医道官途's 张大
+    // stands alone 1% of the time (张大官人), 宝鉴's 秦老 50% (秦老爷子), while
+    // every lead this lets in does 84% or more (赵玖 98%, 狼图腾's 陈阵 93%).
     let subject = {
         let mut cs = name.chars();
         cs.next().is_some_and(|c| SURNAMES.contains(c))
             && cs.next().is_some()
             && cs.next().is_none()
+            && standalone * 3 >= st.count * 2
             && st.boundary * 5 >= standalone * 3
             && st.object * 50 >= standalone
             && st.boundary_r * 100 >= standalone
