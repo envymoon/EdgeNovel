@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 13;
+pub const SCAN_VERSION: u32 = 14;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -1631,8 +1631,25 @@ fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
     // head of a phrase. Junk fails one or the other every time (年轻
     // 受事 5% but 右边界 1%; 今日 右边界 26% but 受事 1%), while every
     // real name in the corpus clears 受事 ≥ 2.6% and 右边界 ≥ 3%.
+    // A lead told almost only as a sentence subject ends a clause too rarely
+    // for the right-edge half: 绍宋's 赵玖 (4975 mentions) is 赵玖微微点头 and
+    // 赵玖沉默片刻, while dialogue calls him 官家 — 右边界 2.0%. A surname-led
+    // two-character name standing after punctuation three times in five
+    // (赵玖 76%, where junk tops out at 37%) and acted upon at the usual rate
+    // is a person whichever way the clause ends. Rarely is not never: the
+    // head of longer names (玄鉴仙族's 李玄, 李渊) passes all of that and ends a
+    // clause 0.0% of the time.
+    let subject = {
+        let mut cs = name.chars();
+        cs.next().is_some_and(|c| SURNAMES.contains(c))
+            && cs.next().is_some()
+            && cs.next().is_none()
+            && st.boundary * 5 >= standalone * 3
+            && st.object * 50 >= standalone
+            && st.boundary_r * 100 >= standalone
+    };
     let acted_upon = standalone < OBJECT_FLOOR
-        || (st.object * 50 >= standalone && st.boundary_r * 33 >= standalone);
+        || (st.object * 50 >= standalone && (st.boundary_r * 33 >= standalone || subject));
     Verdict {
         standalone,
         variety: st.count >= MIN_MENTIONS && st.left.len() >= need && st.right.len() >= need,
