@@ -3,139 +3,86 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <img src="docs/assets/novel-icon.ico" width="112" alt="Zhiyue app icon">
+  <img src="docs/assets/novel-icon.ico" width="112" alt="Zhiyue">
 </p>
 
-<p align="center"><strong>A quieter way to read Chinese web fiction.</strong><br>Local AI, searchable stories, and reading notes that stay with you.</p>
+<h3 align="center">A quiet way to read Chinese web fiction.</h3>
 
-A local-first novel reader designed for Chinese web fiction, with mobile as its final destination.
+<p align="center">
+  <img alt="On-device AI" src="https://img.shields.io/badge/AI-on--device-8a6d1d">
+  <img alt="Free" src="https://img.shields.io/badge/cost-free%20%C2%B7%20no%20API%20key-8a6d1d">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Android%20%7C%20iOS-555">
+</p>
 
-The project brings small language models, rule-based retrieval, and reading data onto the user's own device. Its goal is to make AI useful both before and during reading—without turning reading into a permanently connected cloud conversation.
+---
 
-> This project is in early development. Windows is the most complete version and is used for daily reading. The Android version has completed its first migration and emulator validation. iOS development is starting on a cloud Mac.
+## Import a TXT of a few thousand chapters, and Zhiyue reads it for you first
 
-## Why This Project Exists
+- **Cast and relationships**: who the lead is and who stands closest to whom, on one map.
+- **Romance structure**: one heroine or several, named outright.
+- **Pacing chart**: how much is career, romance and power-ups, where it drags and where it soars, at a glance.
+- **Chapter overview**: one line per chapter, to catch up whenever you forget.
+- **Evidence from the text**: every finding links back to the original passage, so you can judge for yourself.
 
-Readers of long-form Chinese web fiction often need answers to questions more specific than “What does this paragraph mean?”:
+## While you read
 
-- Is a novel with hundreds or thousands of chapters worth starting?
-- Do its protagonist, main cast, and romance structure match the reader's preferences?
-- After a long break, how can the reader quickly find a character, earlier event, or relevant chapter?
+- **Semantic search**: search for what happened, like "the lead's first breakthrough", without remembering the exact words.
+- **Read aloud**: lifelike Qwen3-TTS voices made on your own device, as you listen or ahead of time.
+- **AI covers**: a local image model paints a cover for books that have none.
+- **Reading stats**: how much and how fast you read, counted from your own reading only.
 
-The product is therefore organized into two distinct layers.
+## Find books
 
-### Reading Report
+- **Import Legado (开源阅读) book sources**: one file or one link, thousands of sources at once.
+- **One-tap check**: dead sites are weeded out for you.
+- **Search every source, download whole books**: missing or cut-off chapters are filled in from other sources.
 
-The report appears on the book details page, so it can be read before starting the novel. It currently covers the cast and their relationships, the romance structure (the heroines by name), chapter overviews, a pacing chart counted from the text (no model needed), and links to the supporting passages.
+## No internet, no API key, not a cent
 
-A small model cannot reliably make unrestricted, book-wide judgments about a very long novel. This project therefore does not delegate every conclusion to AI. Rules and retrieval provide stable, inspectable results; the lightweight model is reserved for bounded tasks it can handle. Whenever possible, users can return to the original chapter and make the final judgment themselves.
+All the AI runs on your own device. No account, no subscription, no API key, no per-use fees. Each model is downloaded once when you first need it, and keeps working offline.
 
-### Reading Assistant
+## Made for phones
 
-The in-reader assistant provides search, the reading report, background work, and reading appearance. It is kept separate from the book page so that choosing a book and reading a book do not become the same workflow.
+| | |
+| --- | --- |
+| **Small models, real work** | Qwen3 0.6B writes the reports and a Chinese BGE model powers search, designed around a 4 GB phone |
+| **GPU first** | Vulkan on Windows, Metal on iOS with precompiled shaders, fast from the very first launch |
+| **Light on memory** | One model in memory at a time; chapter overviews use a 2K window, word-for-word the same as 8K, with a quarter of the cache |
+| **Stays out of your way** | Three modes: unnoticed, balanced and finish now; battery, charging, temperature and idle time decide when it runs |
+| **Stops any time** | Switch away and it stops at once with its progress saved; come back and it picks up where it left off, without losing a chapter |
 
-## Features
+## Your books and data stay yours
 
-- Local TXT import, encoding handling, chapter detection, and custom shelf categories
-- Reading-position recovery, latest-chapter tracking, and completion marks for chapters actually read
-- Chapter navigation and a shortcut back to the current reading position
-- Inline annotations with management and source-location navigation
-- Cast, relationship, and romance-structure analysis
-- Chapter overviews, a whole-book pacing curve (also under the reader), and full-text semantic search
-- Reading statistics computed from the reader's own reading log
-- AI covers drawn by an on-device image model, and illustrations placed between chapters
-- Read-aloud on Windows with an on-device Qwen3-TTS voice: play while it speaks, or prepare chapters ahead, at an adjustable pace
-- Optional Youshu (优书网) reviews, fetched only when the reader opens them
-- Themes, accent colors, backgrounds, interface fonts, and a Chinese/English interface
-- A snapshot of the library and settings before a new build first opens them
-- Recoverable local AI task queue with pause, retry, and chapter-level checkpoints
-- Low-impact background, balanced, and finish-now workload modes
-- Charging, battery, idle-time, and thermal constraints
-- On-demand model downloads, integrity checks, resume support, and version rollback
-- On-demand fonts and mobile-oriented reading interactions
+- **Your books never leave your device.** Novel text, reading progress, notes and AI results are stored only on your device.
+- **Nothing is collected.** No analytics, no tracking, no ads.
+- **The AI never leaves your device.** Analysis, search, read-aloud and image generation all run locally; not one line of text goes to the cloud.
+- **Updates keep your shelf.** Before a new version first starts, your bookshelf and settings are backed up automatically.
 
-### Core workflows at a glance
+## FAQ
 
-| Before reading | While reading | Under the hood |
-| --- | --- | --- |
-| Cast and romance structure, chapter overviews, and pacing | Chapter jump, current-position recovery, annotations, and semantic search | On-device models, resumable tasks, workload limits, and model rollback |
+**Will it run on my phone?**
+Android needs a 64-bit (ARM64) phone. iOS installs on any version, with AI from iOS 16.4.
 
-## AI on Edge Devices
+**Will it get hot or drain the battery?**
+By default it works unnoticed, in small slices while you are not touching the screen, and pauses on low battery or when the phone runs hot.
 
-The current generation baseline is **Qwen3 0.6B Q8**, with **BGE small Chinese F16** for semantic retrieval. Cast and relationship tasks read up to **8K tokens** of sampled evidence. Chapter summaries read a fixed excerpt and run in a **2K window**: measured against 8K, the summaries are word-for-word identical (78 chapters on GPU, 48 on CPU) while the KV cache is a quarter of the size. Workload modes adjust threads, scheduling, intervals, and model unloading; they never change what the model reads.
+**Is a 0.6B model accurate?**
+It is not perfect, which is why every finding comes with evidence from the text, one tap away.
 
-AI covers use an anime-style SD 1.5 model quantized to 0.70 GB, run by a patched [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (Vulkan on Windows). The recipe is in `experiments/anime-cover-model/`.
+**How much do the models download?**
+They are not bundled with the app. Each is downloaded only when you use its feature, downloads resume after interruptions, and you can delete any model in Settings.
 
-Models are not bundled with the installer. They are downloaded only when the related feature is requested, keeping the application package smaller and allowing model updates or rollbacks independently of app releases.
+**Will an update lose my bookshelf?**
+No. Your data is stored apart from the app, and each new version backs it up before its first start.
 
-Target device tiers (pending broader physical-device testing):
+## Download
 
-| Tier | Suggested device | Local AI support |
-| --- | --- | --- |
-| Reading first | 4GB RAM or less | Core reading features; generative AI is not guaranteed |
+| Platform | Download |
+| --- | --- |
+| Windows | [Zhiyue 1.2.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0) (unzip and run `novel.exe`; keep the whole folder together) |
+| Android | [Preview](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.0.0-preview.1) (ARM64) |
+| iOS | Coming soon |
 
-Actual performance depends on the processor, available memory, operating-system background limits, and cooling—not memory capacity alone.
+---
 
-## Edge-first Workload Design
-
-Edge computing is not only about placing a model on the device. Zhiyue continuously adjusts **when** and **how much** work is done so reading stays responsive:
-
-- It combines charging state, battery level, thermal state, idle time, memory pressure, and task priority before starting a slice of work.
-- **Quiet idle** works in small slices, yields to the reader, and unloads the model between longer intervals when possible.
-- **Balanced** keeps a steady background pace for chapter analysis and retrieval.
-- **Finish now** uses the available resources to complete a requested result sooner, while still respecting device safety limits.
-- These modes change scheduling, thread count, intervals, and model residency—not what the model reads or the meaning of the result.
-
-The goal is not to pretend that inference has no cost. It is to make that cost adaptive, visible, and appropriate for a phone that is also being used for reading.
-
-## Platform Status and Downloads
-
-Windows and Android use separate GitHub Releases. Their packages and release tags are not shared.
-
-### Windows
-
-**Release tag:** [`windows-v1.2.0`](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0)  
-**Download:** `Zhiyue-Windows-x64-1.2.0.zip`
-
-Windows is currently the most complete version. The `novel.exe` file must remain beside the bundled `data` directory and DLL files; copying or downloading the executable alone will not work.
-
-Upgrading keeps the bookshelf: reading data lives in `%APPDATA%\com.novel\novel\`, not beside the executable, so replacing the extracted folder does not touch it. The first launch of a new build also copies the library and settings to `backups/` there.
-
-### Android
-
-**Release tag:** [`android-v1.0.0-preview.1`](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.0.0-preview.1)  
-**Download:** `Novel-Android-arm64-v8a-1.0.0-preview.1.apk`
-
-The Android migration includes emulator tests for the bookshelf, book details, settings, reader, annotations, chapter navigation, completed-chapter marks, background recovery, model download failures, and Android system-back behavior.
-
-Current status: the first ARM64 Android preview is available. It uses a development signing key and has not yet been validated on a physical phone; a later official signing key may require reinstalling the app.
-
-### iOS
-
-There is no iOS build yet. Development is starting on a cloud Mac, with a TestFlight build on a physical iPhone as the first goal and the Windows design carried over. iOS does not allow helper processes, so the inference engine will run inside the app on Metal.
-
-See the [release guide](docs/RELEASING.md) for platform-specific packaging rules.
-
-## Repository Structure
-
-- `app/`: Flutter UI, platform projects, application state, and shared mobile layer
-- `app/rust/`: Rust data and AI bridge used by the application
-- `core/`: novel parsing, cast, relationship, romance, and diagnostic algorithms
-- `tts-server/`: optional remote text-to-speech service
-- `app/docs/`: mobile migration and implementation notes
-
-## Current Limitations
-
-- A 0.6B model cannot independently understand an entire long-form web novel with consistent accuracy. Some analysis may still miss evidence or produce incorrect results.
-- The reading report supports decision-making; it is not a definitive statement about a novel. Important results should be checked against their source passages.
-- Android has not yet undergone physical-device testing for memory use, temperature, battery consumption, or long-running background behavior.
-- iOS is in early development and has no build yet.
-- No open-source license has been selected yet. Until a license is added, no permission is granted to copy, modify, or redistribute the code.
-
-## Roadmap
-
-The short-term priority is the iOS version on a physical iPhone while keeping the Windows version stable; Android follows. The next stage will fine-tune a model on purpose-built Chinese web-fiction data to improve character, relationship, and chapter tasks instead of simply increasing the on-device model size.
-
-## Content and Privacy
-
-Novel text, reading history, annotations, and generated caches are stored locally by default. The public repository and Releases do not include test novels, user databases, model weights, or personal reading data. Users should only import content they are authorized to use.
+<sub>Only import content you have the right to read. Zhiyue ships with no book sources. This repository has no open-source license yet; until one is added, no right to copy, modify or redistribute is granted.</sub>
