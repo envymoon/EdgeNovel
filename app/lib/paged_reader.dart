@@ -42,6 +42,11 @@ class BookPage {
   int get firstPara => chunks.isEmpty ? 0 : chunks.first.paraIndex;
 }
 
+/// Measuring and drawing pick fallback fonts by locale: the measuring
+/// TextPainter has none of its own, a Text takes the app's (English for some
+/// readers). Both read the same one from the style.
+const _hans = Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hans');
+
 /// The one source of text styles for paged reading. Measurement (TextPainter)
 /// and rendering (Text) must agree to the pixel, so both read from here —
 /// duplicating these numbers is how pages start overflowing.
@@ -55,6 +60,7 @@ class _Typography {
     ParaKind.title => TextStyle(
       color: t.text,
       fontFamily: s.resolvedReadingFont,
+      locale: _hans,
       fontSize: s.fontSize + 4,
       fontWeight: FontWeight.w600,
       height: 1.5,
@@ -62,6 +68,7 @@ class _Typography {
     ParaKind.volume => TextStyle(
       color: t.muted,
       fontFamily: s.resolvedReadingFont,
+      locale: _hans,
       fontSize: s.fontSize + 1,
       letterSpacing: 3,
       height: 1.5,
@@ -69,6 +76,7 @@ class _Typography {
     ParaKind.interstitial => TextStyle(
       color: t.muted,
       fontFamily: s.resolvedReadingFont,
+      locale: _hans,
       fontSize: s.fontSize - 2,
       fontStyle: FontStyle.italic,
       height: s.lineHeight,
@@ -76,6 +84,7 @@ class _Typography {
     ParaKind.body => TextStyle(
       color: t.text,
       fontFamily: s.resolvedReadingFont,
+      locale: _hans,
       fontSize: s.fontSize,
       height: s.lineHeight,
     ),
@@ -122,7 +131,10 @@ List<BookPage> paginate(
 
   for (var i = 0; i < paras.length; i++) {
     final p = paras[i];
-    final width = size.width - ty.horizontalInset(p.kind);
+    // Measured a pixel narrower than drawn: a line that just fits here must
+    // still fit after layout snaps the page to the screen's pixels, or it
+    // wraps once more on screen and the page's last line falls off the end.
+    final width = size.width - ty.horizontalInset(p.kind) - 1;
     var text = p.kind == ParaKind.body && settings.firstLineIndent
         ? '　　${p.text}'
         : p.text;
@@ -712,9 +724,13 @@ class _PageView extends StatelessWidget {
         ),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+    // Whatever measuring got wrong stays on its own page instead of spilling
+    // into the margin under it.
+    return ClipRect(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
     );
   }
 }
