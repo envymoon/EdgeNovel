@@ -569,6 +569,7 @@ mod engine {
         fn edge_tts_load(talker: *const c_char, codec: *const c_char, gpu: c_int) -> c_int;
         fn edge_tts_unload();
         fn edge_tts_background() -> c_int;
+        fn edge_tts_gpu() -> c_int;
         fn edge_tts_error() -> *const c_char;
         fn edge_tts_speak(
             text: *const c_char,
@@ -623,6 +624,11 @@ mod engine {
         unsafe { edge_tts_background() != 0 }
     }
 
+    /// Whether this GPU can run the voice (edge_tts.mm).
+    pub fn gpu() -> bool {
+        unsafe { edge_tts_gpu() != 0 }
+    }
+
     /// On the GPU with the app behind the screen: it has to move.
     pub fn misplaced() -> bool {
         *LOADED.lock().unwrap() == Some(true) && background()
@@ -640,7 +646,7 @@ mod engine {
 
     /// Loaded on the GPU on screen, on the CPU behind it.
     pub fn ensure(talker: &Path, codec: &Path) -> Result<(), String> {
-        let gpu = !background();
+        let gpu = !background() && self::gpu();
         let mut loaded = LOADED.lock().unwrap();
         if *loaded == Some(gpu) {
             return Ok(());
@@ -729,7 +735,14 @@ mod tests {
         assert!(tts_ready().unwrap());
         memory("开始");
         let lines = ["今天的风有点大，我们早点回家吧。", "他把书合上，望着窗外的雨，很久都没有说话，直到天色暗了下来。"];
+        let gpu = engine::gpu();
+        if !gpu {
+            println!("[GPU] 这块 GPU 跑不了，只测处理器");
+        }
         for (device, behind) in [("GPU", 0), ("CPU", 1)] {
+            if behind == 0 && !gpu {
+                continue;
+            }
             unsafe { edge_tts_set_background(behind) };
             let t = Instant::now();
             ensure().unwrap();
@@ -747,6 +760,10 @@ mod tests {
         }
 
         // Behind the screen mid-sentence: said again on the CPU, not lost.
+        if !gpu {
+            stop_tts();
+            return;
+        }
         unsafe { edge_tts_set_background(0) };
         ensure().unwrap();
         let t = Instant::now();

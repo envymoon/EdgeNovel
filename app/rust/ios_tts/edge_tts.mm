@@ -6,6 +6,7 @@
 #include "qwen.h"
 
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 
 #include <atomic>
 #include <mutex>
@@ -55,6 +56,20 @@ static void watch_app() {
     });
 }
 
+// Whether the GPU can run the voice: ggml's Metal backend has some of the ops
+// it needs (RMS_NORM among them) only with SIMD-group reductions, which is
+// A13 and later (Metal 3) or A14 (Apple 7). The voice runs on one backend with
+// nothing to fall back on, so an older GPU leaves it on the CPU.
+extern "C" int edge_tts_gpu(void) {
+    static const bool usable = [] {
+        id<MTLDevice> d = MTLCreateSystemDefaultDevice();
+        // MTLGPUFamilyMetal3 by number, as ggml has it: it is newer than the
+        // oldest iOS this is built for.
+        return d && ([d supportsFamily:MTLGPUFamilyApple7] || [d supportsFamily:(MTLGPUFamily) 5001]);
+    }();
+    return usable ? 1 : 0;
+}
+
 extern "C" const char * edge_tts_error(void) {
     return g_error.c_str();
 }
@@ -64,9 +79,10 @@ extern "C" int edge_tts_background(void) {
     return g_background ? 1 : 0;
 }
 
-// 1 when loaded. `gpu` 0 runs on the CPU.
+// 1 when loaded. `gpu` 0, or a GPU that cannot run it, runs on the CPU.
 extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     watch_app();
+    gpu = gpu && edge_tts_gpu();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_ctx) {
         qt_free(g_ctx);
