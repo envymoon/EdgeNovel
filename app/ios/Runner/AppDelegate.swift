@@ -17,6 +17,33 @@ import os
       FlutterMethodChannel(name: "novel/memory", binaryMessenger: registrar.messenger())
         .setMethodCallHandler { _, result in result(AppDelegate.memory()) }
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelDevice") {
+      UIDevice.current.isBatteryMonitoringEnabled = true
+      FlutterMethodChannel(name: "novel/device", binaryMessenger: registrar.messenger())
+        .setMethodCallHandler { _, result in result(AppDelegate.device()) }
+    }
+  }
+
+  /// What the AI queue waits on: how hot the phone is, its power, its memory.
+  private static func device() -> [String: Any] {
+    let thermal: String
+    switch ProcessInfo.processInfo.thermalState {
+    case .nominal: thermal = "nominal"
+    case .fair: thermal = "fair"
+    case .serious: thermal = "serious"
+    case .critical: thermal = "critical"
+    @unknown default: thermal = "unavailable"
+    }
+    var state: [String: Any] = [
+      "thermal": thermal,
+      "memoryMb": Int(ProcessInfo.processInfo.physicalMemory >> 20),
+    ]
+    let device = UIDevice.current
+    if device.batteryLevel >= 0 {
+      state["battery"] = Int((device.batteryLevel * 100).rounded())
+      state["charging"] = device.batteryState == .charging || device.batteryState == .full
+    }
+    return state
   }
 
   /// What iOS counts against the app when it decides to end it, in bytes: now,

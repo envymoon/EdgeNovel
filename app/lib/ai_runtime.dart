@@ -99,7 +99,10 @@ class AiRuntimeSettings extends ChangeNotifier {
     if (state.charging != true && battery != null && battery < batteryFloor) {
       return '电量低于 $batteryFloor%';
     }
-    if (state.thermalState == 'serious' || state.thermalState == 'critical') {
+    // A phone the hand already feels warm is not 无感 any more.
+    if (state.thermalState == 'serious' ||
+        state.thermalState == 'critical' ||
+        (mode == AiRunMode.quiet && state.thermalState == 'fair')) {
       return '设备温度较高，等待冷却';
     }
     if (mode != AiRunMode.fast && reading) return '正在阅读，AI 已让路';

@@ -51,6 +51,8 @@ const readingThemes = <ReadingTheme>[
   ReadingTheme('雾青', Color(0xFFEDF3F1), Color(0xFF243D38), Color(0xFF667C75)),
   ReadingTheme('暮紫', Color(0xFFF2EFF6), Color(0xFF393146), Color(0xFF797082)),
   ReadingTheme('深海', Color(0xFF17272D), Color(0xFFD0DFE3), Color(0xFF8FA6AF)),
+  // The night switch's: dimmer and warmer than 夜间, for reading in the dark.
+  ReadingTheme('夜读', Color(0xFF12110F), Color(0xFF948B7E), Color(0xFF5C564D)),
 ];
 
 const interfaceAccents = <Color>[
@@ -210,12 +212,21 @@ enum PageMode { scroll, paged }
 
 class ReadingSettings extends ChangeNotifier {
   AppLanguage language = AppLanguage.simplifiedChinese;
-  int themeIndex = 1;
+  static const defaultThemeIndex = 1;
+
+  int themeIndex = defaultThemeIndex;
   String fontFamily = '';
   String interfaceFontFamily = '';
   bool uniformInterfaceWeight = true;
   bool shelfCoverMode = false;
   int accentIndex = 0;
+
+  /// A book on the shelf opens to its detail page (扫书报告) first. Off, it
+  /// opens straight into the text; the page is still in the reader's drawer.
+  bool openBookToDetail = true;
+
+  /// The light theme the night switch goes back to.
+  int dayThemeIndex = defaultThemeIndex;
 
   String get resolvedInterfaceFont => interfaceFontFamily.isEmpty
       ? defaultFontFamily
@@ -234,7 +245,7 @@ class ReadingSettings extends ChangeNotifier {
   /// The whole-book 节奏 curve above the reader's bottom bar. On by default;
   /// on desktop that bar never hides, so a reader who finds it busy turns it off.
   bool paceStrip = true;
-  PageMode pageMode = PageMode.scroll;
+  PageMode pageMode = PageMode.paged;
   double pageWidth = 720;
 
   /// Fraction of the platform's per-notch wheel distance the scroll mode
@@ -286,6 +297,11 @@ class ReadingSettings extends ChangeNotifier {
     s.interfaceFontFamily = p.getString('interfaceFontFamily') ?? '';
     s.uniformInterfaceWeight = p.getBool('uniformInterfaceWeight') ?? true;
     s.shelfCoverMode = p.getBool('shelfCoverMode') ?? false;
+    s.openBookToDetail = p.getBool('openBookToDetail') ?? s.openBookToDetail;
+    s.dayThemeIndex = (p.getInt('dayThemeIndex') ?? s.dayThemeIndex).clamp(
+      0,
+      readingThemes.length - 1,
+    );
     s.accentIndex = (p.getInt('accentIndex') ?? 0).clamp(
       0,
       interfaceAccents.length - 1,
@@ -295,8 +311,9 @@ class ReadingSettings extends ChangeNotifier {
     s.paragraphSpacing = p.getDouble('paragraphSpacing') ?? s.paragraphSpacing;
     s.firstLineIndent = p.getBool('firstLineIndent') ?? s.firstLineIndent;
     s.paceStrip = p.getBool('paceStrip') ?? s.paceStrip;
+    // A saved choice stays; only a first run gets the new default.
     s.pageMode =
-        PageMode.values[(p.getInt('pageMode') ?? 0).clamp(
+        PageMode.values[(p.getInt('pageMode') ?? s.pageMode.index).clamp(
           0,
           PageMode.values.length - 1,
         )];
@@ -355,6 +372,28 @@ class ReadingSettings extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setOpenBookToDetail(bool value) {
+    openBookToDetail = value;
+    _prefs?.setBool('openBookToDetail', value);
+    notifyListeners();
+  }
+
+  /// One tap to 夜读 from whatever light theme is on, and back to it from
+  /// any dark one.
+  void toggleNight() {
+    if (theme.isDark) {
+      setTheme(
+        readingThemes[dayThemeIndex].isDark
+            ? defaultThemeIndex
+            : dayThemeIndex,
+      );
+    } else {
+      dayThemeIndex = themeIndex;
+      _prefs?.setInt('dayThemeIndex', dayThemeIndex);
+      setTheme(readingThemes.indexWhere((t) => t.name == '夜读'));
+    }
+  }
+
   void setTtsRemote(bool on) {
     ttsRemote = on && ttsServerUrl.trim().isNotEmpty;
     notifyListeners();
@@ -396,7 +435,7 @@ class ReadingSettings extends ChangeNotifier {
   }
 
   void setFontSize(double v) {
-    fontSize = v.clamp(12, 34);
+    fontSize = v.clamp(12, 48);
     notifyListeners();
     _persist();
   }

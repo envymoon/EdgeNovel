@@ -111,6 +111,27 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    ListenableBuilder(
+                      listenable: settings,
+                      builder: (context, _) => SwitchListTile(
+                        minTileHeight: 62,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 3,
+                        ),
+                        secondary: Icon(
+                          Icons.menu_book_outlined,
+                          size: 20,
+                          color: t.muted,
+                        ),
+                        title: Text(
+                          '打开书时先进扫书页',
+                          style: TextStyle(color: t.text, fontSize: 14),
+                        ),
+                        value: settings.openBookToDetail,
+                        onChanged: settings.setOpenBookToDetail,
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.rate_review_outlined,

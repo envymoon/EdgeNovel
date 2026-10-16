@@ -244,6 +244,15 @@ class PagedReaderState extends State<PagedReader> {
   List<BookPage> _pages = const [];
   String _signature = '';
   int _chapter = -1;
+  Size _size = Size.zero;
+
+  /// Chapters already cut into pages: this one and, cut while the reader
+  /// reads, the ones either side, so a turn across a chapter's edge costs no
+  /// more than any other turn.
+  final Map<int, (String, List<BookPage>)> _laidOut = {};
+
+  /// The page the copies under the reader are drawn around; see [_readyAround].
+  int _shown = -1;
 
   /// Paragraph at the top of the current page, so re-pagination (font change,
   /// window resize) can land back on the same text.
@@ -267,11 +276,9 @@ class PagedReaderState extends State<PagedReader> {
     final r = widget.reader;
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
-      _ctrl?.animateToPage(
-        target,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
-      );
+      // A tap shows the next page at once: a slide, however short, is felt as
+      // the page catching before it turns. Dragging still slides.
+      _ctrl?.jumpToPage(target);
     } else if (dir > 0) {
       r.next();
     } else if (r.chapterIndex > 0) {
@@ -280,21 +287,41 @@ class PagedReaderState extends State<PagedReader> {
     }
   }
 
-  void _rebuild(Size size) {
+  String _signatureOf(int chapter, int paragraphs, Size size) {
     final s = widget.settings;
     final r = widget.reader;
-    final sig =
-        '${r.info?.id}|${r.chapterIndex}|${r.paragraphs.length}|$size|'
+    return '${r.info?.id}|$chapter|$paragraphs|$size|'
         '${s.fontFamily}|${s.fontSize}|${s.lineHeight}|${s.paragraphSpacing}|${s.firstLineIndent}|${s.themeIndex}|'
         '${r.annotations.map((a) => '${a.id}:${a.updatedAt}').join(',')}';
+  }
+
+  List<BookPage> _paginate(int chapter, List<Paragraph> paras, Size size) {
+    final s = widget.settings;
+    final annotated = <int>{
+      for (var i = 0; i < paras.length; i++)
+        if (widget.reader
+            .annotationsForParagraph(paras[i], chapter: chapter)
+            .isNotEmpty)
+          i,
+    };
+    return paginate(paras, size, s, s.theme, annotated);
+  }
+
+  void _rebuild(Size size) {
+    final r = widget.reader;
+    final sig = _signatureOf(r.chapterIndex, r.paragraphs.length, size);
     if (sig == _signature) return;
     _signature = sig;
+    _size = size;
+    _shown = -1;
 
-    final annotated = <int>{
-      for (var i = 0; i < r.paragraphs.length; i++)
-        if (r.annotationsForParagraph(r.paragraphs[i]).isNotEmpty) i,
-    };
-    _pages = paginate(r.paragraphs, size, s, s.theme, annotated);
+    final ready = _laidOut[r.chapterIndex];
+    _pages = ready?.$1 == sig
+        ? ready!.$2
+        : _paginate(r.chapterIndex, r.paragraphs, size);
+    _laidOut
+      ..removeWhere((c, _) => (c - r.chapterIndex).abs() > 1)
+      ..[r.chapterIndex] = (sig, _pages);
 
     final int initial;
     if (r.chapterIndex != _chapter) {
@@ -323,8 +350,48 @@ class PagedReaderState extends State<PagedReader> {
           atStart: initial == 0,
           atEnd: initial == _pages.length - 1,
         );
+        _readyAround();
       }
     });
+  }
+
+  /// Once a turn has settled and its frame is out, in frames in which nothing
+  /// moves: cut the chapters either side into pages, and draw the pages a turn
+  /// would show under the reader, where nobody sees them. Whichever way the
+  /// next turn goes, its page is laid out and its characters drawn once
+  /// already — a character's first drawing is the slow one.
+  void _readyAround() {
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        if (!mounted) return;
+        final r = widget.reader;
+        for (final c in [r.chapterIndex + 1, r.chapterIndex - 1]) {
+          final paras = r.nearbyParagraphs(c);
+          if (paras == null) continue;
+          final sig = _signatureOf(c, paras.length, _size);
+          if (_laidOut[c]?.$1 != sig) {
+            _laidOut[c] = (sig, _paginate(c, paras, _size));
+          }
+        }
+        setState(() => _shown = _page);
+      })
+      ..ensureVisualUpdate();
+  }
+
+  /// The pages one turn away from [_shown], in this chapter or the next.
+  List<BookPage> get _neighbours {
+    if (_shown < 0 || _shown >= _pages.length) return const [];
+    final c = widget.reader.chapterIndex;
+    return [
+      if (_shown > 0)
+        _pages[_shown - 1]
+      else if (_laidOut[c - 1]?.$2 case final prev?)
+        prev.last,
+      if (_shown < _pages.length - 1)
+        _pages[_shown + 1]
+      else if (_laidOut[c + 1]?.$2 case final next?)
+        next.first,
+    ];
   }
 
   int _pageContaining(int paraIndex) {
@@ -381,43 +448,74 @@ class PagedReaderState extends State<PagedReader> {
                 }
               }
             },
-            child: ScrollConfiguration(
-              // Desktops exclude mouse dragging from scrollables by default;
-              // a page you cannot drag with the mouse feels broken.
-              behavior: ScrollConfiguration.of(context).copyWith(
-                dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
-              ),
-              child: PageView.builder(
-                key: ValueKey(_signature),
-                controller: _ctrl,
-                itemCount: _pages.length,
-                onPageChanged: (i) {
-                  _topPara = _pages[i].firstPara;
-                  widget.reader.onVisibleParagraph(_topPara);
-                  widget.pageInfo.value = (i + 1, _pages.length);
-                  widget.reader.recordChapterViewport(
-                    atStart: i == 0,
-                    atEnd: i == _pages.length - 1,
-                  );
-                },
-                itemBuilder: (context, i) => Padding(
-                  padding: widget.padding,
-                  child: _PageView(
-                    page: _pages[i],
-                    settings: widget.settings,
-                    theme: t,
-                    reader: widget.reader,
-                    annotationMode: widget.annotationMode,
-                    onAnnotationSelection: widget.onAnnotationSelection,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                for (final page in _neighbours)
+                  IgnorePointer(
+                    child: ExcludeSemantics(
+                      child: RepaintBoundary(
+                        child: Padding(
+                          padding: widget.padding,
+                          child: _PageView(
+                            page: page,
+                            settings: widget.settings,
+                            theme: t,
+                            reader: widget.reader,
+                            annotationMode: false,
+                            plain: true,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                ColoredBox(color: t.background, child: _pageView(context, t)),
+              ],
             ),
           ),
         );
       },
     );
   }
+
+  Widget _pageView(BuildContext context, ReadingTheme t) => ScrollConfiguration(
+    // Desktops exclude mouse dragging from scrollables by default; a page you
+    // cannot drag with the mouse feels broken.
+    behavior: ScrollConfiguration.of(
+      context,
+    ).copyWith(dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse}),
+    child: NotificationListener<ScrollEndNotification>(
+      onNotification: (n) {
+        if (n.depth == 0) _readyAround();
+        return false;
+      },
+      child: PageView.builder(
+        key: ValueKey(_signature),
+        controller: _ctrl,
+        itemCount: _pages.length,
+        onPageChanged: (i) {
+          _topPara = _pages[i].firstPara;
+          widget.reader.onVisibleParagraph(_topPara);
+          widget.pageInfo.value = (i + 1, _pages.length);
+          widget.reader.recordChapterViewport(
+            atStart: i == 0,
+            atEnd: i == _pages.length - 1,
+          );
+        },
+        itemBuilder: (context, i) => Padding(
+          padding: widget.padding,
+          child: _PageView(
+            page: _pages[i],
+            settings: widget.settings,
+            theme: t,
+            reader: widget.reader,
+            annotationMode: widget.annotationMode,
+            onAnnotationSelection: widget.onAnnotationSelection,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _PageView extends StatelessWidget {
@@ -428,6 +526,10 @@ class _PageView extends StatelessWidget {
   final bool annotationMode;
   final ValueChanged<AnnotationDraft?>? onAnnotationSelection;
 
+  /// Text only, for a page that may belong to another chapter than the
+  /// reader's paragraphs: no annotation tags.
+  final bool plain;
+
   const _PageView({
     required this.page,
     required this.settings,
@@ -435,6 +537,7 @@ class _PageView extends StatelessWidget {
     required this.reader,
     required this.annotationMode,
     this.onAnnotationSelection,
+    this.plain = false,
   });
 
   @override
@@ -494,7 +597,7 @@ class _PageView extends StatelessWidget {
               },
             )
           : plainText;
-      final annotations = c.endsParagraph
+      final annotations = c.endsParagraph && !plain
           ? reader.annotationsForParagraph(reader.paragraphs[c.paraIndex])
           : const <BookAnnotation>[];
       children.add(

@@ -13,6 +13,7 @@ import 'bloom.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
+import 'night_toggle.dart';
 import 'pace_page.dart';
 import 'paged_reader.dart';
 import 'plate_view.dart';
@@ -631,6 +632,10 @@ class _ReaderPageState extends State<ReaderPage> {
             AppPlatformSupport.layoutForWidth(width) == AppLayoutClass.compact;
         final narrow = width < 380;
         final showControls = !compact || _chromeVisible || _annotationMode;
+        // A tap in the middle of a page shows the bars over the text: making
+        // room for them would move every line on the page.
+        final barsOverText = _isPaged && compact;
+        final systemInsets = MediaQuery.paddingOf(context);
         final readerPadding = EdgeInsets.fromLTRB(
           compact ? 20 : 28,
           compact ? 12 : 20,
@@ -647,6 +652,14 @@ class _ReaderPageState extends State<ReaderPage> {
             onKeyEvent: _onKey,
             child: Scaffold(
               key: _scaffoldKey,
+              extendBodyBehindAppBar: barsOverText,
+              extendBody: barsOverText,
+              floatingActionButton:
+                  compact && showControls && !_annotationMode
+                  ? NightToggle(settings: widget.settings, floating: true)
+                  : null,
+              floatingActionButtonLocation:
+                  FloatingActionButtonLocation.startFloat,
               appBar: showControls
                   ? AppBar(
                       backgroundColor: t.topBar,
@@ -726,9 +739,10 @@ class _ReaderPageState extends State<ReaderPage> {
               ),
               body: _withPlate(
                 t,
-                SafeArea(
-                  top: !showControls,
-                  bottom: !showControls,
+                _textArea(
+                  barsOverText: barsOverText,
+                  showControls: showControls,
+                  systemInsets: systemInsets,
                   child: Center(
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
@@ -846,6 +860,17 @@ class _ReaderPageState extends State<ReaderPage> {
       },
     );
   }
+
+  /// The text keeps the same box whether the bars are up or not when they lie
+  /// over it; otherwise it gives them room.
+  Widget _textArea({
+    required bool barsOverText,
+    required bool showControls,
+    required EdgeInsets systemInsets,
+    required Widget child,
+  }) => barsOverText
+      ? Padding(padding: systemInsets, child: child)
+      : SafeArea(top: !showControls, bottom: !showControls, child: child);
 
   Widget _annotationBar(ReadingTheme t) {
     final selected = _annotationDraft != null;
@@ -1480,8 +1505,8 @@ class SettingsSheet extends StatelessWidget {
               Slider(
                 value: settings.fontSize,
                 min: 12,
-                max: 34,
-                divisions: 22,
+                max: 48,
+                divisions: 36,
                 onChanged: settings.setFontSize,
               ),
               Text(

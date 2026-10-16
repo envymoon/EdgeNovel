@@ -119,13 +119,35 @@ abstract interface class DeviceStatusReader {
   Future<AiDeviceState> read();
 }
 
-/// The current native bridge supplies Windows facts. Android and iOS adapters
-/// can later implement the same contract without changing queue policy.
+/// The Rust bridge supplies Windows facts; on iOS the app adds the phone's own
+/// heat, power and memory, without which the queue cannot cool down or wait
+/// for a charger. Android can add the same later.
 class NativeDeviceStatusReader implements DeviceStatusReader {
   const NativeDeviceStatusReader();
 
   @override
-  Future<AiDeviceState> read() => aiDeviceState();
+  Future<AiDeviceState> read() async {
+    final base = await aiDeviceState();
+    if (defaultTargetPlatform != TargetPlatform.iOS) return base;
+    try {
+      final d = await const MethodChannel(
+        'novel/device',
+      ).invokeMapMethod<String, Object>('read');
+      if (d == null) return base;
+      final memory = d['memoryMb'] as int?;
+      return AiDeviceState(
+        platform: base.platform,
+        charging: d['charging'] as bool? ?? base.charging,
+        batteryPercent: d['battery'] as int? ?? base.batteryPercent,
+        idleSeconds: base.idleSeconds,
+        logicalCores: base.logicalCores,
+        totalMemoryMb: memory == null ? base.totalMemoryMb : BigInt.from(memory),
+        thermalState: d['thermal'] as String? ?? base.thermalState,
+      );
+    } catch (_) {
+      return base;
+    }
+  }
 }
 
 abstract interface class LocalSpeechSynthesizer {

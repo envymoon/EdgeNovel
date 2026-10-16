@@ -12,6 +12,7 @@ import 'cover.dart';
 import 'cover_generator.dart';
 import 'discover_page.dart';
 import 'desktop_book_drop.dart';
+import 'night_toggle.dart';
 import 'platform_support.dart';
 import 'platform_services.dart';
 import 'reader_state.dart';
@@ -126,6 +127,7 @@ class _ShelfPageState extends State<ShelfPage> {
                   !widget.settings.shelfCoverMode,
                 ),
               ),
+              NightToggle(settings: widget.settings),
               IconButton(
                 tooltip: context.tr(_searching ? '关闭搜索' : '搜索'),
                 icon: Icon(_searching ? Icons.close : Icons.search),
@@ -713,7 +715,7 @@ class _ShelfPageState extends State<ShelfPage> {
     item: b,
     theme: widget.settings.theme,
     category: _categories.categoryFor(b.id),
-    onTap: () => _openBookDetail(b),
+    onTap: () => _openBook(b),
     onDelete: () async {
       await widget.reader.delete(b.id);
       _categories.removeBook(b.id);
@@ -771,7 +773,7 @@ class _ShelfPageState extends State<ShelfPage> {
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => _openBookDetail(book),
+          onTap: () => _openBook(book),
           onLongPress: showActions,
           onSecondaryTap: showActions,
           child: Padding(
@@ -803,6 +805,13 @@ class _ShelfPageState extends State<ShelfPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _openBook(ShelfItem book) async {
+    if (widget.settings.openBookToDetail) return _openBookDetail(book);
+    await widget.reader.open(book.path);
+    if (!mounted || !widget.reader.isOpen) return;
+    widget.onOpened();
   }
 
   void _openBookDetail(ShelfItem book) {
