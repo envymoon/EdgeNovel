@@ -188,7 +188,7 @@ class _AiPageState extends State<AiPage> {
             file.name.replaceAll('\\', '/').split('/').last.toLowerCase() ==
                 'llama-server.exe',
       );
-      if (!hasServer) throw '引擎压缩包不完整（缺少 llama-server.exe）';
+      if (!hasServer) throw '引擎压缩包不完整';
 
       await stopAi();
       for (final f in archive) {
@@ -470,12 +470,11 @@ class _AiPageState extends State<AiPage> {
     if (state?.installed != true && detectedName == null) {
       return package.role == ManagedModelRole.chat ? '约 640 MB' : '约 48 MB';
     }
-    final version = state?.activeVersion ?? '现有版本';
     final verified = state?.isVerifiedCurrent(package) == true
         ? '已校验'
         : '未记录校验';
     final rollback = state?.canRollback == true ? ' · 可恢复旧版' : '';
-    return '$version · $verified · ${_size(bytes)}$rollback';
+    return '$verified · ${_size(bytes)}$rollback';
   }
 
   Future<void> _rollbackModel(ManagedModelPackage package, String label) async {
@@ -574,20 +573,16 @@ class _AiPageState extends State<AiPage> {
                                 : Icons.error_outline,
                             color: t.muted,
                           ),
-                          title: const Text('推理引擎 · llama.cpp'),
+                          title: const Text('AI 引擎'),
                           subtitle: Text(
-                            !s.engine
-                                ? '内置引擎缺失，请重新安装应用'
-                                : AppPlatformSupport.bundledEngineIsCpuOnly
-                                ? '应用内置 · CPU · 默认 Q8 KV / 8K'
-                                : '应用内置 · GPU · 默认 Q8 KV / 8K',
+                            !s.engine ? '内置引擎缺失，请重新安装应用' : '应用内置',
                           ),
                         ),
                       if (AppPlatformSupport.canDownloadAiEngine)
                         _item(
                           t,
                           ok: s.engine,
-                          title: '推理引擎 · llama.cpp',
+                          title: 'AI 引擎',
                           subtitle: s.engine
                               ? '已安装 · ${_size(s.engineBytes)}'
                               : '约 30–90 MB',
@@ -595,13 +590,13 @@ class _AiPageState extends State<AiPage> {
                           error: _engineError,
                           onDownload: _downloadEngine,
                           onDelete: s.engine
-                              ? () => _delete('推理引擎', deleteEngine)
+                              ? () => _delete('AI 引擎', deleteEngine)
                               : null,
                         ),
                       _item(
                         t,
                         ok: chatInstalled,
-                        title: '模型 · Qwen3 0.6B (Q8)',
+                        title: '分析模型',
                         subtitle: _withPending(
                           _modelSubtitle(
                             chatModelPackage,
@@ -626,11 +621,11 @@ class _AiPageState extends State<AiPage> {
                         ),
                         onReinstall: chatInstalled ? _downloadModel : null,
                         onRollback: _chatModel?.canRollback == true
-                            ? () => _rollbackModel(chatModelPackage, '摘要模型')
+                            ? () => _rollbackModel(chatModelPackage, '分析模型')
                             : null,
                         onDelete: chatInstalled
                             ? () => _delete(
-                                '摘要模型',
+                                '分析模型',
                                 () => _models.deleteInstalled(
                                   directory: s.dir,
                                   package: chatModelPackage,
@@ -642,7 +637,7 @@ class _AiPageState extends State<AiPage> {
                       _item(
                         t,
                         ok: embeddingInstalled,
-                        title: '嵌入模型 · BGE small 中文',
+                        title: '检索模型',
                         subtitle: _withPending(
                           _modelSubtitle(
                             embeddingModelPackage,
@@ -669,11 +664,11 @@ class _AiPageState extends State<AiPage> {
                         onReinstall: embeddingInstalled ? _downloadEmbed : null,
                         onRollback: _embeddingModel?.canRollback == true
                             ? () =>
-                                  _rollbackModel(embeddingModelPackage, '嵌入模型')
+                                  _rollbackModel(embeddingModelPackage, '检索模型')
                             : null,
                         onDelete: embeddingInstalled
                             ? () => _delete(
-                                '嵌入模型',
+                                '检索模型',
                                 () => _models.deleteInstalled(
                                   directory: s.dir,
                                   package: embeddingModelPackage,
@@ -687,7 +682,7 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _img?.engine ?? false,
-                          title: '生图引擎 · stable-diffusion.cpp',
+                          title: '生图引擎',
                           subtitle: (_img?.engine ?? false)
                               ? '已安装 · ${_size(_img!.engineBytes)}'
                               : '约 29 MB',
@@ -701,7 +696,7 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _img?.model != null && _img!.decoder,
-                          title: '生图模型 · 动漫风 SD1.5',
+                          title: '生图模型',
                           subtitle: _withPending(
                             _img?.model != null && _img!.decoder
                                 ? '已安装 · ${_size(_img!.modelBytes)}'
@@ -773,7 +768,7 @@ class _AiPageState extends State<AiPage> {
                           _item(
                             t,
                             ok: _ts?.engine ?? false,
-                            title: '朗读引擎 · qwentts.cpp',
+                            title: '朗读引擎',
                             subtitle: (_ts?.engine ?? false)
                                 ? '已安装 · ${_size(_ts!.engineBytes)}'
                                 : '约 15 MB',
@@ -787,7 +782,7 @@ class _AiPageState extends State<AiPage> {
                         _item(
                           t,
                           ok: _ts?.voice != null,
-                          title: '中文语音 · Qwen3-TTS',
+                          title: '中文语音',
                           subtitle: _withPending(
                             _ts?.voice == null
                                 ? '约 1.17 GB'

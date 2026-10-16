@@ -817,7 +817,7 @@ fn render(
     report: &mut impl FnMut(CoverProgress),
 ) -> Result<PathBuf, String> {
     let dir = image_dir()?;
-    let exe = find_engine(dir).ok_or("生图引擎未安装（缺 sd-cli）")?;
+    let exe = find_engine(dir).ok_or("生图引擎未安装")?;
     let model = find_model(dir).ok_or("生图模型未安装")?;
     let decoder = find_decoder(dir).ok_or("生图模型不完整（缺 taesd）")?;
     let out = next_tmp();

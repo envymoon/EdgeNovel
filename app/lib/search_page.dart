@@ -254,7 +254,7 @@ class _SearchPageState extends State<SearchPage> {
     children: [
       const SizedBox(height: 8),
       Text(
-        '语义搜索需要一个嵌入模型',
+        '语义搜索需要一个检索模型',
         style: TextStyle(
           color: t.text,
           fontSize: 15,

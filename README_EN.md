@@ -27,8 +27,8 @@
 ## While you read
 
 - **Semantic search**: search for what happened, like "the lead's first breakthrough", without remembering the exact words.
-- **Read aloud**: lifelike Qwen3-TTS voices made on your own device, as you listen or ahead of time.
-- **AI covers**: a local image model paints a cover for books that have none.
+- **Read aloud**: lifelike voices made on your own device, as you listen or ahead of time.
+- **AI covers**: paints a cover, on your own device, for books that have none.
 - **Reading stats**: how much and how fast you read, counted from your own reading only.
 
 ## Find books
@@ -45,9 +45,9 @@ All the AI runs on your own device. No account, no subscription, no API key, no 
 
 | | |
 | --- | --- |
-| **Small models, real work** | Qwen3 0.6B writes the reports and a Chinese BGE model powers search, designed around a 4 GB phone |
-| **GPU first** | Vulkan on Windows, Metal on iOS with precompiled shaders, fast from the very first launch |
-| **Light on memory** | One model in memory at a time; chapter overviews use a 2K window, word-for-word the same as 8K, with a quarter of the cache |
+| **Runs on a 4 GB phone** | Designed around a phone with 4 GB of memory. Measured on an iPhone 14, the whole app uses about 350 MB for chapter overviews, about 850 MB for relationships, and at most about 1.4 GB while reading aloud |
+| **Nothing cut for phones** | Phones run the same AI as the desktop, with nothing scaled down |
+| **Fast** | Measured on an iPhone 14: the AI is ready in about a second, and each chapter overview takes about 3 seconds |
 | **Stays out of your way** | Three modes: unnoticed, balanced and finish now; battery, charging, temperature and idle time decide when it runs |
 | **Stops any time** | Switch away and it stops at once with its progress saved; come back and it picks up where it left off, without losing a chapter |
 
@@ -66,7 +66,7 @@ Android needs a 64-bit (ARM64) phone. iOS installs on any version, with AI from 
 **Will it get hot or drain the battery?**
 By default it works unnoticed, in small slices while you are not touching the screen, and pauses on low battery or when the phone runs hot.
 
-**Is a 0.6B model accurate?**
+**How accurate is the AI?**
 It is not perfect, which is why every finding comes with evidence from the text, one tap away.
 
 **How much do the models download?**

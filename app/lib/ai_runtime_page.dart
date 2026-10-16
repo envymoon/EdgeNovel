@@ -97,7 +97,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                     value: runtime.lockedEnabled,
                     onChanged: runtime.setLockedEnabled,
                     title: Text(
-                      '锁屏后用 CPU 继续',
+                      '锁屏后继续',
                       style: TextStyle(color: t.text, fontSize: 14),
                     ),
                   ),
@@ -147,36 +147,8 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
               ],
             ),
             const SizedBox(height: 20),
-            _section(t, '设备与模型'),
+            _section(t, '设备'),
             _deviceCard(t),
-            const SizedBox(height: 8),
-            _panel(
-              t,
-              children: [
-                ListTile(
-                  leading: Icon(Icons.memory_outlined, color: t.muted),
-                  title: Text(
-                    '标准模型 · Qwen3 0.6B Q8',
-                    style: TextStyle(color: t.text, fontSize: 14),
-                  ),
-                  trailing: const Icon(
-                    Icons.check_circle,
-                    color: Color(0xFF4E7956),
-                    size: 20,
-                  ),
-                ),
-                ListTile(
-                  enabled: false,
-                  leading: const Icon(Icons.upgrade_outlined),
-                  title: const Text('增强模型', style: TextStyle(fontSize: 14)),
-                  subtitle: const Text(
-                    '待兼容性验证',
-                    style: TextStyle(fontSize: 11.5),
-                  ),
-                  trailing: const Text('待验证', style: TextStyle(fontSize: 11)),
-                ),
-              ],
-            ),
             const SizedBox(height: 20),
             _section(t, '高级设置'),
             _advanced(t),

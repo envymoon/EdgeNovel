@@ -307,7 +307,7 @@ class _LandminePageState extends State<LandminePage> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(
-        '排雷需要嵌入模型',
+        '排雷需要检索模型',
         style: TextStyle(
           color: t.text,
           fontSize: 15,

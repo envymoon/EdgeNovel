@@ -130,7 +130,7 @@ class SearchIndexCard extends StatelessWidget {
         settings,
         hasModel: () async =>
             (await indexStatus(path: book.path, bookId: book.id)).hasModel,
-        missing: '需要先下载嵌入模型',
+        missing: '需要先下载检索模型',
         start: () => reader.startIndex(book.id, book.path, title: book.title),
       ),
       onPause: () => reader.stopIndexFor(book.id),

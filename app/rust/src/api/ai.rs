@@ -510,7 +510,7 @@ fn ensure(
         return Ok(());
     }
     let dir = ai_dir()?;
-    let exe = find_engine(dir).ok_or("引擎未安装（缺 llama-server）")?;
+    let exe = find_engine(dir).ok_or("引擎未安装")?;
 
     // The model and prompts stay identical between profiles. Only scheduling
     // pressure changes, so quiet mode never buys comfort by degrading results.
@@ -777,7 +777,7 @@ fn ensure_engine(context: u32) -> Result<(), String> {
             // F16 cache configuration.
             stop_chat_engine();
             start(F16_KV).map_err(|f16_error| {
-                format!("Q8 KV 启动失败：{q8_error}；F16 KV 回退也失败：{f16_error}")
+                format!("引擎启动失败：{q8_error}；{f16_error}")
             })?;
             F16_KV
         }

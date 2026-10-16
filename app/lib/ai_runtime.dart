@@ -143,8 +143,8 @@ class AiRuntimeSettings extends ChangeNotifier {
     final memory = detectedMemoryMb;
     if (memory == null) return '等待检测';
     if (memory < 4096) return '仅建议阅读与语义搜索';
-    if (memory < 5120) return '固定 8K 生成不建议';
-    if (memory < 7168) return '固定 8K · 前台试运行';
+    if (memory < 5120) return '不建议 AI 生成';
+    if (memory < 7168) return '前台试运行';
     if (memory < 10240) return '标准 AI';
     return '高性能 AI';
   }
