@@ -334,6 +334,12 @@ class ReaderState extends ChangeNotifier {
     _scheduleAi();
   }
 
+  /// A task is on the engine right now.
+  bool get aiActive => _activeAiTask != null;
+
+  /// Something in the queue would run if it were allowed to.
+  bool get aiRunnable => _aiQueue.any((task) => !task.paused && !task.failed);
+
   void startEnrich(ShelfItem b) {
     _enqueue(
       _AiQueuedTask(

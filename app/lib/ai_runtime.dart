@@ -23,6 +23,12 @@ class AiRuntimeSettings extends ChangeNotifier {
   DeviceStatusReader _deviceStatus = const NativeDeviceStatusReader();
 
   bool backgroundEnabled = true;
+  /// iOS: once the app is off screen, carry on with the queue on the CPU in
+  /// the windows the system grants. Off unless asked for.
+  bool lockedEnabled = false;
+
+  /// Running in such a window now: the GPU is not ours to use.
+  bool _cpuOnly = false;
   bool chargingOnly = true;
   AiRunMode mode = AiRunMode.quiet;
   int batteryFloor = 40;
@@ -41,6 +47,7 @@ class AiRuntimeSettings extends ChangeNotifier {
     backgroundEnabled =
         p.getBool('${_prefix}backgroundEnabled') ?? backgroundEnabled;
     chargingOnly = p.getBool('${_prefix}chargingOnly') ?? chargingOnly;
+    lockedEnabled = p.getBool('${_prefix}lockedEnabled') ?? lockedEnabled;
     mode =
         AiRunMode.values[(p.getInt('${_prefix}mode') ?? mode.index).clamp(
           0,
@@ -153,6 +160,21 @@ class AiRuntimeSettings extends ChangeNotifier {
     await _changed();
   }
 
+  Future<void> setLockedEnabled(bool value) async {
+    lockedEnabled = value;
+    await _changed();
+  }
+
+  /// Entering or leaving a background window. The engine restarts on the new
+  /// backend, like any other change to how it runs.
+  Future<void> setCpuOnly(bool value) async {
+    if (_cpuOnly == value) return;
+    _cpuOnly = value;
+    engineRevision++;
+    await _applyEngineConfig();
+    notifyListeners();
+  }
+
   Future<void> setChargingOnly(bool value) async {
     chargingOnly = value;
     await _changed();
@@ -203,6 +225,7 @@ class AiRuntimeSettings extends ChangeNotifier {
       await Future.wait([
         p.setBool('${_prefix}backgroundEnabled', backgroundEnabled),
         p.setBool('${_prefix}chargingOnly', chargingOnly),
+        p.setBool('${_prefix}lockedEnabled', lockedEnabled),
         p.setInt('${_prefix}mode', mode.index),
         p.setInt('${_prefix}batteryFloor', batteryFloor),
         p.setInt('${_prefix}idleMinutes', idleMinutes),
@@ -217,7 +240,7 @@ class AiRuntimeSettings extends ChangeNotifier {
 
   Future<void> _applyEngineConfig() => setAiRuntimeConfig(
     mode: mode.index,
-    backend: backend.index,
+    backend: _cpuOnly ? AiBackend.cpu.index : backend.index,
     threadLimit: threadLimit,
     thermalBias: thermalBias.index,
     totalMemoryMb: BigInt.from(detectedMemoryMb ?? 0),

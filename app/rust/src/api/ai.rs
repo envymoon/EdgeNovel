@@ -585,6 +585,12 @@ fn ensure(
         .map(OsStr::new),
     );
     args.extend(extra.iter().map(OsStr::new));
+    // -ngl 0 still hands big prompt batches to the GPU; off screen on iOS
+    // even that is refused, so on the CPU the GPU is not used at all.
+    #[cfg(in_process_engine)]
+    if config.backend == 1 {
+        args.extend(["--device", "none"].map(OsStr::new));
+    }
 
     #[cfg(not(in_process_engine))]
     let child = {

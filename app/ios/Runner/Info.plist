@@ -29,6 +29,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.novel.novel.analysis</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

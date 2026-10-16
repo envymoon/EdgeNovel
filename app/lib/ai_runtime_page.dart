@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
@@ -91,6 +92,15 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                     style: TextStyle(color: t.text, fontSize: 14),
                   ),
                 ),
+                if (defaultTargetPlatform == TargetPlatform.iOS)
+                  SwitchListTile(
+                    value: runtime.lockedEnabled,
+                    onChanged: runtime.setLockedEnabled,
+                    title: Text(
+                      '锁屏后用 CPU 继续',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 20),

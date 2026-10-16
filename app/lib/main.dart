@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -191,6 +192,54 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     reader.setReadingActive(_reading);
+    if (_backgroundWindows) _background.setMethodCallHandler(_onBackground);
+  }
+
+  // ── 锁屏后继续 ───────────────────────────────────────────────────────────
+  // iOS lends an app off screen a stretch of CPU when it sees fit (a
+  // BGProcessingTask, AppDelegate.swift). The queue runs in it on the CPU —
+  // the GPU belongs to the app on screen — and hands the window back when it
+  // is done, when it is waiting on something a window cannot fix, or when the
+  // system wants it back.
+  static const _background = MethodChannel('novel/background');
+  static bool get _backgroundWindows =>
+      defaultTargetPlatform == TargetPlatform.iOS;
+  bool _inWindow = false;
+  Timer? _windowWatch;
+
+  Future<dynamic> _onBackground(MethodCall call) async {
+    switch (call.method) {
+      case 'run':
+        await _enterWindow();
+      case 'expire':
+        await _leaveWindow(more: true, tell: false);
+    }
+  }
+
+  Future<void> _enterWindow() async {
+    final runtime = AiRuntimeSettings.instance;
+    if (!runtime.lockedEnabled || !reader.aiRunnable) {
+      await _background.invokeMethod('done', {'more': false});
+      return;
+    }
+    _inWindow = true;
+    await runtime.setCpuOnly(true);
+    reader.setAiExecutionAllowed(true);
+    _windowWatch?.cancel();
+    _windowWatch = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_inWindow && !reader.aiActive) {
+        unawaited(_leaveWindow(more: reader.aiRunnable));
+      }
+    });
+  }
+
+  Future<void> _leaveWindow({required bool more, bool tell = true}) async {
+    if (!_inWindow) return;
+    _inWindow = false;
+    _windowWatch?.cancel();
+    reader.setAiExecutionAllowed(false);
+    await AiRuntimeSettings.instance.setCpuOnly(false);
+    if (tell) await _background.invokeMethod('done', {'more': more});
   }
 
   @override
@@ -204,7 +253,23 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   /// Android and iOS may never give us an exit.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    reader.setAiExecutionAllowed(_executionPolicy.aiAllowedIn(state));
+    if (!_inWindow) {
+      reader.setAiExecutionAllowed(_executionPolicy.aiAllowedIn(state));
+    } else if (state == AppLifecycleState.resumed) {
+      // Back on screen mid-window: off the CPU, back onto the GPU.
+      unawaited(
+        _leaveWindow(
+          more: false,
+        ).then((_) => reader.setAiExecutionAllowed(true)),
+      );
+    }
+    if (_backgroundWindows &&
+        state == AppLifecycleState.paused &&
+        AiRuntimeSettings.instance.lockedEnabled &&
+        AppPlatformSupport.hasAiEngine &&
+        reader.aiRunnable) {
+      unawaited(_background.invokeMethod('schedule'));
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
