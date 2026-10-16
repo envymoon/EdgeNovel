@@ -10,7 +10,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MACOSX_BUNDLE OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# The revisions of the Windows engine (experiments/qwen-tts), with its patch.
+# The revisions of the Windows engine (experiments/qwen-tts), with its patch,
+# and one of its own: as many CPU threads as performance cores, not half the
+# cores, which assumes SMT.
 set(EDGE_QWENTTS_COMMIT 177925ecc54fed51c868985efd7dd01a8ae4fa29)
 set(EDGE_QWENTTS_GGML_COMMIT 2be5947ac234d277714e824a5c7eb23880557543)
 include(FetchContent)
@@ -19,6 +21,7 @@ FetchContent_Declare(edge_qwentts
     URL_HASH SHA256=b86898c2e74bf4edea8cc875e8708bf13b1a4edf0ae52a4e76cd68d26edf473c
     TLS_VERIFY TRUE
     PATCH_COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/../../../experiments/qwen-tts/qwentts.patch"
+          COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/qwentts-threads.patch"
     # Sources only: its own CMakeLists builds the tools and the server.
     SOURCE_SUBDIR no-cmake)
 # The ggml it is pinned to. The patch lets the app say where the compiled Metal
