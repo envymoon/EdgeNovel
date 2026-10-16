@@ -654,9 +654,12 @@ class _ReaderPageState extends State<ReaderPage> {
               key: _scaffoldKey,
               extendBodyBehindAppBar: barsOverText,
               extendBody: barsOverText,
-              floatingActionButton:
-                  compact && showControls && !_annotationMode
-                  ? NightToggle(settings: widget.settings, floating: true)
+              floatingActionButton: compact
+                  ? NightToggle(
+                      settings: widget.settings,
+                      floating: true,
+                      visible: showControls && !_annotationMode,
+                    )
                   : null,
               floatingActionButtonLocation:
                   FloatingActionButtonLocation.startFloat,

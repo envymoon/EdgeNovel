@@ -9,10 +9,21 @@ class NightToggle extends StatelessWidget {
   final ReadingSettings settings;
   final bool floating;
 
-  const NightToggle({super.key, required this.settings, this.floating = false});
+  /// The reader keeps the button in its Scaffold and only hides it: a Scaffold
+  /// scales a floating button in each time one arrives, so it would rise into
+  /// place with every tap instead of being there with the bars.
+  final bool visible;
+
+  const NightToggle({
+    super.key,
+    required this.settings,
+    this.floating = false,
+    this.visible = true,
+  });
 
   @override
   Widget build(BuildContext context) {
+    if (!visible) return const SizedBox.shrink();
     return ListenableBuilder(
       listenable: settings,
       builder: (context, _) {
