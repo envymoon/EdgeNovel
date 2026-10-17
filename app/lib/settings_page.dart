@@ -4,10 +4,12 @@ import 'app_localizations.dart';
 import 'appearance_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
+import 'feedback_page.dart';
 import 'font_page.dart';
 import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
+import 'storage_page.dart';
 import 'theme.dart';
 import 'youshu_login_page.dart';
 
@@ -215,6 +217,17 @@ class SettingsPage extends StatelessWidget {
                   children: [
                     _entry(
                       t,
+                      icon: Icons.storage_outlined,
+                      title: '存储空间',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StoragePage(settings: settings),
+                        ),
+                      ),
+                    ),
+                    _entry(
+                      t,
                       icon: Icons.history_toggle_off,
                       title: '清空阅读记录',
                       destructive: true,
@@ -228,6 +241,20 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.chat_bubble_outline,
+                      title: '意见反馈',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FeedbackPage(
+                            settings: settings,
+                            version: appVersion,
+                          ),
+                        ),
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.info_outline,

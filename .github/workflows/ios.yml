@@ -55,6 +55,7 @@ jobs:
           test/model_download_test.dart
           test/tts_chapters_test.dart
           test/tts_text_test.dart
+          test/feedback_test.dart
 
       # The whole Xcode log goes into the artifact; a failure prints its errors.
       - name: Build for the simulator
