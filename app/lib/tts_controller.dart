@@ -57,8 +57,9 @@ class TtsController extends ChangeNotifier {
   /// iPhone: chapters spoken ahead are played, and nothing else.
   static bool get _byChapter => AppPlatformSupport.speaksByChapter;
 
-  /// The chapter playing, while [_byChapter].
+  /// The chapter playing, while [_byChapter], and the piece of it.
   SpokenChapter? _spoken;
+  int _piece = 0;
   Duration? _pausedAt;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<void>? _completeSub;
@@ -171,7 +172,8 @@ class TtsController extends ChangeNotifier {
     playing = false;
     _gen++;
     if (_byChapter) {
-      _pausedAt = await _player?.getCurrentPosition();
+      final at = await _player?.getCurrentPosition();
+      _pausedAt = at == null ? null : _pieceStart + at;
       await _player?.pause();
       notifyListeners();
       return;
@@ -211,9 +213,7 @@ class TtsController extends ChangeNotifier {
     final spoken = _spoken;
     if (_byChapter && spoken != null) {
       _pausedAt = null;
-      if (playing) {
-        await _player?.seek(Duration(milliseconds: spoken.sentences[i].ms));
-      }
+      if (playing) await _seekSpoken(spoken.sentences[i].ms);
       notifyListeners();
       return;
     }
@@ -285,7 +285,7 @@ class TtsController extends ChangeNotifier {
       reader.chapterIndex,
     );
     if (spoken == null || spoken.sentences.isEmpty) throw '本章未合成';
-    if (_spoken?.path != spoken.path) _pausedAt = null;
+    if (_spoken?.id != spoken.id) _pausedAt = null;
     _spoken = spoken;
     _utts = _spokenUtts(spoken);
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
@@ -313,14 +313,37 @@ class TtsController extends ChangeNotifier {
     for (final s in spoken.sentences) TtsUtt(s.paragraph, s.start, s.end, ''),
   ];
 
+  /// Where the piece playing starts in the chapter.
+  Duration get _pieceStart {
+    final pieces = _spoken?.pieces;
+    return pieces == null || _piece >= pieces.length
+        ? Duration.zero
+        : Duration(milliseconds: pieces[_piece].ms);
+  }
+
+  /// To [ms] into the chapter: within the piece playing, or in the one it
+  /// falls in.
+  Future<void> _seekSpoken(int ms) async {
+    final at = Duration(milliseconds: ms);
+    if (_spoken?.pieceAt(at) == _piece) {
+      await _player?.seek(at - _pieceStart);
+    } else {
+      await _playSpoken(_gen, at);
+    }
+  }
+
+  /// Plays from [at] into the chapter, in the piece it falls in.
   Future<void> _playSpoken(int gen, Duration at) async {
     final player = _player;
     final spoken = _spoken;
     if (player == null || spoken == null) return;
-    TtsChapters.instance.playing = spoken.path;
-    await player.setSource(DeviceFileSource(spoken.path));
+    _piece = spoken.pieceAt(at);
+    final piece = spoken.pieces[_piece];
+    TtsChapters.instance.playing = piece.path;
+    await player.setSource(DeviceFileSource(piece.path));
     if (gen != _gen) return;
-    if (at > Duration.zero) await player.seek(at);
+    final within = at - Duration(milliseconds: piece.ms);
+    if (within > Duration.zero) await player.seek(within);
     await player.setPlaybackRate(speed);
     if (gen != _gen) return;
     await player.resume();
@@ -329,7 +352,7 @@ class TtsController extends ChangeNotifier {
   void _onSpokenPosition(Duration at) {
     final spoken = _spoken;
     if (!playing || spoken == null || _utts.isEmpty) return;
-    final i = spoken.sentenceAt(at).clamp(0, _utts.length - 1);
+    final i = spoken.sentenceAt(_pieceStart + at).clamp(0, _utts.length - 1);
     if (i == _pos) return;
     _pos = i;
     final u = _utts[i];
@@ -345,6 +368,11 @@ class TtsController extends ChangeNotifier {
     final was = _spoken;
     if (!playing || was == null) return;
     final gen = _gen;
+    // On into the chapter's next piece.
+    if (_piece + 1 < was.pieces.length) {
+      await _playSpoken(gen, Duration(milliseconds: was.pieces[_piece + 1].ms));
+      return;
+    }
     final info = reader.info;
     if (!was.complete) {
       final now = info == null

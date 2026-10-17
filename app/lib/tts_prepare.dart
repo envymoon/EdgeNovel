@@ -171,13 +171,13 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
   ) async {
     final store = TtsChapters.instance;
     // What there is to say, leaving out the chapters already spoken in this
-    // voice.
+    // voice; one spoken in part carries on.
     final work = <(int, List<TtsUtt>)>[];
     try {
       for (var c = from; c < end; c++) {
         final kept = await store.chapter(book, c);
         if (gen != _gen) return;
-        if (kept != null && kept.voice == voice) continue;
+        if (kept != null && kept.complete && kept.voice == voice) continue;
         final paras = await chapterParagraphs(path: book.path, index: c);
         if (gen != _gen) return;
         final utts = chapterUtterances(paras);
