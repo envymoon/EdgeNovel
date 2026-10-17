@@ -374,7 +374,7 @@ diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
  // Batch engine: drives up to pt->max_batch concurrent synthesis slots
 diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 --- pbase/src/qwen.cpp	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/qwen.cpp	2026-10-17 15:42:59.743490100 -0700
++++ work/src/qwen.cpp	2026-10-17 16:49:26.366506900 -0700
 @@ -25,7 +25,9 @@
  #include "timer.h"
  #include "version.h"
@@ -385,7 +385,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
  #include <cctype>
  #include <condition_variable>
  #include <cstdarg>
-@@ -796,3 +798,397 @@
+@@ -796,3 +798,411 @@
  }
  
  }  // extern "C"
@@ -629,9 +629,19 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    diag_profile(q->pt.codec.backend, diag_codec_graph(&q->pt.codec, 3, N), label, f);
 +}
 +
++// Bytes to <report>.<what>, for a setting's to be held against another's.
++void diag_dump(const char * report, const char * what, const void * data, size_t bytes) {
++    std::string path = std::string(report) + "." + what;
++    if (FILE * o = fopen(path.c_str(), "wb")) {
++        fwrite(data, 1, bytes, o);
++        fclose(o);
++    }
++}
++
 +// The lone run's codes through 1, 2 and 4 codec lanes at once, 8 frames
-+// a chunk: every lane's audio against the one lane's.
-+void diag_codec(qt_context * q, const DiagRun & ref, FILE * f) {
++// a chunk: every lane's audio against the one lane's. The codes, and the
++// audio of one lane and of the first of four, go beside the report.
++void diag_codec(qt_context * q, const DiagRun & ref, FILE * f, const char * report) {
 +    PipelineCodec * pc  = &q->pt.codec;
 +    const int       K   = q->pt.num_code_groups;
 +    const int       hop = TOKENIZER_HOP_LENGTH;
@@ -678,6 +688,9 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +        }
 +        if (M == 1) {
 +            one = lanes[0];
++        }
++        if (M == 1 || M == 4) {
++            diag_dump(report, M == 1 ? "codec1" : "codec4", lanes[0].data(), lanes[0].size() * sizeof(float));
 +        }
 +        fprintf(f, "[codec] M=%d · %d frames a lane · %.1f ms · %.2f ms a frame · SNR against one lane:", M, F, ms,
 +                ms / (double) F / (double) M);
@@ -776,7 +789,8 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +                fflush(f);
 +            }
 +        }
-+        diag_codec(q, ref[0], f);
++        diag_dump(report_path, "codes", ref[0].codes.data(), ref[0].codes.size() * sizeof(ref[0].codes[0]));
++        diag_codec(q, ref[0], f, report_path);
 +    } catch (const std::exception & e) {
 +        fprintf(f, "[diag] %s\n", e.what());
 +    }

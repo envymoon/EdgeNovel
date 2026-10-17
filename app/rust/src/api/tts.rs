@@ -776,20 +776,24 @@ mod engine {
 }
 
 /// The 听书 experiments (ios_tts/qwentts-experiments.patch): can the GPU
-/// speak several sentences at once and sound exactly as it does speaking one?
+/// speak several sentences at once and sound exactly as it does speaking one,
+/// and does the codec's data move faster with GGML_METAL_FAST_MOVE and come
+/// out the same to the bit?
 ///
 /// First the checks (qt_diag): one sentence alone, then two and four copies of
 /// it at once, compared frame by frame, under the engine as it is and under
-/// settings that each do one part of the GPU's arithmetic a plainer way, so a
+/// settings that each leave one fusion of the GPU's arithmetic out, so a
 /// difference can be put down to the part that makes it; what every part of
-/// the voice costs comes with them. Then the timings: the same sentences with
-/// the same seed, one at a time as the app speaks now and two and four at
-/// once under the first setting the checks passed, kept as WAVs to compare by
-/// ear and by experiments/qwen-tts/compare.py. They run there and back
-/// (ABBA), so a phone warming up costs every one alike. Nothing here changes
-/// what the app does: that is `engine.json` ([`tuned`]). Run by the
-/// tts_experiments test in CI, and on a phone launched with
-/// NOVEL_TTS_EXPERIMENT set ([`init_tts`]).
+/// the voice costs comes with them, with the data moved either way. The codes
+/// and audio of the settings with FAST_MOVE are held against the same
+/// settings without it, byte for byte. Then the timings: the same sentences
+/// with the same seed, one at a time and four at once, under the setting the
+/// checks chose and under it with FAST_MOVE, kept as WAVs to compare by ear
+/// and by experiments/qwen-tts/compare.py. They run there and back (ABBA), so
+/// a phone warming up costs every one alike. Nothing here changes what the
+/// app does: that is `engine.json` ([`tuned`]). Run by the tts_experiments
+/// test in CI, and on a phone launched with NOVEL_TTS_EXPERIMENT set
+/// ([`init_tts`]).
 #[cfg(in_process_engine)]
 mod experiment {
     use super::*;
@@ -802,16 +806,23 @@ mod experiment {
     /// While the experiments run: they set the engine up themselves.
     pub(super) static RUNNING: AtomicBool = AtomicBool::new(false);
 
+    const FAST: (&str, &str) = ("GGML_METAL_FAST_MOVE", "1");
+
     /// The settings the checks run under, the voice loaded for four sentences
     /// at once. Only the first on a CPU, where the others change nothing.
-    static CHECKS: [(&str, &[(&str, &str)]); 6] = [
+    static CHECKS: [(&str, &[(&str, &str)]); 8] = [
         ("default", &[]),
+        ("fast", &[FAST]),
         ("noaddb", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_batch")]),
         ("noaddp", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_part")]),
         ("noadd", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add")]),
         ("nosnake", &[("GGML_METAL_FUSION_SKIP", "snake")]),
         ("nofuse", &[("GGML_METAL_FUSION_DISABLE", "1")]),
+        ("nofuse-fast", &[("GGML_METAL_FUSION_DISABLE", "1"), FAST]),
     ];
+
+    /// Each setting with FAST_MOVE and the one it should match to the byte.
+    static SAME: [(&str, &str); 2] = [("fast", "default"), ("nofuse-fast", "nofuse")];
 
     /// The sentence the checks speak, and how many frames of it.
     const CHECK_LINE: usize = 3;
@@ -843,7 +854,13 @@ mod experiment {
     }
 
     fn clear_vars() {
-        let knobs = ["GGML_METAL_FUSION_DISABLE", "GGML_METAL_MMA_DISABLE", "GGML_METAL_MV_EXT_DISABLE", "EDGE_TTS_FA"];
+        let knobs = [
+            "GGML_METAL_FUSION_DISABLE",
+            "GGML_METAL_MMA_DISABLE",
+            "GGML_METAL_MV_EXT_DISABLE",
+            "GGML_METAL_FAST_MOVE",
+            "EDGE_TTS_FA",
+        ];
         for var in CHECKS.iter().flat_map(|(_, vars)| vars.iter().map(|(var, _)| *var)).chain(knobs) {
             std::env::remove_var(var);
         }
@@ -886,13 +903,15 @@ mod experiment {
     }
 
     /// Every check, greedy and sampled, each into check-<setting>-<mode>.txt;
-    /// the parts' costs once, with the first. The first setting under which
-    /// two and four sentences at once came out as one alone does is the one
-    /// the timings use (the engine as it is when none did).
+    /// the parts' costs with the first and with each FAST_MOVE one. The first
+    /// setting without FAST_MOVE under which two and four sentences at once
+    /// came out as one alone does is the one the timings use (the engine as
+    /// it is when none did).
     fn checks(out: &Path, log: &mut String) -> Result<&'static [(&'static str, &'static str)], String> {
         let all = if engine::gpu() { &CHECKS[..] } else { &CHECKS[..1] };
         let mut chosen = None;
         for (i, (name, vars)) in all.iter().enumerate() {
+            let fast = vars.contains(&FAST);
             load(vars, 4).map_err(|e| format!("{name}：{e}"))?;
             let mut same = true;
             for greedy in [true, false] {
@@ -902,7 +921,7 @@ mod experiment {
                 let mode = if greedy { "greedy" } else { "sampled" };
                 let file = out.join(format!("check-{name}-{mode}.txt"));
                 let _busy = InFlight::new();
-                engine::diag(LINES[CHECK_LINE], VOICE, CHECK_FRAMES, greedy, i == 0 && greedy, &file)
+                engine::diag(LINES[CHECK_LINE], VOICE, CHECK_FRAMES, greedy, (i == 0 || fast) && greedy, &file)
                     .map_err(|e| format!("{name}：{e}"))?;
                 let report = std::fs::read_to_string(&file).unwrap_or_default();
                 for line in report.lines().filter(|l| l.starts_with("RESULT")) {
@@ -915,13 +934,36 @@ mod experiment {
                 }
             }
             note(out, log, format!("[{name}] {}", if same { "几句同时合成与单句一致" } else { "几句同时合成与单句不一致" }));
-            if same && chosen.is_none() {
+            if same && !fast && chosen.is_none() {
                 chosen = Some(*vars);
+            }
+        }
+        for (fast, plain) in SAME {
+            if all.iter().any(|(name, _)| *name == fast) {
+                byte_for_byte(out, log, fast, plain);
             }
         }
         let chosen = chosen.unwrap_or(&[]);
         note(out, log, format!("[计时用] {chosen:?}"));
         Ok(chosen)
+    }
+
+    /// Whether setting `fast` gave the codes and the codec's audio, one lane
+    /// and four, that setting `plain` did, to the byte.
+    fn byte_for_byte(out: &Path, log: &mut String, fast: &str, plain: &str) {
+        let mut parts = Vec::new();
+        let mut all = true;
+        for (what, label) in [("codes", "码"), ("codec1", "一路解码"), ("codec4", "四路解码")] {
+            let read = |name: &str| std::fs::read(out.join(format!("check-{name}-greedy.txt.{what}"))).ok();
+            let same = match (read(fast), read(plain)) {
+                (Some(a), Some(b)) => !a.is_empty() && a == b,
+                _ => false,
+            };
+            all &= same;
+            parts.push(format!("{label}{}", if same { "相同" } else { "不同" }));
+        }
+        note(out, log, format!("[逐位] {fast} 对 {plain}：{}", parts.join(" · ")));
+        note(out, log, format!("RESULT same {fast} {plain} {}", all as u8));
     }
 
     /// Whether, greedy, every lane of two and of four came out alike and like
@@ -953,14 +995,23 @@ mod experiment {
         batches > 0
     }
 
-    /// The sentences one at a time, then two and four at once under `chosen`.
+    /// The sentences one at a time and four at once, under `chosen` and
+    /// under it with FAST_MOVE.
     fn timings(out: &Path, log: &mut String, rounds: usize, chosen: &[(&str, &str)]) -> Result<(), String> {
-        let with = |n: &'static str| {
+        let with = |n: &'static str, fast: bool| {
             let mut v = chosen.to_vec();
+            if fast {
+                v.push(FAST);
+            }
             v.push(("EDGE_TTS_BATCH", n));
             v
         };
-        let settings: [(&str, Vec<(&str, &str)>); 3] = [("base", Vec::new()), ("b2", with("2")), ("b4", with("4"))];
+        let settings: [(&str, Vec<(&str, &str)>); 4] = [
+            ("base", with("1", false)),
+            ("b4", with("4", false)),
+            ("b4fast", with("4", true)),
+            ("basefast", with("1", true)),
+        ];
         for round in 1..=rounds {
             let mut order: Vec<_> = settings.iter().collect();
             if round % 2 == 0 {
