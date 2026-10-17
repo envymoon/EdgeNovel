@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -94,12 +96,18 @@ class AiRuntimeSettings extends ChangeNotifier {
     AiRunMode.fast => '使用较高性能连续完成，仍保留温度保护',
   };
 
+  static final bool _ttsExperiment =
+      Platform.environment.containsKey('NOVEL_TTS_EXPERIMENT');
+
   String? waitingReason(
     AiDeviceState state, {
     required bool reading,
     bool forceNow = false,
   }) {
     if (forceNow) return null;
+    // A phone launched for the 听书 experiments (tts.rs) leaves the GPU to
+    // them.
+    if (_ttsExperiment) return '听书实验中';
     // On iOS the switch is 允许阅读时后台处理: off, the queue makes way on
     // the reader's page and runs everywhere else in the app.
     final ios = defaultTargetPlatform == TargetPlatform.iOS;

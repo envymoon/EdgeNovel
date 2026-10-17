@@ -83,7 +83,16 @@ pub fn init_tts(dir: String) -> Result<(), String> {
     std::fs::create_dir_all(&p).map_err(|e| format!("建朗读目录失败: {e}"))?;
     #[cfg(in_process_engine)]
     engine::prepare(&p);
-    let _ = TTS_DIR.set(p);
+    let _ = TTS_DIR.set(p.clone());
+    // A phone launched for the 听书 experiments runs them once, a little
+    // after the app is up, into tts/experiment.
+    #[cfg(in_process_engine)]
+    if std::env::var_os("NOVEL_TTS_EXPERIMENT").is_some() {
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(15));
+            let _ = experiment::run(&p.join("experiment"), 2);
+        });
+    }
     Ok(())
 }
 
@@ -570,6 +579,7 @@ mod engine {
         fn edge_tts_unload();
         fn edge_tts_background() -> c_int;
         fn edge_tts_gpu() -> c_int;
+        fn edge_tts_keep_awake(on: c_int);
         fn edge_tts_error() -> *const c_char;
         fn edge_tts_speak(
             text: *const c_char,
@@ -627,6 +637,11 @@ mod engine {
     /// Whether this GPU can run the voice (edge_tts.mm).
     pub fn gpu() -> bool {
         unsafe { edge_tts_gpu() != 0 }
+    }
+
+    /// The screen kept on, or let go (edge_tts.mm).
+    pub fn keep_awake(on: bool) {
+        unsafe { edge_tts_keep_awake(on as c_int) }
     }
 
     /// On the GPU with the app behind the screen: it has to move.
@@ -690,6 +705,180 @@ mod engine {
             return Err(format!("语音合成失败: {}", error()));
         }
         Ok(pcm)
+    }
+}
+
+/// The 听书 speed experiments (ios_tts/qwentts-experiments.patch): the same
+/// sentences with the same seed under each setting, timed and kept as WAVs, so
+/// that a faster setting is checked against the plain one, by ear and by
+/// experiments/qwen-tts/compare.py, before anything uses it. The settings run
+/// there and back (ABBA), so a phone warming up costs every one alike. Run by
+/// the tts_experiments test in CI, and on a phone launched with
+/// NOVEL_TTS_EXPERIMENT set ([`init_tts`]).
+#[cfg(in_process_engine)]
+mod experiment {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::Arc;
+
+    const SEED: &str = "20261016";
+    const VOICE: &str = "uncle_fu";
+
+    /// The engine's environment at load for each; the plain one sets nothing.
+    static SETTINGS: [(&str, &[(&str, &str)]); 5] = [
+        ("base", &[]),
+        ("chunk16", &[("QWEN_TTS_CODEC_MAX", "16")]),
+        ("chunk32", &[("QWEN_TTS_CODEC_MAX", "32")]),
+        ("thread", &[("QWEN_TTS_CODEC_THREAD", "1")]),
+        ("batch2", &[("EDGE_TTS_BATCH", "2")]),
+    ];
+
+    /// Short to long, with characters that are read more than one way.
+    static LINES: [&str; 8] = [
+        "天快黑了，我们回家吧。",
+        "长街尽头有一家老茶馆，掌柜的总爱给客人讲从前的故事。",
+        "重新开始并不难，难的是承认自己曾经走错了路。",
+        "她把信折好放进抽屉，又拿出来看了一遍，终于还是没有寄出去。",
+        "这件事说起来复杂，其实道理很简单：谁也不愿意被别人当成傻子。",
+        "山里的雨说来就来，行人纷纷躲到屋檐下，只有那个背着竹篓的少年还在慢慢地走。",
+        "先生说，读书好比种树，头几年看不出什么，等到枝叶长成了，乘凉的人自然就来了。",
+        "他一口气跑到河边，弯下腰大口喘气，抬头的时候，对岸的灯火已经一盏接一盏地亮了起来，像是有人在那边等他。",
+    ];
+
+    struct Clip {
+        line: usize,
+        took: f64,
+        pcm: Vec<u8>,
+    }
+
+    fn note(out: &Path, log: &mut String, line: String) {
+        println!("{line}");
+        log.push_str(&line);
+        log.push('\n');
+        let _ = std::fs::write(out.join("results.txt"), &*log);
+    }
+
+    fn clear_vars() {
+        for (var, _) in SETTINGS.iter().flat_map(|(_, vars)| vars.iter()) {
+            std::env::remove_var(var);
+        }
+    }
+
+    pub(super) fn run(out: &Path, rounds: usize) -> Result<(), String> {
+        std::fs::create_dir_all(out).map_err(|e| format!("建实验目录失败: {e}"))?;
+        let _ = std::fs::remove_file(out.join("done.txt"));
+        std::fs::write(out.join("lines.txt"), LINES.join("\n") + "\n").map_err(|e| e.to_string())?;
+        let mut log = String::new();
+        note(out, &mut log, format!("[实验] GPU {} · 种子 {SEED} · 音色 {VOICE} · {rounds} 轮", engine::gpu()));
+        std::env::set_var("EDGE_TTS_SEED", SEED);
+        engine::keep_awake(true);
+        let mut result = Ok(());
+        'rounds: for round in 1..=rounds {
+            let mut order: Vec<_> = SETTINGS.iter().collect();
+            if round % 2 == 0 {
+                order.reverse();
+            }
+            for (name, vars) in order {
+                result = setting(out, &mut log, round, name, vars);
+                if result.is_err() {
+                    break 'rounds;
+                }
+            }
+        }
+        clear_vars();
+        std::env::remove_var("EDGE_TTS_SEED");
+        stop_tts();
+        engine::keep_awake(false);
+        let end = match &result {
+            Ok(()) => "完成".to_string(),
+            Err(e) => format!("中止：{e}"),
+        };
+        note(out, &mut log, format!("[实验] {end}"));
+        let _ = std::fs::write(out.join("done.txt"), &end);
+        result
+    }
+
+    /// One setting, one round: loaded afresh with its environment, then every
+    /// sentence, one at a time or as many at once as it batches.
+    fn setting(out: &Path, log: &mut String, round: usize, name: &str, vars: &[(&str, &str)]) -> Result<(), String> {
+        stop_tts();
+        clear_vars();
+        for (var, value) in vars {
+            std::env::set_var(var, value);
+        }
+        let lanes: usize =
+            vars.iter().find(|(var, _)| *var == "EDGE_TTS_BATCH").and_then(|(_, v)| v.parse().ok()).unwrap_or(1);
+        // The idle watcher leaves a voice in use alone.
+        let _busy = InFlight::new();
+        let peak = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let sampler = {
+            let (peak, stop) = (peak.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    peak.fetch_max(crate::engine_thread::footprint().0, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            })
+        };
+        let t = Instant::now();
+        let spoken = ensure().and_then(|_| {
+            let load = t.elapsed().as_secs_f64();
+            Ok((load, speak_all(lanes)?))
+        });
+        stop.store(true, Ordering::Relaxed);
+        let _ = sampler.join();
+        let (load, (wall, clips)) = spoken.map_err(|e| format!("{name} 第 {round} 轮：{e}"))?;
+        let mut audio = 0.0;
+        for c in &clips {
+            let secs = c.pcm.len() as f64 / 48000.0;
+            audio += secs;
+            let file = out.join(format!("{name}-r{round}-{}.wav", c.line + 1));
+            std::fs::write(&file, wav(&c.pcm)).map_err(|e| format!("写 WAV 失败: {e}"))?;
+            let rtf = c.took / secs.max(0.01);
+            note(out, log, format!("  {name} r{round} 第{}句 {secs:.2} 秒语音用 {:.2} 秒 · RTF {rtf:.2}", c.line + 1, c.took));
+        }
+        let rtf = wall / audio.max(0.01);
+        let mb = peak.load(Ordering::Relaxed) >> 20;
+        note(
+            out,
+            log,
+            format!("[{name} r{round}] 载入 {load:.1} 秒 · {audio:.1} 秒语音共用 {wall:.1} 秒 · RTF {rtf:.2} · 内存最高 {mb} MB"),
+        );
+        Ok(())
+    }
+
+    /// Every sentence, `lanes` at a time: each worker takes the next one as
+    /// it finishes the last, the way a reader's queue would hand them out.
+    fn speak_all(lanes: usize) -> Result<(f64, Vec<Clip>), String> {
+        let next = AtomicUsize::new(0);
+        let clips = Mutex::new(Vec::new());
+        let t = Instant::now();
+        std::thread::scope(|s| {
+            let workers: Vec<_> = (0..lanes)
+                .map(|_| {
+                    s.spawn(|| -> Result<(), String> {
+                        loop {
+                            let i = next.fetch_add(1, Ordering::SeqCst);
+                            let Some(line) = LINES.get(i) else { return Ok(()) };
+                            if engine::background() {
+                                return Err("应用退到了后台".into());
+                            }
+                            let t = Instant::now();
+                            let pcm = engine::speak(line, VOICE, max_frames(line))?;
+                            if pcm.is_empty() {
+                                return Err(format!("第{}句为空", i + 1));
+                            }
+                            clips.lock().unwrap().push(Clip { line: i, took: t.elapsed().as_secs_f64(), pcm });
+                        }
+                    })
+                })
+                .collect();
+            workers.into_iter().try_for_each(|w| w.join().unwrap_or_else(|_| Err("线程崩溃".into())))
+        })?;
+        let mut clips = clips.into_inner().unwrap();
+        clips.sort_by_key(|c| c.line);
+        Ok((t.elapsed().as_secs_f64(), clips))
     }
 }
 
@@ -782,6 +971,18 @@ mod tests {
         stop_tts();
         assert!(!health());
         memory("结束");
+    }
+
+    /// The 听书 experiments ([`experiment`]) where CI runs them: NOVEL_TTS_DIR
+    /// holds the voice, the results and WAVs go to NOVEL_TTS_EXP_OUT.
+    #[cfg(in_process_engine)]
+    #[test]
+    #[ignore]
+    fn tts_experiments() {
+        init_tts(std::env::var("NOVEL_TTS_DIR").expect("set NOVEL_TTS_DIR")).unwrap();
+        assert!(tts_ready().unwrap());
+        let out = std::env::var("NOVEL_TTS_EXP_OUT").expect("set NOVEL_TTS_EXP_OUT");
+        experiment::run(Path::new(&out), 2).unwrap();
     }
 
     /// Needs the engine and the voice in %APPDATA%\com.novel\novel\tts.

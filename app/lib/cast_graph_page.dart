@@ -364,7 +364,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
           if (!widget.overviewDone && AppPlatformSupport.hasAiEngine) ...[
             const SizedBox(height: 4),
             Text(
-              '先跑完章节概览，人物关系更完整',
+              '先跑完全书章节概览，人物关系更准确',
               style: TextStyle(color: t.muted, fontSize: 11),
             ),
           ],

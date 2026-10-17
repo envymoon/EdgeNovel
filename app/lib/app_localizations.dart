@@ -307,7 +307,8 @@ const _english = <String, String>{
   '正在打开书籍…': 'Opening book…',
   '正在启动本机引擎…': 'Starting local engine…',
   '启动中…': 'Starting…',
-  '先跑完章节概览，人物关系更完整': 'Finish the chapter overview for fuller relationships',
+  '先跑完全书章节概览，人物关系更准确':
+      "Finish the whole book's chapter overview for more accurate relationships",
   '中断': 'Interrupt',
   '排雷需要检索模型': 'Content-warning search requires a search model',
   '纯粹相关嫌疑片段，仅作参考': 'Potentially relevant passages for reference only',
@@ -384,6 +385,7 @@ const _english = <String, String>{
   '等待接通电源': 'Waiting for power',
   '设备温度较高，等待冷却': 'Device is warm; waiting to cool down',
   '正在阅读，AI 已让路': 'Reading in progress; AI is paused',
+  '听书实验中': 'Read-aloud test running',
   '等待检测': 'Waiting for device check',
   '重新检测': 'Check again',
   '管理 AI 数据': 'Manage AI data',

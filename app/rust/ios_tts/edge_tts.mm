@@ -9,15 +9,19 @@
 #import <Metal/Metal.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 
-static std::mutex        g_mutex;  // one voice, one sentence at a time
-static qt_context *      g_ctx = nullptr;
-static bool              g_gpu = false;
-static std::atomic<bool> g_cancel{false};
-static std::atomic<bool> g_background{false};
-static std::string       g_error;
+// One voice. Sentences share it: the engine takes as many at once as it was
+// loaded for (EDGE_TTS_BATCH, 1 unless set) and queues the rest.
+static std::shared_mutex     g_mutex;
+static qt_context *          g_ctx = nullptr;
+static bool                  g_gpu = false;
+static std::atomic<bool>     g_cancel{false};
+static std::atomic<bool>     g_background{false};
+static thread_local std::string g_error;
 
 // Behind the screen (1) or back (0). iOS refuses GPU work from an app behind
 // the screen, and listening goes on with the screen locked: the sentence on
@@ -56,6 +60,16 @@ static void watch_app() {
     });
 }
 
+// The screen kept on (1) or let go (0), for the 听书 experiments: a phone that
+// locks moves the voice to the CPU. UIKit by name, as above; nothing on a Mac.
+extern "C" void edge_tts_keep_awake(int on) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id kind = NSClassFromString(@"UIApplication");
+        id app  = [kind valueForKey:@"sharedApplication"];
+        [app setValue:@(on != 0) forKey:@"idleTimerDisabled"];
+    });
+}
+
 // Whether the GPU can run the voice: ggml's Metal backend has some of the ops
 // it needs (RMS_NORM among them) only with SIMD-group reductions, which is
 // A13 and later (Metal 3) or A14 (Apple 7). The voice runs on one backend with
@@ -83,7 +97,7 @@ extern "C" int edge_tts_background(void) {
 extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     watch_app();
     gpu = gpu && edge_tts_gpu();
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::unique_lock<std::shared_mutex> lock(g_mutex);
     if (g_ctx) {
         qt_free(g_ctx);
         g_ctx = nullptr;
@@ -93,6 +107,9 @@ extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     p.talker_path = talker;
     p.codec_path  = codec;
     p.device      = gpu ? nullptr : "CPU";
+    if (const char * batch = getenv("EDGE_TTS_BATCH")) {
+        p.max_batch = atoi(batch) > 1 ? atoi(batch) : 1;
+    }
     g_ctx         = qt_init(&p);
     g_gpu         = gpu != 0;
     if (!g_ctx) {
@@ -103,7 +120,7 @@ extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
 }
 
 extern "C" void edge_tts_unload(void) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::unique_lock<std::shared_mutex> lock(g_mutex);
     if (g_ctx) {
         qt_free(g_ctx);
         g_ctx = nullptr;
@@ -122,7 +139,7 @@ struct pcm_sink {
 // `on_pcm`.
 extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_frames, edge_tts_pcm_cb on_pcm,
                               void * user) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::shared_lock<std::shared_mutex> lock(g_mutex);
     if (!g_ctx) {
         g_error = "voice not loaded";
         return QT_STATUS_INVALID_PARAMS;
@@ -136,6 +153,11 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
     p.lang           = "chinese";
     p.speaker        = speaker;
     p.max_new_tokens = max_frames;
+    // A fixed seed for the experiments, so settings can be compared sample
+    // by sample; a fresh one for every sentence otherwise.
+    if (const char * seed = getenv("EDGE_TTS_SEED")) {
+        p.seed = atoll(seed);
+    }
     p.cancel         = [](void *) -> bool { return g_cancel.load(); };
     p.on_chunk       = [](const float * s, int n, void * u) -> bool {
         auto * k = static_cast<pcm_sink *>(u);

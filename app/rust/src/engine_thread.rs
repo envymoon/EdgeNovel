@@ -142,7 +142,6 @@ pub(crate) fn api_key() -> Result<&'static str, String> {
 
 /// This process's memory as the kernel accounts it, in bytes: now and the most
 /// since it started. It is the number iOS ends an app by.
-#[cfg(test)]
 pub(crate) fn footprint() -> (u64, u64) {
     extern "C" {
         static mach_task_self_: u32;
