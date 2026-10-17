@@ -375,19 +375,22 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(pageInfo.value.$2, greaterThan(3));
-    // Page 2 opens in the middle of the first paragraph.
-    tester.state<PagedReaderState>(find.byType(PagedReader)).turn(1);
-    await tester.pump();
-    expect(pageInfo.value.$1, 2);
-
-    settings.setFontSize(settings.fontSize + 1);
-    await tester.pump();
-    await tester.pump();
-    settings.setFontSize(settings.fontSize - 1);
-    await tester.pump();
-    await tester.pump();
-    expect(pageInfo.value.$1, 2);
+    expect(pageInfo.value.$2, greaterThan(pageInfo.value.$1 + 3));
+    final pager = tester.state<PagedReaderState>(find.byType(PagedReader));
+    // These paragraphs run to two pages and more, so of three pages in a row
+    // at least one opens in the middle of a paragraph.
+    for (var i = 0; i < 3; i++) {
+      pager.turn(1);
+      await tester.pump();
+      final page = pageInfo.value.$1;
+      settings.setFontSize(settings.fontSize + 1);
+      await tester.pump();
+      await tester.pump();
+      settings.setFontSize(settings.fontSize - 1);
+      await tester.pump();
+      await tester.pump();
+      expect(pageInfo.value.$1, page);
+    }
     expect(tester.takeException(), isNull);
   });
 
