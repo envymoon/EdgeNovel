@@ -259,7 +259,7 @@ class AnalysisRunCard extends StatelessWidget {
           const SizedBox(height: 8),
           row(
             a == null || a.total == 0
-                ? '正在启动本机引擎…'
+                ? '启动中…'
                 : [
                     '${a.done} / ${a.total}',
                     if (a.remaining != null) formatRemaining(a.remaining!),

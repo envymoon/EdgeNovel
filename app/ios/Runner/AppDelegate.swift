@@ -23,6 +23,23 @@ import os
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
+  /// iOS woke the app for a download that finished while it was away: reopen
+  /// the session so its events arrive, and say when they have.
+  override func application(
+    _ application: UIApplication,
+    handleEventsForBackgroundURLSession identifier: String,
+    completionHandler: @escaping () -> Void
+  ) {
+    guard identifier == Transfers.identifier else {
+      super.application(
+        application, handleEventsForBackgroundURLSession: identifier,
+        completionHandler: completionHandler)
+      return
+    }
+    Transfers.shared.eventsDone = completionHandler
+    Transfers.shared.wake()
+  }
+
   private func run(_ task: BGProcessingTask) {
     // Launched off screen with nobody to run the queue: try again later.
     guard let channel = backgroundChannel else {
@@ -80,6 +97,15 @@ import os
       }
       backgroundChannel = channel
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelTransfer") {
+      let channel = FlutterMethodChannel(
+        name: "novel/transfer", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in Transfers.shared.handle(call, result) }
+      Transfers.shared.channel = channel
+      // Reconnect now, on this thread: tasks begun before the app last ended
+      // report in, and the session exists before Dart first asks for it.
+      Transfers.shared.wake()
+    }
   }
 
   /// What the AI queue waits on: how hot the phone is, its power, its memory.
@@ -121,5 +147,229 @@ import os
       "peak": Int(info.ledger_phys_footprint_peak),
       "left": Int(os_proc_available_memory()),
     ]
+  }
+}
+
+/// Downloads handed to iOS: a background URLSession goes on fetching while the
+/// app is suspended, and even after iOS has ended it. Dart asks for the rest of
+/// a file from an offset; the bytes are added to the end of its .part file,
+/// exactly where the app's own download would have written them.
+final class Transfers: NSObject, URLSessionDownloadDelegate {
+  static let shared = Transfers()
+  static let identifier = "com.novel.novel.transfer"
+
+  var channel: FlutterMethodChannel?
+  var eventsDone: (() -> Void)?
+
+  /// Start, pause and cancel, one at a time and in the order Dart sent them.
+  private let control = DispatchQueue(label: "com.novel.novel.transfer.control")
+  /// Touched only on the session's own queue.
+  private var lastProgress: [Int: CFAbsoluteTime] = [:]
+  private var failures: [Int: String] = [:]
+
+  private lazy var session: URLSession = {
+    let config = URLSessionConfiguration.background(withIdentifier: Transfers.identifier)
+    config.isDiscretionary = false
+    config.sessionSendsLaunchEvents = true
+    config.allowsCellularAccess = true
+    let queue = OperationQueue()
+    queue.maxConcurrentOperationCount = 1
+    return URLSession(configuration: config, delegate: self, delegateQueue: queue)
+  }()
+
+  func wake() { _ = session }
+
+  private struct Failure: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+  }
+
+  /// What a task is for, written on the task so it outlives the app:
+  /// "<offset>|<path of the .part file>".
+  private static func job(_ task: URLSessionTask) -> (part: String, offset: Int64)? {
+    guard let d = task.taskDescription, let bar = d.firstIndex(of: "|"),
+      let offset = Int64(d[..<bar])
+    else { return nil }
+    return (String(d[d.index(after: bar)...]), offset)
+  }
+
+  private static func resumeFile(_ part: String) -> String { part + ".resume" }
+
+  /// Bytes a stopped task had fetched, kept with the offset it started at.
+  private static func keep(_ data: Data, part: String, offset: Int64) {
+    let saved: NSDictionary = ["offset": NSNumber(value: offset), "data": data]
+    saved.write(toFile: resumeFile(part), atomically: true)
+  }
+
+  private func tasks(for part: String) -> [URLSessionTask] {
+    let done = DispatchSemaphore(value: 0)
+    var found: [URLSessionTask] = []
+    session.getAllTasks { all in
+      found = all.filter {
+        Transfers.job($0)?.part == part && ($0.state == .running || $0.state == .suspended)
+      }
+      done.signal()
+    }
+    done.wait()
+    return found
+  }
+
+  func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    guard let part = args["part"] as? String else {
+      result(FlutterError(code: "args", message: "part", details: nil))
+      return
+    }
+    control.async {
+      let running = self.tasks(for: part)
+      var reply: Any? = nil
+      switch call.method {
+      case "start":
+        // Already under way (the app was away, or ended and opened again).
+        if !running.isEmpty {
+          reply = "attached"
+          break
+        }
+        let offset = (args["offset"] as? NSNumber)?.int64Value ?? 0
+        var task: URLSessionDownloadTask?
+        if let saved = NSDictionary(contentsOfFile: Transfers.resumeFile(part)),
+          let data = saved["data"] as? Data,
+          (saved["offset"] as? NSNumber)?.int64Value == offset
+        {
+          task = self.session.downloadTask(withResumeData: data)
+        }
+        try? FileManager.default.removeItem(atPath: Transfers.resumeFile(part))
+        if task == nil {
+          guard let url = URL(string: args["url"] as? String ?? "") else {
+            reply = FlutterError(code: "url", message: "下载地址无效", details: nil)
+            break
+          }
+          var request = URLRequest(url: url)
+          request.setValue("novel-reader", forHTTPHeaderField: "User-Agent")
+          if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
+          task = self.session.downloadTask(with: request)
+        }
+        task!.taskDescription = "\(offset)|\(part)"
+        task!.resume()
+        reply = "started"
+      case "pause":
+        for task in running {
+          guard let download = task as? URLSessionDownloadTask,
+            let job = Transfers.job(task)
+          else {
+            task.cancel()
+            continue
+          }
+          download.cancel(byProducingResumeData: { data in
+            if let data = data { Transfers.keep(data, part: job.part, offset: job.offset) }
+          })
+        }
+      case "cancel":
+        running.forEach { $0.cancel() }
+        try? FileManager.default.removeItem(atPath: Transfers.resumeFile(part))
+      default:
+        reply = FlutterMethodNotImplemented
+      }
+      DispatchQueue.main.async { result(reply) }
+    }
+  }
+
+  private func send(_ method: String, _ args: [String: Any]) {
+    DispatchQueue.main.async { self.channel?.invokeMethod(method, arguments: args) }
+  }
+
+  func urlSession(
+    _ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64
+  ) {
+    guard let job = Transfers.job(downloadTask) else { return }
+    let now = CFAbsoluteTimeGetCurrent()
+    if now - (lastProgress[downloadTask.taskIdentifier] ?? 0) < 0.25 { return }
+    lastProgress[downloadTask.taskIdentifier] = now
+    // A 200 is the whole file, whatever was asked for.
+    let ranged = (downloadTask.response as? HTTPURLResponse)?.statusCode == 206
+    let base = ranged ? job.offset : 0
+    var event: [String: Any] = ["part": job.part, "received": base + totalBytesWritten]
+    if totalBytesExpectedToWrite > 0 { event["total"] = base + totalBytesExpectedToWrite }
+    send("progress", event)
+  }
+
+  func urlSession(
+    _ session: URLSession, downloadTask: URLSessionDownloadTask,
+    didFinishDownloadingTo location: URL
+  ) {
+    guard let job = Transfers.job(downloadTask) else { return }
+    let response = downloadTask.response as? HTTPURLResponse
+    let status = response?.statusCode ?? 0
+    let fm = FileManager.default
+    let size = ((try? fm.attributesOfItem(atPath: job.part))?[.size] as? NSNumber)?.int64Value ?? 0
+    do {
+      switch status {
+      case 200, 206 where job.offset == 0:
+        try? fm.removeItem(atPath: job.part)
+        try fm.moveItem(at: location, to: URL(fileURLWithPath: job.part))
+      case 206:
+        guard size == job.offset else { throw Failure("续传位置不对，请重新下载") }
+        try Transfers.append(location, to: job.part)
+      case 416:
+        // Asked for bytes past the end: the .part may be whole already.
+        let range = response?.allHeaderFields["Content-Range"] as? String ?? ""
+        let total = range.split(separator: "/").last.flatMap { Int64($0) }
+        if total == nil || total != size { throw Failure("HTTP 416") }
+      default:
+        throw Failure("HTTP \(status)")
+      }
+    } catch {
+      failures[downloadTask.taskIdentifier] = error.localizedDescription
+    }
+  }
+
+  private static func append(_ file: URL, to part: String) throws {
+    guard let input = InputStream(url: file),
+      let output = OutputStream(toFileAtPath: part, append: true)
+    else { throw Failure("写入下载文件失败") }
+    input.open()
+    output.open()
+    defer {
+      input.close()
+      output.close()
+    }
+    var buffer = [UInt8](repeating: 0, count: 1 << 20)
+    while true {
+      let n = input.read(&buffer, maxLength: buffer.count)
+      if n < 0 { throw input.streamError ?? Failure("读取下载文件失败") }
+      if n == 0 { return }
+      var written = 0
+      while written < n {
+        let w = buffer.withUnsafeBufferPointer {
+          output.write($0.baseAddress! + written, maxLength: n - written)
+        }
+        if w <= 0 { throw output.streamError ?? Failure("写入下载文件失败") }
+        written += w
+      }
+    }
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    guard let job = Transfers.job(task) else { return }
+    lastProgress[task.taskIdentifier] = nil
+    var event: [String: Any] = ["part": job.part]
+    if let error = error as NSError? {
+      if let data = error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+        Transfers.keep(data, part: job.part, offset: job.offset)
+      }
+      event["error"] = error.code == NSURLErrorCancelled ? "stopped" : error.localizedDescription
+    } else if let failure = failures[task.taskIdentifier] {
+      event["error"] = failure
+    }
+    failures[task.taskIdentifier] = nil
+    send("done", event)
+  }
+
+  func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+    DispatchQueue.main.async {
+      self.eventsDone?()
+      self.eventsDone = nil
+    }
   }
 }

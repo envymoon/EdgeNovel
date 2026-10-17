@@ -7,6 +7,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'annotation_page.dart';
 import 'app_localizations.dart';
+import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'bloom.dart';
@@ -174,6 +175,16 @@ class _ReaderPageState extends State<ReaderPage> {
     await _tts.onVoiceOrSpeedChanged();
   }
 
+  Future<void> _openVoiceDownload() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AiPage(settings: widget.settings, showVoice: true),
+      ),
+    );
+    await _tts.onVoiceOrSpeedChanged();
+  }
+
   void _onPrepareTick() {
     final job = TtsPrepare.instance;
     final why = job.error;
@@ -239,14 +250,15 @@ class _ReaderPageState extends State<ReaderPage> {
       await _tts.toggle();
     } catch (e) {
       if (!mounted) return;
-      // Only reachable on the local fallback: with no engine installed and no
-      // server set up, there is no voice at all, and either fix is a page away.
+      // Only reachable on the local fallback: with no voice installed and no
+      // server set up there is nothing to read with. The voice's download is
+      // on the AI page, not on the 听书 settings page.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$e'),
           action: SnackBarAction(
-            label: context.tr('去设置'),
-            onPressed: _openTtsSettings,
+            label: context.tr('去下载'),
+            onPressed: _openVoiceDownload,
           ),
         ),
       );
@@ -1095,7 +1107,12 @@ class _ReaderPageState extends State<ReaderPage> {
                   onPressed: _tts.toggle,
                 ),
           Expanded(
-            child: total > 1
+            child: _tts.buffering && !_tts.heard
+                ? Text(
+                    '启动中…',
+                    style: TextStyle(color: t.muted, fontSize: 13),
+                  )
+                : total > 1
                 ? SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 3,

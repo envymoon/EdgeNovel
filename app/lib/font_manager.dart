@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'model_download.dart';
 import 'platform_services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -230,62 +231,29 @@ class FontManager extends ChangeNotifier {
     notifyListeners();
 
     final target = _fileFor(pack);
-    final part = File('${target.path}.part');
-    Object? lastError;
     try {
-      for (final url in pack.downloadUrls) {
-        try {
-          if (await part.exists()) await part.delete();
-          await _downloadOne(url, part, pack.id);
-          if (await target.exists()) await target.delete();
-          await part.rename(target.path);
-          _installedIds.add(pack.id);
-          await ensureLoaded(pack);
-          _progress.remove(pack.id);
+      // Resumable, and on iOS run by the system, so it goes on when the app
+      // leaves the screen.
+      await ResumableFileDownload().downloadFirst(
+        pack.downloadUrls,
+        target,
+        onProgress: (received, total) {
+          _progress[pack.id] = total != null && total > 0
+              ? received / total
+              : null;
           notifyListeners();
-          return;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-      throw lastError ?? StateError('没有可用的下载地址');
+        },
+      );
+      _installedIds.add(pack.id);
+      await ensureLoaded(pack);
+      _progress.remove(pack.id);
+      notifyListeners();
     } catch (error) {
-      if (await part.exists()) await part.delete();
+      await ResumableFileDownload.discard(target);
       _progress.remove(pack.id);
       _errors[pack.id] = '$error';
       notifyListeners();
       rethrow;
-    }
-  }
-
-  Future<void> _downloadOne(String url, File part, String id) async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15);
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      final response = await request.close();
-      if (response.statusCode != HttpStatus.ok) {
-        throw HttpException(
-          '下载失败（${response.statusCode}）',
-          uri: Uri.parse(url),
-        );
-      }
-      final total = response.contentLength;
-      var received = 0;
-      final sink = part.openWrite();
-      try {
-        await for (final chunk in response) {
-          sink.add(chunk);
-          received += chunk.length;
-          _progress[id] = total > 0 ? received / total : null;
-          notifyListeners();
-        }
-      } finally {
-        await sink.close();
-      }
-      if (received == 0) throw const FormatException('下载内容为空');
-    } finally {
-      client.close(force: true);
     }
   }
 

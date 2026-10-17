@@ -427,7 +427,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
                         ' · ${p.done} / ${p.total}',
                     if (remaining != null) formatRemaining(remaining),
                   ].join(' · '),
-            detail: p == null || p.detail.isEmpty ? '正在启动本机引擎…' : p.detail,
+            detail: p == null || p.detail.isEmpty ? '启动中…' : p.detail,
             value: p == null || p.total == 0 ? null : p.done / p.total,
             color: t.muted,
             textColor: t.text,

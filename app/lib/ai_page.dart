@@ -37,7 +37,10 @@ const _llamaEngineUrls = [
 class AiPage extends StatefulWidget {
   final ReadingSettings settings;
 
-  const AiPage({super.key, required this.settings});
+  /// Opened for the reading voice (听书 found none): scroll to its download.
+  final bool showVoice;
+
+  const AiPage({super.key, required this.settings, this.showVoice = false});
 
   @override
   State<AiPage> createState() => _AiPageState();
@@ -78,6 +81,8 @@ class _AiPageState extends State<AiPage> {
   var _imgCancelled = false;
 
   Timer? _poll;
+  final _voiceRow = GlobalKey();
+  bool _shownVoice = false;
 
   @override
   void initState() {
@@ -126,6 +131,19 @@ class _AiPageState extends State<AiPage> {
         _chatPendingBytes = pending[0];
         _embedPendingBytes = pending[1];
       });
+      if (widget.showVoice && !_shownVoice) {
+        _shownVoice = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final row = _voiceRow.currentContext;
+          if (row != null && row.mounted) {
+            Scrollable.ensureVisible(
+              row,
+              alignment: 0.3,
+              duration: const Duration(milliseconds: 300),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -781,6 +799,7 @@ class _AiPageState extends State<AiPage> {
                           ),
                         _item(
                           t,
+                          key: _voiceRow,
                           ok: _ts?.voice != null,
                           title: '中文语音',
                           subtitle: _withPending(
@@ -904,6 +923,7 @@ class _AiPageState extends State<AiPage> {
 
   Widget _item(
     ReadingTheme t, {
+    Key? key,
     required bool ok,
     required String title,
     required String subtitle,
@@ -930,6 +950,7 @@ class _AiPageState extends State<AiPage> {
                   ? null
                   : '${(progress * 100).round()}%');
     return Padding(
+      key: key,
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

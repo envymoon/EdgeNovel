@@ -60,6 +60,10 @@ class TtsController extends ChangeNotifier {
   /// experience from one you weren't.
   bool buffering = false;
 
+  /// Whether a sentence has been heard since [start]. Waiting before the first
+  /// one is the voice starting up, and the reader says so.
+  bool heard = false;
+
   /// The sentence being spoken: its paragraph and character range. -1 when idle.
   int activeParagraph = -1;
   int activeStart = -1;
@@ -128,6 +132,7 @@ class TtsController extends ChangeNotifier {
       _utts.length - 1,
     );
     playing = true;
+    heard = false;
     notice = null;
     _stop = Completer<void>();
     final gen = ++_gen;
@@ -361,6 +366,7 @@ class TtsController extends ChangeNotifier {
         notifyListeners();
       }
       if (bytes != null) {
+        heard = true;
         await _play(bytes, gen);
         if (gen != _gen) return;
         await _gap(_pos, gen); // a breath between sentences → phrasing

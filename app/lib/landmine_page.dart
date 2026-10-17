@@ -365,7 +365,7 @@ class _LandminePageState extends State<LandminePage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         BloomProgress(
-          label: p == null ? '正在启动本机引擎…' : '正在建立索引 · ${p.done} / ${p.total}',
+          label: p == null ? '启动中…' : '正在建立索引 · ${p.done} / ${p.total}',
           detail: p?.title,
           value: value,
           color: t.muted,

@@ -40,6 +40,10 @@ class _SearchPageState extends State<SearchPage> {
   List<SearchHit> _hits = const [];
   bool _searching = false;
   bool _searched = false;
+
+  /// A semantic search has come back since the page opened, so the model
+  /// behind it is up; until then a search is first a wait for it to start.
+  bool _warm = false;
   String? _error;
 
   @override
@@ -98,7 +102,12 @@ class _SearchPageState extends State<SearchPage> {
               upToChapter: upTo,
               k: 12,
             );
-      if (mounted) setState(() => _hits = hits);
+      if (mounted) {
+        setState(() {
+          _hits = hits;
+          if (_mode == _Mode.semantic) _warm = true;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
@@ -229,8 +238,33 @@ class _SearchPageState extends State<SearchPage> {
   Widget _results(ReadingTheme t, IndexStatus s) {
     if (_mode == _Mode.semantic) {
       if (!s.hasModel) return _needModel(t);
-      if (widget.reader.indexing) return _indexing(t);
+      // Queued counts as under way: the tap is answered at once, not when the
+      // model behind it has finished loading.
+      final state = widget.reader.indexStateFor(widget.reader.info!.id);
+      if (widget.reader.indexing || state == AiTaskState.running) {
+        return _indexing(t);
+      }
+      if (state == AiTaskState.waiting) {
+        final r = widget.reader;
+        return _indexing(
+          t,
+          waiting: r.aiBusy ? '排队中' : r.aiWaitingReason ?? '启动中…',
+        );
+      }
       if (s.indexed == 0) return _needIndex(t, s);
+      if (_searching && !_warm) {
+        return ListView(
+          children: [
+            const SizedBox(height: 8),
+            BloomProgress(
+              label: '启动中…',
+              value: null,
+              color: t.muted,
+              textColor: t.text,
+            ),
+          ],
+        );
+      }
     }
     if (_hits.isEmpty) {
       return Center(
@@ -298,6 +332,8 @@ class _SearchPageState extends State<SearchPage> {
           onPressed: () {
             final b = widget.reader.info!;
             widget.reader.startIndex(b.id, b.path, title: b.title);
+            // Asked for here, by hand: now, not when the device next allows.
+            widget.reader.runIndexNow(b.id);
           },
           child: const Text('建立索引'),
         ),
@@ -305,14 +341,16 @@ class _SearchPageState extends State<SearchPage> {
     ],
   );
 
-  Widget _indexing(ReadingTheme t) {
-    final p = widget.reader.indexProgress;
+  Widget _indexing(ReadingTheme t, {String? waiting}) {
+    final p = waiting == null ? widget.reader.indexProgress : null;
     final value = p == null || p.total == 0 ? null : p.done / p.total;
     return ListView(
       children: [
         const SizedBox(height: 8),
         BloomProgress(
-          label: p == null ? '正在启动本机引擎…' : '正在建立索引 · ${p.done} / ${p.total}',
+          label:
+              waiting ??
+              (p == null ? '启动中…' : '正在建立索引 · ${p.done} / ${p.total}'),
           detail: p?.title,
           value: value,
           color: t.muted,
