@@ -644,6 +644,13 @@ const _english = <String, String>{
   '10 章': '10 chapters',
   '20 章': '20 chapters',
   '已合成': 'Prepared',
+  '合成': 'Prepare',
+  '播放': 'Play',
+  '未合成': 'Not prepared',
+  '本章未合成': 'This chapter is not prepared',
+  '下一章未合成': 'The next chapter is not prepared',
+  '暂无已合成章节': 'Nothing prepared yet',
+  '听书合成中': 'Preparing read-aloud',
 };
 
 String translateUi(String source, material.Locale locale) {

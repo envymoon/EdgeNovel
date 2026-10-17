@@ -29,6 +29,7 @@ import 'src/rust/api/stats.dart' as stats;
 import 'theme.dart';
 import 'toc_drawer.dart';
 import 'tts_controller.dart';
+import 'tts_panel.dart';
 import 'tts_prepare.dart';
 import 'tts_text.dart';
 import 'tts_server_page.dart';
@@ -164,8 +165,9 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   /// Voice, pace and server all live on one page, because they are one decision:
-  /// where the reading voice comes from.
+  /// where the reading voice comes from. On iPhone 听书 is one panel.
   Future<void> _openTtsSettings() async {
+    if (AppPlatformSupport.speaksByChapter) return _openTtsPanel();
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -173,6 +175,24 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
     );
     await _tts.onVoiceOrSpeedChanged();
+  }
+
+  /// iPhone: play what has been spoken, speak more, voice and pace.
+  Future<void> _openTtsPanel() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      isScrollControlled: true,
+      builder: (_) => TtsPanel(
+        reader: widget.reader,
+        settings: widget.settings,
+        tts: _tts,
+        localSpeech: widget.localSpeech,
+        onPlay: _toggleTts,
+        onDownloadVoice: _openVoiceDownload,
+      ),
+    );
   }
 
   Future<void> _openVoiceDownload() async {
@@ -250,15 +270,17 @@ class _ReaderPageState extends State<ReaderPage> {
       await _tts.toggle();
     } catch (e) {
       if (!mounted) return;
-      // Only reachable on the local fallback: with no voice installed and no
-      // server set up there is nothing to read with. The voice's download is
-      // on the AI page, not on the 听书 settings page.
+      // With no voice installed and no server set up there is nothing to
+      // read with; the voice's download is on the AI page, not on the 听书
+      // settings page. On iPhone a chapter not spoken yet is spoken from the
+      // panel.
+      final spoken = AppPlatformSupport.speaksByChapter;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$e'),
           action: SnackBarAction(
-            label: context.tr('去下载'),
-            onPressed: _openVoiceDownload,
+            label: context.tr(spoken ? '合成' : '去下载'),
+            onPressed: spoken ? _openTtsPanel : _openVoiceDownload,
           ),
         ),
       );
@@ -685,33 +707,43 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _ttsMenu(ReadingTheme t, {required bool compact}) => ListenableBuilder(
     listenable: Listenable.merge([_tts, TtsPrepare.instance]),
-    builder: (context, _) => SizedBox(
-      width: compact ? 40 : 48,
-      child: PopupMenuButton<String>(
-        tooltip: context.tr('听书'),
-        padding: EdgeInsets.zero,
-        icon: Icon(
-          _tts.playing
-              ? Icons.headset_off_outlined
-              : Icons.headset_mic_outlined,
-          color: _tts.playing ? t.text : t.muted,
-        ),
-        onSelected: (value) => switch (value) {
-          'play' => _toggleTts(),
-          'prepare' => _prepareTts(),
-          _ => _openTtsSettings(),
-        },
-        itemBuilder: (_) => [
-          PopupMenuItem(
-            value: 'play',
-            child: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
-          ),
-          if (_canPrepare)
-            PopupMenuItem(value: 'prepare', child: Text(_prepareLabel)),
-          const PopupMenuDivider(),
-          const PopupMenuItem(value: 'settings', child: Text('听书设置…')),
-        ],
+    builder: (context, _) => AppPlatformSupport.speaksByChapter
+        ? _readerIconButton(
+            tooltip: context.tr('听书'),
+            icon: Icons.headset_mic_outlined,
+            color: _tts.playing ? t.text : t.muted,
+            onPressed: _openTtsPanel,
+            compact: compact,
+          )
+        : _ttsPopup(t, compact: compact),
+  );
+
+  Widget _ttsPopup(ReadingTheme t, {required bool compact}) => SizedBox(
+    width: compact ? 40 : 48,
+    child: PopupMenuButton<String>(
+      tooltip: context.tr('听书'),
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        _tts.playing
+            ? Icons.headset_off_outlined
+            : Icons.headset_mic_outlined,
+        color: _tts.playing ? t.text : t.muted,
       ),
+      onSelected: (value) => switch (value) {
+        'play' => _toggleTts(),
+        'prepare' => _prepareTts(),
+        _ => _openTtsSettings(),
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'play',
+          child: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
+        ),
+        if (_canPrepare)
+          PopupMenuItem(value: 'prepare', child: Text(_prepareLabel)),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'settings', child: Text('听书设置…')),
+      ],
     ),
   );
 
@@ -729,7 +761,9 @@ class _ReaderPageState extends State<ReaderPage> {
               _openAnnotations();
               return;
             case 'tts':
-              _toggleTts();
+              AppPlatformSupport.speaksByChapter
+                  ? _openTtsPanel()
+                  : _toggleTts();
               return;
             case 'ttsPrepare':
               _prepareTts();
@@ -757,11 +791,17 @@ class _ReaderPageState extends State<ReaderPage> {
                       ? Icons.headset_off_outlined
                       : Icons.headset_mic_outlined,
                 ),
-                title: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
+                title: Text(
+                  AppPlatformSupport.speaksByChapter
+                      ? '听书'
+                      : _tts.playing
+                      ? '暂停朗读'
+                      : '边听边合成',
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
-            if (_canPrepare)
+            if (_canPrepare && !AppPlatformSupport.speaksByChapter)
               PopupMenuItem(
                 value: 'ttsPrepare',
                 child: ListTile(
@@ -770,14 +810,15 @@ class _ReaderPageState extends State<ReaderPage> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-            const PopupMenuItem(
-              value: 'ttsSettings',
-              child: ListTile(
-                leading: Icon(Icons.tune),
-                title: Text('听书设置'),
-                contentPadding: EdgeInsets.zero,
+            if (!AppPlatformSupport.speaksByChapter)
+              const PopupMenuItem(
+                value: 'ttsSettings',
+                child: ListTile(
+                  leading: Icon(Icons.tune),
+                  title: Text('听书设置'),
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
-            ),
           ],
         ],
       ),

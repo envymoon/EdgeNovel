@@ -334,6 +334,19 @@ class ReaderState extends ChangeNotifier {
     _scheduleAi();
   }
 
+  /// iPhone 听书 合成 (tts_prepare.dart) has the phone's memory for the
+  /// voice: the queue waits, and the model it had loaded goes.
+  bool _speechHold = false;
+  void holdAiForSpeech(bool value) {
+    if (_speechHold == value) return;
+    _speechHold = value;
+    if (value && _activeAiTask == null) {
+      _engineIdleTimer?.cancel();
+      stopAi();
+    }
+    _scheduleAi();
+  }
+
   /// A task is on the engine right now.
   bool get aiActive => _activeAiTask != null;
 
@@ -902,6 +915,17 @@ class ReaderState extends ChangeNotifier {
           await stopAi();
         }
         notifyListeners();
+        return;
+      }
+      if (_speechHold) {
+        const reason = '听书合成中';
+        if (_activeAiTask != null && !_pauseRequested) {
+          _restartEngineAfterPause = true;
+          await _requestActivePause(reason);
+        } else if (aiWaitingReason != reason) {
+          aiWaitingReason = reason;
+          notifyListeners();
+        }
         return;
       }
       final state = await aiRuntime.readDeviceState();

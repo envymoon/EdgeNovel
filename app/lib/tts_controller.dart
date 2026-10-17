@@ -7,7 +7,9 @@ import 'package:flutter/foundation.dart';
 
 import 'reader_state.dart';
 import 'platform_services.dart';
+import 'platform_support.dart';
 import 'theme.dart';
+import 'tts_chapters.dart';
 import 'tts_remote.dart';
 import 'tts_text.dart';
 
@@ -24,6 +26,10 @@ import 'tts_text.dart';
 /// then it is gone; the only thing on disk is one scratch file per in-flight
 /// clip, because the audio backends want a path. Sentences spoken ahead of time
 /// (`tts_prepare.dart`) come back from the local engine's own cache.
+///
+/// On iPhone nothing is spoken as the voice goes: a chapter plays only once it
+/// has been spoken ahead into a file of its own ([TtsChapters]), and the
+/// voice follows its index from sentence to sentence.
 class TtsController extends ChangeNotifier {
   final ReaderState reader;
   final ReadingSettings settings;
@@ -38,9 +44,24 @@ class TtsController extends ChangeNotifier {
        _silence = enableIo && defaultTargetPlatform == TargetPlatform.iOS
            ? AudioPlayer()
            : null,
-       _remote = enableIo ? TtsRemoteClient() : null;
+       _remote = enableIo ? TtsRemoteClient() : null {
+    final player = _player;
+    if (_byChapter && player != null) {
+      _positionSub = player.onPositionChanged.listen(_onSpokenPosition);
+      _completeSub = player.onPlayerComplete.listen((_) => _onSpokenEnd());
+    }
+  }
 
   final AudioPlayer? _player;
+
+  /// iPhone: chapters spoken ahead are played, and nothing else.
+  static bool get _byChapter => AppPlatformSupport.speaksByChapter;
+
+  /// The chapter playing, while [_byChapter].
+  SpokenChapter? _spoken;
+  Duration? _pausedAt;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<void>? _completeSub;
 
   /// iOS lets an app behind the screen run only while it plays something.
   /// While the voice waits for its next sentence — behind the screen it comes
@@ -102,12 +123,13 @@ class TtsController extends ChangeNotifier {
   bool get hasQueue => _utts.isNotEmpty;
   int get position => _pos;
   int get total => _utts.length;
-  bool get usingRemote => settings.ttsRemote;
+  bool get usingRemote => !_byChapter && settings.ttsRemote;
 
   /// How far synthesis has run ahead of the voice, as a fraction of the chapter,
   /// for the secondary track of the progress bar.
   double get bufferedFraction {
     if (_utts.isEmpty) return 0;
+    if (_byChapter) return 1;
     final ahead = _ready.keys.where((i) => i >= _pos).length;
     return ((_pos + ahead) / _utts.length).clamp(0.0, 1.0);
   }
@@ -122,6 +144,7 @@ class TtsController extends ChangeNotifier {
   /// that sentence. Throws a Chinese message the caller can show.
   Future<void> start({int? fromIndex}) async {
     if (playing) return;
+    if (_byChapter) return _startSpoken(fromIndex);
     if (!settings.ttsRemote && !await _localSpeech.ready()) {
       throw '朗读语音未安装';
     }
@@ -147,6 +170,12 @@ class TtsController extends ChangeNotifier {
     if (!playing) return;
     playing = false;
     _gen++;
+    if (_byChapter) {
+      _pausedAt = await _player?.getCurrentPosition();
+      await _player?.pause();
+      notifyListeners();
+      return;
+    }
     _release();
     await _player?.stop();
     notifyListeners(); // keeps the queue/highlight/progress so resume is exact
@@ -165,6 +194,8 @@ class TtsController extends ChangeNotifier {
     _ready.clear();
     _inflight.clear();
     _failed.clear();
+    _spoken = null;
+    _pausedAt = null;
     await _player?.stop();
     notifyListeners();
   }
@@ -176,6 +207,15 @@ class TtsController extends ChangeNotifier {
     _pos = i;
     final u = _utts[i];
     _setActive(u.paragraphIndex, u.start, u.end);
+    final spoken = _spoken;
+    if (_byChapter && spoken != null) {
+      _pausedAt = null;
+      if (playing) {
+        await _player?.seek(Duration(milliseconds: spoken.sentences[i].ms));
+      }
+      notifyListeners();
+      return;
+    }
     _gen++;
     _release();
     _dropStale();
@@ -220,6 +260,8 @@ class TtsController extends ChangeNotifier {
   /// Voice, pace or server changed: what is buffered was made with the old
   /// settings, so throw it away and re-synthesize from where we are.
   Future<void> onVoiceOrSpeedChanged() async {
+    // What plays was spoken in its own voice, and kept.
+    if (_byChapter) return onSpeedChanged();
     final wasPlaying = playing;
     if (playing) await pause();
     _ready.clear();
@@ -230,6 +272,101 @@ class TtsController extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+  }
+
+  // ── iPhone: chapters spoken ahead ───────────────────────────────────────
+
+  Future<void> _startSpoken(int? fromIndex) async {
+    final info = reader.info;
+    if (info == null) return;
+    final spoken = await TtsChapters.instance.chapter(
+      info,
+      reader.chapterIndex,
+    );
+    if (spoken == null || spoken.sentences.isEmpty) throw '本章未合成';
+    if (_spoken?.path != spoken.path) _pausedAt = null;
+    _spoken = spoken;
+    _utts = _spokenUtts(spoken);
+    _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
+      0,
+      _utts.length - 1,
+    );
+    // Resumed where it was paused, mid-sentence; anywhere else from the
+    // start of the sentence.
+    final at = fromIndex == null && _pausedAt != null
+        ? _pausedAt!
+        : Duration(milliseconds: spoken.sentences[_pos].ms);
+    _pausedAt = null;
+    playing = true;
+    heard = true;
+    buffering = false;
+    notice = null;
+    final gen = ++_gen;
+    final u = _utts[_pos];
+    _setActive(u.paragraphIndex, u.start, u.end);
+    notifyListeners();
+    await _playSpoken(gen, at);
+  }
+
+  static List<TtsUtt> _spokenUtts(SpokenChapter spoken) => [
+    for (final s in spoken.sentences) TtsUtt(s.paragraph, s.start, s.end, ''),
+  ];
+
+  Future<void> _playSpoken(int gen, Duration at) async {
+    final player = _player;
+    final spoken = _spoken;
+    if (player == null || spoken == null) return;
+    await player.setSource(DeviceFileSource(spoken.path));
+    if (gen != _gen) return;
+    if (at > Duration.zero) await player.seek(at);
+    await player.setPlaybackRate(speed);
+    if (gen != _gen) return;
+    await player.resume();
+  }
+
+  void _onSpokenPosition(Duration at) {
+    final spoken = _spoken;
+    if (!playing || spoken == null || _utts.isEmpty) return;
+    final i = spoken.sentenceAt(at).clamp(0, _utts.length - 1);
+    if (i == _pos) return;
+    _pos = i;
+    final u = _utts[i];
+    _setActive(u.paragraphIndex, u.start, u.end);
+    notifyListeners();
+  }
+
+  /// The chapter heard to the end: on into the next one if it has been
+  /// spoken, and otherwise the voice stops here.
+  Future<void> _onSpokenEnd() async {
+    if (!playing || _spoken == null) return;
+    final gen = _gen;
+    final info = reader.info;
+    final next = reader.chapterIndex + 1;
+    final last = info == null || next >= info.chapters.length;
+    final spoken = info == null || last
+        ? null
+        : await TtsChapters.instance.chapter(info, next);
+    if (gen != _gen) return;
+    await reader.markCurrentChapterCompleted();
+    if (gen != _gen) return;
+    if (spoken == null || spoken.sentences.isEmpty) {
+      if (!last) notice = '下一章未合成';
+      playing = false;
+      _pausedAt = null;
+      _pos = _utts.length;
+      _clearActive();
+      notifyListeners();
+      return;
+    }
+    await reader.next();
+    if (gen != _gen) return;
+    _spoken = spoken;
+    _utts = _spokenUtts(spoken);
+    _pos = 0;
+    final u = _utts[0];
+    _setActive(u.paragraphIndex, u.start, u.end);
+    notifyListeners();
+    await _playSpoken(gen, Duration.zero);
   }
 
   // ── Segmentation ───────────────────────────────────────────────────────
@@ -500,6 +637,8 @@ class TtsController extends ChangeNotifier {
   void dispose() {
     _gen++;
     _release();
+    _positionSub?.cancel();
+    _completeSub?.cancel();
     _player?.dispose();
     _silence?.dispose();
     _remote?.close();

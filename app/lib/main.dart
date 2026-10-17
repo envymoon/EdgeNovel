@@ -25,6 +25,7 @@ import 'src/rust/api/tts.dart';
 import 'src/rust/frb_generated.dart';
 import 'theme.dart';
 import 'tts_prepare.dart';
+import 'tts_chapters_page.dart';
 import 'tts_server_page.dart';
 import 'app_localizations.dart';
 
@@ -147,7 +148,11 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     if (nav == null || _runtimeOpen) return;
     _runtimeOpen = true;
     await nav.push(
-      MaterialPageRoute(builder: (_) => TtsServerPage(settings: settings)),
+      MaterialPageRoute(
+        builder: (_) => AppPlatformSupport.speaksByChapter
+            ? TtsChaptersPage(settings: settings)
+            : TtsServerPage(settings: settings),
+      ),
     );
     _runtimeOpen = false;
   }

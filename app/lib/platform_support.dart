@@ -50,6 +50,12 @@ abstract final class AppPlatformSupport {
   static bool get hasBundledTtsEngine =>
       defaultTargetPlatform == TargetPlatform.iOS;
 
+  /// iPhone 听书 plays chapters spoken ahead into files (tts_chapters.dart)
+  /// and nothing else: listening is mostly with the screen locked, where iOS
+  /// lends no GPU to speak as the voice goes.
+  static bool get speaksByChapter =>
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   static bool isMobilePlatform(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.iOS;
 

@@ -16,6 +16,7 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/tts.dart';
 import 'theme.dart';
+import 'tts_chapters_page.dart';
 import 'tts_server_page.dart';
 
 // Keep the desktop engine on the same llama.cpp revision as the Android build
@@ -768,16 +769,21 @@ class _AiPageState extends State<AiPage> {
                             size: 20,
                             color: t.muted,
                           ),
+                          // On iPhone voice and pace are in the reader's
+                          // 听书 panel; what was spoken is kept here.
                           title: Text(
-                            '听书服务',
+                            AppPlatformSupport.speaksByChapter
+                                ? '已合成'
+                                : '听书服务',
                             style: TextStyle(color: t.text, fontSize: 14),
                           ),
                           trailing: Icon(Icons.chevron_right, color: t.muted),
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  TtsServerPage(settings: widget.settings),
+                              builder: (_) => AppPlatformSupport.speaksByChapter
+                                  ? TtsChaptersPage(settings: widget.settings)
+                                  : TtsServerPage(settings: widget.settings),
                             ),
                           ),
                         ),
