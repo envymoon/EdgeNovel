@@ -88,20 +88,36 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             _panel(
               t,
               children: [
-                SwitchListTile(
-                  value: runtime.backgroundEnabled,
-                  onChanged: runtime.setBackgroundEnabled,
-                  title: Text(
-                    '允许后台生成',
-                    style: TextStyle(color: t.text, fontSize: 14),
-                  ),
-                ),
-                if (defaultTargetPlatform == TargetPlatform.iOS)
+                // On iOS the queue runs whenever the app is open; one switch
+                // is for the reader's page, the other for the locked phone,
+                // where only the CPU windows the system grants are left.
+                if (defaultTargetPlatform == TargetPlatform.iOS) ...[
                   SwitchListTile(
                     value: runtime.lockedEnabled,
                     onChanged: runtime.setLockedEnabled,
                     title: Text(
-                      '锁屏后继续',
+                      '锁屏运行',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                    subtitle: Text(
+                      '会降速',
+                      style: TextStyle(color: t.muted, fontSize: 12),
+                    ),
+                  ),
+                  SwitchListTile(
+                    value: runtime.backgroundEnabled,
+                    onChanged: runtime.setBackgroundEnabled,
+                    title: Text(
+                      '允许阅读时后台处理',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                  ),
+                ] else
+                  SwitchListTile(
+                    value: runtime.backgroundEnabled,
+                    onChanged: runtime.setBackgroundEnabled,
+                    title: Text(
+                      '允许后台生成',
                       style: TextStyle(color: t.text, fontSize: 14),
                     ),
                   ),

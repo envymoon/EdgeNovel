@@ -100,7 +100,10 @@ class AiRuntimeSettings extends ChangeNotifier {
     bool forceNow = false,
   }) {
     if (forceNow) return null;
-    if (!backgroundEnabled) return '后台生成已关闭';
+    // On iOS the switch is 允许阅读时后台处理: off, the queue makes way on
+    // the reader's page and runs everywhere else in the app.
+    final ios = defaultTargetPlatform == TargetPlatform.iOS;
+    if (!backgroundEnabled && !ios) return '后台生成已关闭';
     if (chargingOnly && state.charging == false) return '等待接通电源';
     final battery = state.batteryPercent;
     if (state.charging != true && battery != null && battery < batteryFloor) {
@@ -112,7 +115,9 @@ class AiRuntimeSettings extends ChangeNotifier {
         (mode == AiRunMode.quiet && state.thermalState == 'fair')) {
       return '设备温度较高，等待冷却';
     }
-    if (mode != AiRunMode.fast && reading) return '正在阅读，AI 已让路';
+    if (reading && (ios ? !backgroundEnabled : mode != AiRunMode.fast)) {
+      return '正在阅读，AI 已让路';
+    }
     if (mode == AiRunMode.quiet) {
       final idle = state.idleSeconds;
       if (idle != null && idle < idleMinutes * 60) {

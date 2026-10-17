@@ -46,6 +46,32 @@ void main() {
     expect(ai.waitingReason(phone('fair'), reading: false), isNull);
     expect(ai.waitingReason(phone('serious'), reading: false), isNotNull);
   });
+  test('on iOS the switch only holds the queue on the reader page', () {
+    final ai = AiRuntimeSettings.instance;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      ai.backgroundEnabled = true;
+      ai.mode = AiRunMode.quiet;
+    });
+    final cool = AiDeviceState(
+      platform: 'ios',
+      charging: true,
+      batteryPercent: 80,
+      logicalCores: 6,
+      thermalState: 'nominal',
+    );
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    ai.backgroundEnabled = false;
+    ai.mode = AiRunMode.fast;
+    expect(ai.waitingReason(cool, reading: false), isNull);
+    expect(ai.waitingReason(cool, reading: true), '正在阅读，AI 已让路');
+    ai.backgroundEnabled = true;
+    ai.mode = AiRunMode.quiet;
+    expect(ai.waitingReason(cool, reading: true), isNull);
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    ai.backgroundEnabled = false;
+    expect(ai.waitingReason(cool, reading: false), '后台生成已关闭');
+  });
   test('mobile and desktop capabilities stay separate', () {
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.iOS), isTrue);
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.android), isTrue);
