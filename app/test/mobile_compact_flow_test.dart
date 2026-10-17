@@ -82,6 +82,20 @@ class _CompactOpenReader extends _CompactReader {
   }) async {}
 }
 
+class _LongParagraphReader extends _CompactOpenReader {
+  _LongParagraphReader() {
+    paragraphs = List.generate(
+      6,
+      (index) => Paragraph(
+        kind: ParaKind.body,
+        text: '他把灯挑亮了些，又低头看那张旧地图。' * 40,
+        start: index * 1000,
+        end: index * 1000 + 720,
+      ),
+    );
+  }
+}
+
 class _SilentSpeech implements LocalSpeechSynthesizer {
   @override
   Future<bool> ready() async => true;
@@ -336,6 +350,44 @@ void main() {
     expect(find.byTooltip('目录'), findsNothing);
     expect(find.text('第一章 开始'), findsOneWidget);
     expect(pageCount, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('A+ then A- comes back to the page, not the paragraph start', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListenableBuilder(
+          listenable: settings,
+          builder: (context, _) => ReaderPage(
+            reader: _LongParagraphReader(),
+            settings: settings,
+            localSpeech: _SilentSpeech(),
+            enableTtsIo: false,
+            onBack: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    // Page 2 opens in the middle of the first paragraph.
+    await tester.tapAt(const Offset(370, 380));
+    await tester.pump();
+    final second = find.textContaining(RegExp(r'^2/\d+$'));
+    expect(second, findsOneWidget);
+
+    settings.setFontSize(settings.fontSize + 1);
+    await tester.pump();
+    await tester.pump();
+    settings.setFontSize(settings.fontSize - 1);
+    await tester.pump();
+    await tester.pump();
+    expect(second, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

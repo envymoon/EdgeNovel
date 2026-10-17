@@ -53,6 +53,9 @@ class BookPage {
 
   /// Where this page starts, for progress: the first paragraph on it.
   int get firstPara => chunks.isEmpty ? 0 : chunks.first.paraIndex;
+
+  /// And how far into that paragraph, for a page that opens mid-paragraph.
+  int get firstStart => chunks.isEmpty ? 0 : chunks.first.sourceStart;
 }
 
 /// The first-line indent: two ideographs drawn in no colour. Not two
@@ -302,9 +305,11 @@ class PagedReaderState extends State<PagedReader> {
   /// The page the copies under the reader are drawn around; see [_readyAround].
   int _shown = -1;
 
-  /// Paragraph at the top of the current page, so re-pagination (font change,
-  /// window resize) can land back on the same text.
+  /// Text at the top of the current page, as (paragraph, start), so
+  /// re-pagination (font change, window resize) lands back on the same text,
+  /// not on the page where its paragraph began.
   int _topPara = 0;
+  int _topStart = 0;
 
   /// Set when paging backwards across a chapter boundary: the previous chapter
   /// must open on its last page, not its first.
@@ -421,11 +426,13 @@ class PagedReaderState extends State<PagedReader> {
           ? _pages.length - 1
           : _pageContaining(r.initialParagraph);
       _landAtEnd = false;
+      _topPara = _pages[initial].firstPara;
+      _topStart = _pages[initial].firstStart;
     } else {
-      // Same text, new geometry: stay on the paragraph being read.
-      initial = _pageContaining(_topPara);
+      // Same text, new geometry: stay on the words being read. The spot itself
+      // is kept until a turn, so A+ then A- comes back to the very same page.
+      initial = _pageOf(_topPara, _topStart);
     }
-    _topPara = _pages[initial].firstPara;
 
     final old = _ctrl;
     _ctrl = PageController(initialPage: initial);
@@ -585,6 +592,7 @@ class PagedReaderState extends State<PagedReader> {
         itemCount: _pages.length,
         onPageChanged: (i) {
           _topPara = _pages[i].firstPara;
+          _topStart = _pages[i].firstStart;
           widget.reader.onVisibleParagraph(_topPara);
           widget.pageInfo.value = (i + 1, _pages.length);
           widget.reader.recordChapterViewport(
