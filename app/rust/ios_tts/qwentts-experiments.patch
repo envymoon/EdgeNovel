@@ -374,7 +374,7 @@ diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
  // Batch engine: drives up to pt->max_batch concurrent synthesis slots
 diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 --- pbase/src/qwen.cpp	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/qwen.cpp	2026-10-17 11:50:50.542741000 -0700
++++ work/src/qwen.cpp	2026-10-17 12:29:55.572579700 -0700
 @@ -25,7 +25,9 @@
  #include "timer.h"
  #include "version.h"
@@ -385,7 +385,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
  #include <cctype>
  #include <condition_variable>
  #include <cstdarg>
-@@ -796,3 +798,370 @@
+@@ -796,3 +798,396 @@
  }
  
  }  // extern "C"
@@ -501,9 +501,33 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    return b;
 +}
 +
-+// Every node of gf on its own, twice, the faster kept: what each costs,
-+// beside the whole graph's time. A node alone pays a submission too, so
-+// what an empty node (a view) takes is counted off.
++// The inputs a graph is handed before every replay, zeroed: since the
++// last replay the allocator may have given their room to intermediates,
++// and a code id or a kv row read from there indexes out of its table.
++// Zero ids, rows and positions stay in range, a zero mask hides nothing.
++// Inputs that bake once also carry the output flag and keep what they
++// hold.
++void diag_inputs_zero(struct ggml_cgraph * gf) {
++    std::vector<struct ggml_tensor *> done;
++    for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
++        struct ggml_tensor * node = ggml_graph_node(gf, i);
++        for (int j = 0; j < GGML_MAX_SRC; j++) {
++            struct ggml_tensor * t = node->src[j];
++            if (!t || !t->buffer || !(t->flags & GGML_TENSOR_FLAG_INPUT) || (t->flags & GGML_TENSOR_FLAG_OUTPUT) ||
++                std::find(done.begin(), done.end(), t) != done.end()) {
++                continue;
++            }
++            const std::vector<uint8_t> zeros(ggml_nbytes(t), 0);
++            ggml_backend_tensor_set(t, zeros.data(), 0, zeros.size());
++            done.push_back(t);
++        }
++    }
++}
++
++// Every node of gf on its own, in the graph's order so that each reads
++// what the nodes before it wrote, twice, the faster kept: what each
++// costs, beside the whole graph's time. A node alone pays a submission
++// too, so what an empty node (a view) takes is counted off.
 +void diag_profile(ggml_backend_t be, struct ggml_cgraph * gf, const char * label, FILE * f) {
 +    if (!be || !gf) {
 +        fprintf(f, "[profile] %s: no graph\n", label);
@@ -511,6 +535,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    }
 +    double full = 1e30;
 +    for (int r = 0; r < 3; r++) {
++        diag_inputs_zero(gf);
 +        Timer t;
 +        ggml_backend_graph_compute(be, gf);
 +        full = std::min(full, t.ms());
@@ -521,6 +546,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    struct ggml_cgraph *    one = ggml_new_graph_custom(cx, 1, false);
 +    std::vector<double>     ms((size_t) n, 1e30);
 +    for (int pass = 0; pass < 2; pass++) {
++        diag_inputs_zero(gf);
 +        for (int i = 0; i < n; i++) {
 +            ggml_graph_clear(one);
 +            ggml_graph_add_node(one, ggml_graph_node(gf, i));
