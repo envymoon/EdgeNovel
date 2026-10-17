@@ -278,6 +278,67 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Aa opens the appearance panel and steps the type', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: settings,
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('阅读外观'));
+    await tester.pumpAndSettle();
+    final size = settings.fontSize;
+    await tester.tap(find.text('A+'));
+    await tester.pump();
+    expect(settings.fontSize, size + 1);
+
+    await tester.tap(find.text('更多'));
+    await tester.pump();
+    expect(find.text('行距'), findsOneWidget);
+    expect(find.text('段距'), findsOneWidget);
+    // No page width on a phone: no page is narrower than its screen.
+    expect(find.textContaining('页宽'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('with the bars away the footer says where you are', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: ReadingSettings(),
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final pageCount = find.textContaining(RegExp(r'^\d+/\d+$'));
+    expect(pageCount, findsNothing);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsNothing);
+    expect(find.text('第一章 开始'), findsOneWidget);
+    expect(pageCount, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('annotation selection mode returns to the compact reader', (
     tester,
   ) async {

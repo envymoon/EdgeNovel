@@ -284,6 +284,8 @@ const _english = <String, String>{
   '字体': 'Font',
   '按需下载或导入本地字体': 'Download on demand or import a local font',
   '首行缩进': 'First-line indent',
+  '行距': 'Line spacing',
+  '段距': 'Paragraph spacing',
   '底栏显示全书节奏': 'Book pacing in bottom bar',
   '在阅读底栏显示全书节奏': 'Show book pacing in the reader bottom bar',
   '全书节奏 · 点按查看，长按或右键隐藏':
@@ -663,6 +665,8 @@ String translateUi(String source, material.Locale locale) {
   if (hours != null) return '${hours.group(1)} hr';
   final minutes = RegExp(r'^(\d+) 分钟$').firstMatch(source);
   if (minutes != null) return '${minutes.group(1)} min';
+  final minutesLeft = RegExp(r'^剩 (\d+) 分钟$').firstMatch(source);
+  if (minutesLeft != null) return '${minutesLeft.group(1)} min left';
   final seconds = RegExp(r'^(\d+) 秒$').firstMatch(source);
   if (seconds != null) return '${seconds.group(1)} s';
   final days = RegExp(r'^(\d+) 天$').firstMatch(source);

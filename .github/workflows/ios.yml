@@ -50,6 +50,7 @@ jobs:
           test/appearance_test.dart
           test/app_language_test.dart
           test/mobile_compact_flow_test.dart
+          test/paged_justify_test.dart
           test/shelf_summary_test.dart
 
       # The whole Xcode log goes into the artifact; a failure prints its errors.

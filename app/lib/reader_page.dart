@@ -24,6 +24,7 @@ import 'reader_state.dart';
 import 'search_page.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
+import 'src/rust/api/stats.dart' as stats;
 import 'theme.dart';
 import 'toc_drawer.dart';
 import 'tts_controller.dart';
@@ -62,6 +63,14 @@ class _ReaderPageState extends State<ReaderPage> {
   /// only the bottom-bar text rebuilds on every page turn.
   final _pageInfo = ValueNotifier<(int, int)>((1, 1));
 
+  /// The paragraph at the top of the scrolling list, for the footer.
+  final _scrollTop = ValueNotifier<int>(0);
+
+  /// This reader's own pace in characters a minute, as 阅读数据 measures it;
+  /// null until there is enough reading to say. Kept across books, and asked
+  /// for again each time one opens.
+  static double? _cpm;
+
   late final TtsController _tts;
 
   bool get _isPaged => widget.settings.pageMode == PageMode.paged;
@@ -69,6 +78,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadPace());
     _positions.itemPositions.addListener(_onScroll);
     _tts = TtsController(
       widget.reader,
@@ -89,7 +99,21 @@ class _ReaderPageState extends State<ReaderPage> {
     TtsPrepare.instance.removeListener(_onPrepareTick);
     _tts.dispose();
     _pageInfo.dispose();
+    _scrollTop.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPace() async {
+    try {
+      final insights = await stats.readingInsights(
+        tzSecs: DateTime.now().timeZoneOffset.inSeconds,
+      );
+      if (mounted && insights.speed != _cpm) {
+        setState(() => _cpm = insights.speed);
+      }
+    } catch (_) {
+      // No pace, no estimate: the footer leaves it out.
+    }
   }
 
   /// The last paragraph we scrolled to. The controller also notifies as
@@ -241,20 +265,44 @@ class _ReaderPageState extends State<ReaderPage> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 
+  /// The page stays in full view above the panel, undimmed, so each change
+  /// shows on the text it changes.
   void _openAppearance() {
-    final t = widget.settings.theme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: t.raisedSurface,
+      barrierColor: Colors.transparent,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       isScrollControlled: true,
-      builder: (_) => SafeArea(
-        child: FractionallySizedBox(
-          heightFactor: 0.88,
-          child: SettingsSheet(settings: widget.settings),
-        ),
-      ),
+      builder: (_) => SettingsSheet(settings: widget.settings),
     );
   }
+
+  /// Under the left thumb with the bars: the night switch, and beside it the
+  /// way to everything else about how the page looks. Always the same widget,
+  /// hidden rather than removed: see [NightToggle.visible].
+  Widget _thumbButtons(ReadingTheme t, {required bool visible}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      NightToggle(settings: widget.settings, floating: true, visible: visible),
+      if (visible) ...[
+        const SizedBox(width: 12),
+        FloatingActionButton.small(
+          heroTag: null,
+          tooltip: context.tr('阅读外观'),
+          elevation: 1,
+          backgroundColor: t.raisedSurface,
+          foregroundColor: t.text,
+          onPressed: _openAppearance,
+          child: const Text(
+            'Aa',
+            translate: false,
+            style: TextStyle(fontSize: 15),
+          ),
+        ),
+      ],
+    ],
+  );
 
   Future<void> _openAnnotations() async {
     final start = await Navigator.push<bool>(
@@ -418,6 +466,7 @@ class _ReaderPageState extends State<ReaderPage> {
         .where((p) => p.itemTrailingEdge > 0)
         .reduce((a, b) => a.itemLeadingEdge < b.itemLeadingEdge ? a : b);
     widget.reader.onVisibleParagraph(top.index);
+    _scrollTop.value = top.index;
   }
 
   /// Page margins for paragraph [i] of the scrolling list. They belong to the
@@ -426,6 +475,110 @@ class _ReaderPageState extends State<ReaderPage> {
     top: i == 0 ? null : 0,
     bottom: i == widget.reader.paragraphs.length - 1 ? 60 : 0,
   );
+
+  Widget _scrollList(
+    EdgeInsets readerPadding,
+    ReadingTheme t, {
+    required bool compact,
+  }) => ListenableBuilder(
+    listenable: _tts,
+    builder: (context, _) => ScrollablePositionedList.builder(
+      key: ValueKey(widget.reader.chapterIndex),
+      initialScrollIndex: widget.reader.initialParagraph,
+      itemScrollController: _itemScroll,
+      itemPositionsListener: _positions,
+      itemCount: widget.reader.paragraphs.length,
+      itemBuilder: (context, i) => WheelGlide(
+        scale: widget.settings.wheelScale,
+        child: Padding(
+          padding: _itemPadding(readerPadding, i),
+          child: ParagraphView(
+            para: widget.reader.paragraphs[i],
+            settings: widget.settings,
+            theme: t,
+            active: _tts.activeParagraph == i,
+            activeStart: _tts.activeParagraph == i ? _tts.activeStart : -1,
+            onTapSentence: compact || !AppPlatformSupport.hasReadAloud
+                ? null
+                : (start) => _tts.seekToSentence(i, start),
+            annotations: widget.reader.annotationsForParagraph(
+              widget.reader.paragraphs[i],
+            ),
+            onShowAnnotations: (annotations) => showAnnotationComments(
+              context,
+              reader: widget.reader,
+              settings: widget.settings,
+              paragraph: widget.reader.paragraphs[i],
+              annotations: annotations,
+            ),
+            annotationMode: _annotationMode,
+            annotationChapter: widget.reader.chapterIndex,
+            onAnnotationSelection: _setAnnotationDraft,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  /// Where the reader is while the bars are away: the chapter, how long it has
+  /// left at this reader's own pace, and when reading by pages, the page.
+  Widget _footer(BookInfo info, ReadingTheme t) {
+    final style = TextStyle(
+      color: t.muted.withValues(alpha: 0.8),
+      fontSize: 11,
+      height: 1.2,
+    );
+    return ListenableBuilder(
+      listenable: Listenable.merge([_pageInfo, _scrollTop]),
+      builder: (context, _) {
+        final page = _pageInfo.value;
+        final minutes = _minutesLeft(page);
+        return Row(
+          children: [
+            Expanded(
+              child: Text(
+                info.chapters[widget.reader.chapterIndex].title,
+                translate: false,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              ),
+            ),
+            if (minutes != null) ...[
+              const SizedBox(width: 12),
+              Text('剩 $minutes 分钟', style: style),
+            ],
+            if (_isPaged) ...[
+              const SizedBox(width: 12),
+              Text('${page.$1}/${page.$2}', translate: false, style: style),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  /// Minutes to the end of this chapter at the measured pace, or null with no
+  /// pace yet. By pages, the pages left stand in for the text left.
+  int? _minutesLeft((int, int) page) {
+    final cpm = _cpm;
+    final paras = widget.reader.paragraphs;
+    if (cpm == null || cpm <= 0 || paras.isEmpty) return null;
+    var chars = 0;
+    if (_isPaged) {
+      final total = paras.fold<int>(0, (n, p) => n + p.text.length);
+      final (current, count) = page;
+      if (count <= 0) return null;
+      chars = total * (count - current + 1) ~/ count;
+    } else {
+      final from = _scrollTop.value.clamp(0, paras.length - 1);
+      for (var i = from; i < paras.length; i++) {
+        chars += paras[i].text.length;
+      }
+    }
+    final minutes = (chars / cpm).ceil();
+    return minutes < 1 ? 1 : minutes;
+  }
 
   /// Scroll by 90% of a viewport — the 10% overlap keeps one line of context,
   /// which is what lets the eye pick up where it left off. Expressed as an
@@ -632,6 +785,8 @@ class _ReaderPageState extends State<ReaderPage> {
             AppPlatformSupport.layoutForWidth(width) == AppLayoutClass.compact;
         final narrow = width < 380;
         final showControls = !compact || _chromeVisible || _annotationMode;
+        // With the bars away, a quiet line under the text says where you are.
+        final footer = compact && !showControls;
         // A tap in the middle of a page shows the bars over the text: making
         // room for them would move every line on the page.
         final barsOverText = _isPaged && compact;
@@ -655,11 +810,7 @@ class _ReaderPageState extends State<ReaderPage> {
               extendBodyBehindAppBar: barsOverText,
               extendBody: barsOverText,
               floatingActionButton: compact
-                  ? NightToggle(
-                      settings: widget.settings,
-                      floating: true,
-                      visible: showControls && !_annotationMode,
-                    )
+                  ? _thumbButtons(t, visible: showControls && !_annotationMode)
                   : null,
               floatingActionButtonLocation:
                   FloatingActionButtonLocation.startFloat,
@@ -752,17 +903,32 @@ class _ReaderPageState extends State<ReaderPage> {
                         maxWidth: widget.settings.pageWidth,
                       ),
                       child: _isPaged
-                          ? PagedReader(
-                              key: _pagedKey,
-                              reader: widget.reader,
-                              settings: widget.settings,
-                              padding: readerPadding,
-                              pageInfo: _pageInfo,
-                              annotationMode: _annotationMode,
-                              onAnnotationSelection: _setAnnotationDraft,
-                              compactTapZones: compact,
-                              onToggleControls: _toggleChrome,
-                              tts: _tts,
+                          // The footer sits in the page's bottom margin, so
+                          // showing it moves no line.
+                          ? Stack(
+                              children: [
+                                PagedReader(
+                                  key: _pagedKey,
+                                  reader: widget.reader,
+                                  settings: widget.settings,
+                                  padding: readerPadding,
+                                  pageInfo: _pageInfo,
+                                  annotationMode: _annotationMode,
+                                  onAnnotationSelection: _setAnnotationDraft,
+                                  compactTapZones: compact,
+                                  onToggleControls: _toggleChrome,
+                                  tts: _tts,
+                                ),
+                                if (footer)
+                                  Positioned(
+                                    left: readerPadding.left,
+                                    right: readerPadding.right,
+                                    bottom: 6,
+                                    child: IgnorePointer(
+                                      child: _footer(info, t),
+                                    ),
+                                  ),
+                              ],
                             )
                           // The list is rebuilt per chapter and opens directly on the
                           // restored paragraph: scrolling to it after building would be
@@ -772,63 +938,26 @@ class _ReaderPageState extends State<ReaderPage> {
                               onTap: compact && !_annotationMode
                                   ? _toggleChrome
                                   : null,
-                              child: ListenableBuilder(
-                                listenable: _tts,
-                                builder: (context, _) =>
-                                    ScrollablePositionedList.builder(
-                                      key: ValueKey(widget.reader.chapterIndex),
-                                      initialScrollIndex:
-                                          widget.reader.initialParagraph,
-                                      itemScrollController: _itemScroll,
-                                      itemPositionsListener: _positions,
-                                      itemCount:
-                                          widget.reader.paragraphs.length,
-                                      itemBuilder: (context, i) => WheelGlide(
-                                        scale: widget.settings.wheelScale,
-                                        child: Padding(
-                                          padding: _itemPadding(
-                                            readerPadding,
-                                            i,
-                                          ),
-                                          child: ParagraphView(
-                                            para: widget.reader.paragraphs[i],
-                                            settings: widget.settings,
-                                            theme: t,
-                                            active: _tts.activeParagraph == i,
-                                            activeStart:
-                                                _tts.activeParagraph == i
-                                                ? _tts.activeStart
-                                                : -1,
-                                            onTapSentence:
-                                                compact ||
-                                                    !AppPlatformSupport
-                                                        .hasReadAloud
-                                                ? null
-                                                : (start) => _tts
-                                                      .seekToSentence(i, start),
-                                            annotations: widget.reader
-                                                .annotationsForParagraph(
-                                                  widget.reader.paragraphs[i],
-                                                ),
-                                            onShowAnnotations: (annotations) =>
-                                                showAnnotationComments(
-                                                  context,
-                                                  reader: widget.reader,
-                                                  settings: widget.settings,
-                                                  paragraph: widget
-                                                      .reader
-                                                      .paragraphs[i],
-                                                  annotations: annotations,
-                                                ),
-                                            annotationMode: _annotationMode,
-                                            annotationChapter:
-                                                widget.reader.chapterIndex,
-                                            onAnnotationSelection:
-                                                _setAnnotationDraft,
-                                          ),
-                                        ),
-                                      ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: _scrollList(
+                                      readerPadding,
+                                      t,
+                                      compact: compact,
                                     ),
+                                  ),
+                                  if (footer)
+                                    Padding(
+                                      padding: EdgeInsets.fromLTRB(
+                                        readerPadding.left,
+                                        4,
+                                        readerPadding.right,
+                                        6,
+                                      ),
+                                      child: _footer(info, t),
+                                    ),
+                                ],
                               ),
                             ),
                     ),
@@ -1274,7 +1403,7 @@ class _ParagraphViewState extends State<ParagraphView> {
     final text = para.text;
     final spans = <InlineSpan>[];
     if (settings.firstLineIndent) {
-      spans.add(const TextSpan(text: '　　'));
+      spans.add(const TextSpan(text: indentGlyphs, style: indentStyle));
     }
     for (final seg in sentenceSegments(text)) {
       final tap = widget.onTapSentence == null
@@ -1352,6 +1481,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           child: Text(
             para.text,
             translate: false,
+            textAlign: TextAlign.justify,
             style: TextStyle(
               color: theme.muted,
               fontFamily: settings.resolvedReadingFont,
@@ -1397,7 +1527,12 @@ class _ParagraphViewState extends State<ParagraphView> {
                   );
                 },
               )
-            : Text.rich(TextSpan(children: _sentenceSpans()), style: textStyle);
+            : Text.rich(
+                TextSpan(children: _sentenceSpans()),
+                style: textStyle,
+                textAlign: TextAlign.justify,
+                semanticsLabel: para.text,
+              );
         return Padding(
           padding: EdgeInsets.only(bottom: settings.paragraphSpacing),
           child: Column(
@@ -1438,10 +1573,22 @@ class _ParagraphViewState extends State<ParagraphView> {
   }
 }
 
-class SettingsSheet extends StatelessWidget {
+/// 阅读外观: a panel low on the screen, with the page above it in full view so
+/// each change shows on the text as it is made. What is changed most comes
+/// first; spacing and the rest are one tap further in.
+class SettingsSheet extends StatefulWidget {
   final ReadingSettings settings;
 
   const SettingsSheet({super.key, required this.settings});
+
+  @override
+  State<SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<SettingsSheet> {
+  bool _more = false;
+
+  ReadingSettings get settings => widget.settings;
 
   @override
   Widget build(BuildContext context) {
@@ -1449,141 +1596,259 @@ class SettingsSheet extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final t = settings.theme;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('翻页方式', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 8),
-              Row(
+        // Painted here rather than by the sheet, so a new background shows on
+        // the panel too the moment it is picked.
+        return Material(
+          color: t.raisedSurface,
+          elevation: 8,
+          shadowColor: Colors.black45,
+          surfaceTintColor: Colors.transparent,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+              child: _more ? _spacing(context, t) : _main(t),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _main(ReadingTheme t) {
+    final size = settings.fontSize.round();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _Stepper(
+              theme: t,
+              value: '$size',
+              less: const Text('A-', translate: false),
+              more: const Text('A+', translate: false),
+              onLess: size > 12 ? () => settings.setFontSize(size - 1.0) : null,
+              onMore: size < 48 ? () => settings.setFontSize(size + 1.0) : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  style: TextButton.styleFrom(foregroundColor: t.text),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FontPage(settings: settings),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          FontManager.instance.displayNameForFamily(
+                            settings.fontFamily,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, size: 18, color: t.muted),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        ThemeSwatches(settings: settings),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
                 children: [
                   for (final (mode, label) in [
                     (PageMode.scroll, '上下滚动'),
                     (PageMode.paged, '左右翻页'),
                   ])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: ChoiceChip(
-                        label: Text(
-                          label,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        selected: settings.pageMode == mode,
-                        onSelected: (_) => settings.setPageMode(mode),
-                      ),
+                    ChoiceChip(
+                      label: Text(label, style: const TextStyle(fontSize: 13)),
+                      selected: settings.pageMode == mode,
+                      onSelected: (_) => settings.setPageMode(mode),
                     ),
                 ],
               ),
-              const SizedBox(height: 16),
-              Text('背景', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 10),
-              ThemeSwatches(settings: settings),
-              const SizedBox(height: 20),
-              Text('字体', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                minTileHeight: 46,
-                leading: Icon(Icons.font_download_outlined, color: t.muted),
-                title: Text(
-                  FontManager.instance.displayNameForFamily(
-                    settings.fontFamily,
-                  ),
-                  style: TextStyle(color: t.text, fontSize: 14),
-                ),
-                trailing: Icon(Icons.chevron_right, color: t.muted),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FontPage(settings: settings),
-                  ),
-                ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: t.muted),
+              onPressed: () => setState(() => _more = true),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('更多', style: TextStyle(fontSize: 13)),
+                  Icon(Icons.chevron_right, size: 18, color: t.muted),
+                ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                '字号 ${settings.fontSize.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.fontSize,
-                min: 12,
-                max: 48,
-                divisions: 36,
-                onChanged: settings.setFontSize,
-              ),
-              Text(
-                '行距 ${settings.lineHeight.toStringAsFixed(1)}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.lineHeight,
-                min: 1.2,
-                max: 2.6,
-                divisions: 14,
-                onChanged: settings.setLineHeight,
-              ),
-              Text(
-                '页宽 ${settings.pageWidth.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.pageWidth,
-                min: 520,
-                max: 1080,
-                divisions: 14,
-                onChanged: settings.setPageWidth,
-              ),
-              if (AppPlatformSupport.isDesktop &&
-                  settings.pageMode == PageMode.scroll) ...[
-                Text(
-                  '滚轮幅度 ${(settings.wheelScale * 100).round()}%',
-                  style: TextStyle(color: t.muted, fontSize: 12),
-                ),
-                Slider(
-                  value: settings.wheelScale,
-                  min: 0.2,
-                  max: 1.0,
-                  divisions: 8,
-                  onChanged: settings.setWheelScale,
-                ),
-              ],
-              Text(
-                '段距 ${settings.paragraphSpacing.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.paragraphSpacing,
-                min: 0,
-                max: 32,
-                divisions: 16,
-                onChanged: settings.setParagraphSpacing,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(
-                  '首行缩进',
-                  style: TextStyle(color: t.muted, fontSize: 13),
-                ),
-                value: settings.firstLineIndent,
-                onChanged: settings.setFirstLineIndent,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(
-                  '底栏显示全书节奏',
-                  style: TextStyle(color: t.muted, fontSize: 13),
-                ),
-                value: settings.paceStrip,
-                onChanged: settings.setPaceStrip,
-              ),
-            ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _spacing(BuildContext context, ReadingTheme t) {
+    final line = (settings.lineHeight * 10).round();
+    final gap = settings.paragraphSpacing.round();
+    // A phone's screen is narrower than the narrowest page, so the page's
+    // width only means something on a wider one.
+    final wide = MediaQuery.sizeOf(context).width > 520;
+    final label = TextStyle(color: t.muted, fontSize: 13);
+    Widget row(String name, Widget control) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(name, style: label)),
+          control,
+        ],
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IconButton(
+          tooltip: context.tr('返回'),
+          icon: const Icon(Icons.arrow_back),
+          color: t.muted,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          onPressed: () => setState(() => _more = false),
+        ),
+        row(
+          '行距',
+          _Stepper(
+            theme: t,
+            value: (line / 10).toStringAsFixed(1),
+            less: const Icon(Icons.remove, size: 18),
+            more: const Icon(Icons.add, size: 18),
+            onLess: line > 12
+                ? () => settings.setLineHeight((line - 1) / 10)
+                : null,
+            onMore: line < 26
+                ? () => settings.setLineHeight((line + 1) / 10)
+                : null,
           ),
-        );
-      },
+        ),
+        row(
+          '段距',
+          _Stepper(
+            theme: t,
+            value: '$gap',
+            less: const Icon(Icons.remove, size: 18),
+            more: const Icon(Icons.add, size: 18),
+            onLess: gap > 0
+                ? () => settings.setParagraphSpacing(gap - 2.0)
+                : null,
+            onMore: gap < 32
+                ? () => settings.setParagraphSpacing(gap + 2.0)
+                : null,
+          ),
+        ),
+        if (wide) ...[
+          const SizedBox(height: 6),
+          Text('页宽 ${settings.pageWidth.toInt()}', style: label),
+          Slider(
+            value: settings.pageWidth,
+            min: 520,
+            max: 1080,
+            divisions: 14,
+            onChanged: settings.setPageWidth,
+          ),
+        ],
+        if (AppPlatformSupport.isDesktop &&
+            settings.pageMode == PageMode.scroll) ...[
+          Text(
+            '滚轮幅度 ${(settings.wheelScale * 100).round()}%',
+            style: label,
+          ),
+          Slider(
+            value: settings.wheelScale,
+            min: 0.2,
+            max: 1.0,
+            divisions: 8,
+            onChanged: settings.setWheelScale,
+          ),
+        ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text('首行缩进', style: label),
+          value: settings.firstLineIndent,
+          onChanged: settings.setFirstLineIndent,
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text('底栏显示全书节奏', style: label),
+          value: settings.paceStrip,
+          onChanged: settings.setPaceStrip,
+        ),
+      ],
+    );
+  }
+}
+
+/// [less] value [more]: one step a tap, exact where a slider leaves the thumb
+/// hunting for the setting.
+class _Stepper extends StatelessWidget {
+  final ReadingTheme theme;
+  final String value;
+  final Widget less;
+  final Widget more;
+  final VoidCallback? onLess;
+  final VoidCallback? onMore;
+
+  const _Stepper({
+    required this.theme,
+    required this.value,
+    required this.less,
+    required this.more,
+    required this.onLess,
+    required this.onMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = OutlinedButton.styleFrom(
+      minimumSize: const Size(52, 36),
+      padding: EdgeInsets.zero,
+      foregroundColor: theme.text,
+      side: BorderSide(color: theme.muted.withValues(alpha: 0.35)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton(style: style, onPressed: onLess, child: less),
+        SizedBox(
+          width: 48,
+          child: Text(
+            value,
+            translate: false,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: theme.text, fontSize: 14),
+          ),
+        ),
+        OutlinedButton(style: style, onPressed: onMore, child: more),
+      ],
     );
   }
 }

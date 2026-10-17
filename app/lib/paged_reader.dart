@@ -22,6 +22,13 @@ class PageChunk {
   final int sourceEnd;
   final int leadingNonSource;
 
+  /// For a chunk cut off at the foot of a page: the rest of the paragraph,
+  /// laid out after [text] and clipped to [lines]. Justified text leaves a
+  /// paragraph's last line ragged, and the line at the foot of a page is not
+  /// the paragraph's last.
+  final String tail;
+  final int lines;
+
   const PageChunk(
     this.paraIndex,
     this.kind,
@@ -29,18 +36,31 @@ class PageChunk {
     this.endsParagraph,
     this.sourceStart,
     this.sourceEnd,
-    this.leadingNonSource,
-  );
+    this.leadingNonSource, {
+    this.tail = '',
+    this.lines = 0,
+  });
 }
 
 class BookPage {
   final List<PageChunk> chunks;
 
-  const BookPage(this.chunks);
+  /// The width the page was measured at. It is drawn at exactly this width,
+  /// so its lines break where they were counted.
+  final double width;
+
+  const BookPage(this.chunks, {this.width = double.infinity});
 
   /// Where this page starts, for progress: the first paragraph on it.
   int get firstPara => chunks.isEmpty ? 0 : chunks.first.paraIndex;
 }
+
+/// The first-line indent: two ideographs drawn in no colour. Not two
+/// ideographic spaces — a justified line hands its leading spaces out to the
+/// gaps between its characters, which closed the indent up on the first line
+/// of every paragraph.
+const indentGlyphs = '中中';
+const indentStyle = TextStyle(color: Color(0x00000000));
 
 /// Measuring and drawing pick fallback fonts by locale: the measuring
 /// TextPainter has none of its own, a Text takes the app's (English for some
@@ -120,10 +140,14 @@ List<BookPage> paginate(
   final pages = <BookPage>[];
   var chunks = <PageChunk>[];
   var remaining = size.height;
+  // A pixel narrower than the page: a line that just fits here must still fit
+  // after layout snaps the page to the screen's pixels, or it wraps once more
+  // on screen and the page's last line falls off the end.
+  final pageWidth = size.width - 1;
 
   void flush() {
     if (chunks.isNotEmpty) {
-      pages.add(BookPage(chunks));
+      pages.add(BookPage(chunks, width: pageWidth));
       chunks = <PageChunk>[];
     }
     remaining = size.height;
@@ -131,16 +155,18 @@ List<BookPage> paginate(
 
   for (var i = 0; i < paras.length; i++) {
     final p = paras[i];
-    // Measured a pixel narrower than drawn: a line that just fits here must
-    // still fit after layout snaps the page to the screen's pixels, or it
-    // wraps once more on screen and the page's last line falls off the end.
-    final width = size.width - ty.horizontalInset(p.kind) - 1;
+    final width = pageWidth - ty.horizontalInset(p.kind);
     var text = p.kind == ParaKind.body && settings.firstLineIndent
-        ? '　　${p.text}'
+        ? '$indentGlyphs${p.text}'
         : p.text;
     final prefixLength = text.length - p.text.length;
     var displayOffset = 0;
-    PageChunk chunk(String value, bool endsParagraph) {
+    PageChunk chunk(
+      String value,
+      bool endsParagraph, {
+      String tail = '',
+      int lines = 0,
+    }) {
       final sourceStart = (displayOffset - prefixLength).clamp(
         0,
         p.text.length,
@@ -161,6 +187,8 @@ List<BookPage> paginate(
         sourceStart,
         sourceEnd,
         leadingNonSource,
+        tail: tail,
+        lines: lines,
       );
     }
 
@@ -214,8 +242,10 @@ List<BookPage> paginate(
       final midOfLastFit = Offset(width, acc - lines[fit - 1].height / 2);
       var cut = tp.getLineBoundary(tp.getPositionForOffset(midOfLastFit)).end;
       cut = cut.clamp(1, text.length);
-      chunks.add(chunk(text.substring(0, cut), false));
       final rest = text.substring(cut);
+      chunks.add(
+        chunk(text.substring(0, cut), false, tail: rest, lines: fit),
+      );
       text = rest.trimLeft();
       displayOffset += cut + rest.length - text.length;
       flush();
@@ -605,34 +635,48 @@ class _PageView extends StatelessWidget {
     this.spoken,
   });
 
-  /// [c]'s text with the spoken sentence marked, when it is on this chunk.
-  /// Only a background: the lines must break where pagination measured them.
-  Widget _body(PageChunk c, TextStyle style) {
+  /// [c]'s text as it was measured, justified: the indent in no colour, and a
+  /// chunk cut off at the page's foot laid out with the rest of its paragraph
+  /// so its last line is justified like the others. The spoken sentence is
+  /// marked with a background only: the lines must break where pagination
+  /// measured them.
+  Widget _text(PageChunk c, TextStyle style) {
+    final lead = c.leadingNonSource;
+    final body = c.text.substring(lead);
+    final spans = <TextSpan>[
+      if (lead > 0)
+        TextSpan(text: c.text.substring(0, lead), style: indentStyle),
+    ];
     final tts = spoken;
-    if (tts == null ||
-        tts.activeParagraph != c.paraIndex ||
-        tts.activeEnd <= c.sourceStart ||
-        tts.activeStart >= c.sourceEnd) {
-      return Text(c.text, style: style);
-    }
-    int at(int source) =>
-        (source - c.sourceStart + c.leadingNonSource).clamp(0, c.text.length);
-    final a = at(math.max(tts.activeStart, c.sourceStart));
-    final b = at(math.min(tts.activeEnd, c.sourceEnd));
-    return Text.rich(
-      TextSpan(
-        style: style,
-        children: [
-          TextSpan(text: c.text.substring(0, a)),
+    if (c.kind == ParaKind.body &&
+        tts != null &&
+        tts.activeParagraph == c.paraIndex &&
+        tts.activeEnd > c.sourceStart &&
+        tts.activeStart < c.sourceEnd) {
+      int at(int source) => (source - c.sourceStart).clamp(0, body.length);
+      final a = at(math.max(tts.activeStart, c.sourceStart));
+      final b = at(math.min(tts.activeEnd, c.sourceEnd));
+      spans
+        ..add(TextSpan(text: body.substring(0, a)))
+        ..add(
           TextSpan(
-            text: c.text.substring(a, b),
+            text: body.substring(a, b),
             style: TextStyle(
               backgroundColor: theme.text.withValues(alpha: 0.13),
             ),
           ),
-          TextSpan(text: c.text.substring(b)),
-        ],
-      ),
+        )
+        ..add(TextSpan(text: body.substring(b)));
+    } else {
+      spans.add(TextSpan(text: body));
+    }
+    if (c.tail.isNotEmpty) spans.add(TextSpan(text: c.tail));
+    return Text.rich(
+      TextSpan(style: style, children: spans),
+      textAlign: TextAlign.justify,
+      maxLines: c.tail.isEmpty ? null : c.lines,
+      overflow: TextOverflow.clip,
+      semanticsLabel: body,
     );
   }
 
@@ -663,14 +707,22 @@ class _PageView extends StatelessWidget {
               ),
             ),
           ),
-          child: Text(c.text, style: ty.style(c.kind)),
+          child: _text(c, ty.style(c.kind)),
         ),
-        ParaKind.body => _body(c, ty.style(c.kind)),
+        ParaKind.body => _text(c, ty.style(c.kind)),
         _ => Text(c.text, style: ty.style(c.kind)),
       };
       final text = annotationMode && c.kind == ParaKind.body
-          ? SelectableText(
-              c.text,
+          ? SelectableText.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: c.text.substring(0, c.leadingNonSource),
+                    style: indentStyle,
+                  ),
+                  TextSpan(text: c.text.substring(c.leadingNonSource)),
+                ],
+              ),
               style: ty.style(c.kind),
               onSelectionChanged: (selection, _) {
                 final paragraph = reader.paragraphs[c.paraIndex];
@@ -727,9 +779,15 @@ class _PageView extends StatelessWidget {
     // Whatever measuring got wrong stays on its own page instead of spilling
     // into the margin under it.
     return ClipRect(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: page.width,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          ),
+        ),
       ),
     );
   }
