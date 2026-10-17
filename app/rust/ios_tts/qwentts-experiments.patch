@@ -374,7 +374,7 @@ diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
  // Batch engine: drives up to pt->max_batch concurrent synthesis slots
 diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 --- pbase/src/qwen.cpp	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/qwen.cpp	2026-10-17 12:29:55.572579700 -0700
++++ work/src/qwen.cpp	2026-10-17 15:42:59.743490100 -0700
 @@ -25,7 +25,9 @@
  #include "timer.h"
  #include "version.h"
@@ -385,7 +385,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
  #include <cctype>
  #include <condition_variable>
  #include <cstdarg>
-@@ -796,3 +798,396 @@
+@@ -796,3 +798,397 @@
  }
  
  }  // extern "C"
@@ -688,7 +688,8 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +            fprintf(f, " %.1f", s);
 +        }
 +        fprintf(f, " dB · streamed in the run %.1f dB\n", diag_snr(one, ref.pcm));
-+        fprintf(f, "RESULT codec M=%d snr=%.1f ms_per_frame=%.2f\n", M, worst, ms / (double) F / (double) M);
++        fprintf(f, "RESULT codec M=%d snr=%.1f streamed=%.1f ms_per_frame=%.2f\n", M, worst, diag_snr(one, ref.pcm),
++                ms / (double) F / (double) M);
 +    }
 +}
 +

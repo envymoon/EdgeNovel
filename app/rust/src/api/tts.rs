@@ -804,20 +804,13 @@ mod experiment {
 
     /// The settings the checks run under, the voice loaded for four sentences
     /// at once. Only the first on a CPU, where the others change nothing.
-    static CHECKS: [(&str, &[(&str, &str)]); 5] = [
+    static CHECKS: [(&str, &[(&str, &str)]); 6] = [
         ("default", &[]),
+        ("noaddb", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_batch")]),
+        ("noaddp", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_part")]),
+        ("noadd", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add")]),
+        ("nosnake", &[("GGML_METAL_FUSION_SKIP", "snake")]),
         ("nofuse", &[("GGML_METAL_FUSION_DISABLE", "1")]),
-        ("nomma", &[("GGML_METAL_MMA_DISABLE", "1")]),
-        ("nofa", &[("EDGE_TTS_FA", "0")]),
-        (
-            "plain",
-            &[
-                ("GGML_METAL_FUSION_DISABLE", "1"),
-                ("GGML_METAL_MMA_DISABLE", "1"),
-                ("GGML_METAL_MV_EXT_DISABLE", "1"),
-                ("EDGE_TTS_FA", "0"),
-            ],
-        ),
     ];
 
     /// The sentence the checks speak, and how many frames of it.
@@ -850,7 +843,8 @@ mod experiment {
     }
 
     fn clear_vars() {
-        for (var, _) in CHECKS.iter().flat_map(|(_, vars)| vars.iter()) {
+        let knobs = ["GGML_METAL_FUSION_DISABLE", "GGML_METAL_MMA_DISABLE", "GGML_METAL_MV_EXT_DISABLE", "EDGE_TTS_FA"];
+        for var in CHECKS.iter().flat_map(|(_, vars)| vars.iter().map(|(var, _)| *var)).chain(knobs) {
             std::env::remove_var(var);
         }
         std::env::remove_var("EDGE_TTS_BATCH");
@@ -950,7 +944,9 @@ mod experiment {
                     return false;
                 }
             }
-            if line.contains(" codec ") && field(line, "snr").is_some_and(|s| s < 40.0) {
+            if line.contains(" codec ")
+                && (field(line, "snr").is_some_and(|s| s < 40.0) || field(line, "streamed").is_some_and(|s| s < 40.0))
+            {
                 return false;
             }
         }
