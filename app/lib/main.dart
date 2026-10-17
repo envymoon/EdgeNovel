@@ -190,6 +190,28 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   void _leaveReader(ShelfItem? _) {
     reader.setReadingActive(false);
     setState(() => _reading = false);
+    // Closed for another book's chapter tapped in 已合成.
+    unawaited(_openSpoken());
+  }
+
+  /// A chapter tapped in 已合成 with no book open, or another one: its book
+  /// opens, and the reader page goes to the chapter and opens 听书 there.
+  Future<void> _openSpoken() async {
+    final want = spokenChapterWanted.value;
+    if (want == null || _reading) return;
+    final book = reader.shelf.where((b) => b.id == want.$1).firstOrNull;
+    if (book == null) {
+      spokenChapterWanted.value = null;
+      return;
+    }
+    _navigator.currentState?.popUntil((route) => route.isFirst);
+    await reader.open(book.path);
+    if (!mounted || !reader.isOpen) {
+      spokenChapterWanted.value = null;
+      return;
+    }
+    reader.setReadingActive(true);
+    setState(() => _reading = true);
   }
 
   @override
@@ -197,6 +219,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     reader.setReadingActive(_reading);
+    spokenChapterWanted.addListener(_openSpoken);
     if (_backgroundWindows) _background.setMethodCallHandler(_onBackground);
   }
 
@@ -249,6 +272,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    spokenChapterWanted.removeListener(_openSpoken);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

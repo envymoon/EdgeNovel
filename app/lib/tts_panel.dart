@@ -155,7 +155,17 @@ class _TtsPanelState extends State<TtsPanel> {
               children: [
                 Row(
                   children: [
-                    IconButton.filledTonal(
+                    // In the text's own colour, so it stands out on every
+                    // theme, the dark ones too.
+                    IconButton.filled(
+                      style: IconButton.styleFrom(
+                        backgroundColor: t.text,
+                        foregroundColor: t.background,
+                        disabledBackgroundColor: t.muted.withValues(
+                          alpha: 0.18,
+                        ),
+                        disabledForegroundColor: t.muted,
+                      ),
                       tooltip: context.tr(playing ? '暂停' : '播放'),
                       iconSize: 30,
                       icon: Icon(playing ? Icons.pause : Icons.play_arrow),

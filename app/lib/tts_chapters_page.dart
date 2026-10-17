@@ -15,6 +15,11 @@ String formatSpokenBytes(int bytes) {
   return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
 }
 
+/// A chapter tapped in 已合成, as (book, chapter): the reader goes to it and
+/// opens 听书 on it (reader_page.dart), opening its book first when another
+/// is open or none is (main.dart).
+final spokenChapterWanted = ValueNotifier<(int, int)?>(null);
+
 /// 已合成: the chapters spoken ahead on this iPhone, by book, with the space
 /// each takes and the way to let it go.
 class TtsChaptersPage extends StatefulWidget {
@@ -175,6 +180,7 @@ class _TtsChaptersPageState extends State<TtsChaptersPage> {
                   ListTile(
                     dense: true,
                     contentPadding: const EdgeInsets.only(left: 32, right: 16),
+                    onTap: () => spokenChapterWanted.value = (b.id, c.index),
                     title: Text(
                       _name(c),
                       translate: false,

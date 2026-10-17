@@ -28,6 +28,7 @@ import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart' as stats;
 import 'theme.dart';
 import 'toc_drawer.dart';
+import 'tts_chapters_page.dart';
 import 'tts_controller.dart';
 import 'tts_panel.dart';
 import 'tts_prepare.dart';
@@ -91,10 +92,14 @@ class _ReaderPageState extends State<ReaderPage> {
     _tts.addListener(_onTtsTick);
     TtsPrepare.instance.addListener(_onPrepareTick);
     widget.reader.addListener(_onChapter);
+    spokenChapterWanted.addListener(_onSpokenWanted);
+    // Opened for a chapter tapped in 已合成.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onSpokenWanted());
   }
 
   @override
   void dispose() {
+    spokenChapterWanted.removeListener(_onSpokenWanted);
     widget.reader.removeListener(_onChapter);
     _positions.itemPositions.removeListener(_onScroll);
     _tts.removeListener(_onTtsTick);
@@ -178,6 +183,26 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
     );
     await _tts.onVoiceOrSpeedChanged();
+  }
+
+  /// A chapter tapped in 已合成: this book's is gone to, with the panel open
+  /// on it; another book's closes this one, and the app opens that one.
+  Future<void> _onSpokenWanted() async {
+    final want = spokenChapterWanted.value;
+    if (want == null || !mounted || _closing) return;
+    final (book, chapter) = want;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    if (widget.reader.info?.id != book) {
+      await _close();
+      return;
+    }
+    spokenChapterWanted.value = null;
+    if (_plate != null) _closePlate();
+    if (widget.reader.chapterIndex != chapter) {
+      if (_tts.playing || _tts.hasQueue) await _tts.stop();
+      await widget.reader.goToChapter(chapter);
+    }
+    if (mounted) await _openTtsPanel();
   }
 
   /// iPhone: play what has been spoken, speak more, voice and pace.
@@ -653,6 +678,10 @@ class _ReaderPageState extends State<ReaderPage> {
       _exitAnnotationMode();
       return;
     }
+    await _close();
+  }
+
+  Future<void> _close() async {
     if (_closing) return;
     _closing = true;
     final bookBeforeClose = _currentBook;
