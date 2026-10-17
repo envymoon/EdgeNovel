@@ -582,8 +582,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
       ),
       child: Column(
         children: [
-          // The image engine runs on desktop only.
-          if (AppPlatformSupport.isDesktop) ...[
+          // The image engine: desktop, and iOS from 16.4.
+          if (AppPlatformSupport.hasImageGen) ...[
             _entry(
               t,
               icon: Icons.photo_outlined,

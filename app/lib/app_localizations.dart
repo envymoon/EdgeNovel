@@ -651,6 +651,9 @@ const _english = <String, String>{
   '下一章未合成': 'The next chapter is not prepared',
   '暂无已合成章节': 'Nothing prepared yet',
   '听书合成中': 'Preparing read-aloud',
+  '需要先下载生图模型': 'Download the image model first',
+  '先在 设置 → AI 管理 里装好生图模型':
+      'Install the image model in Settings → Local AI first',
 };
 
 String translateUi(String source, material.Locale locale) {

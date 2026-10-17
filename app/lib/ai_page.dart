@@ -696,22 +696,24 @@ class _AiPageState extends State<AiPage> {
                               )
                             : null,
                       ),
-                      // Pictures: covers and 章间立绘. Desktop only.
-                      if (AppPlatformSupport.isDesktop) ...[
-                        _item(
-                          t,
-                          ok: _img?.engine ?? false,
-                          title: '生图引擎',
-                          subtitle: (_img?.engine ?? false)
-                              ? '已安装 · ${_size(_img!.engineBytes)}'
-                              : '约 29 MB',
-                          progress: _imgEngineProgress,
-                          error: _imgEngineError,
-                          onDownload: _downloadImageEngine,
-                          onDelete: (_img?.engine ?? false)
-                              ? () => _delete('生图引擎', deleteImageEngine)
-                              : null,
-                        ),
+                      // Pictures: covers and 章间立绘. On iOS the engine is in
+                      // the app and only the model is a download.
+                      if (AppPlatformSupport.hasImageGen) ...[
+                        if (!AppPlatformSupport.hasBundledImageEngine)
+                          _item(
+                            t,
+                            ok: _img?.engine ?? false,
+                            title: '生图引擎',
+                            subtitle: (_img?.engine ?? false)
+                                ? '已安装 · ${_size(_img!.engineBytes)}'
+                                : '约 29 MB',
+                            progress: _imgEngineProgress,
+                            error: _imgEngineError,
+                            onDownload: _downloadImageEngine,
+                            onDelete: (_img?.engine ?? false)
+                                ? () => _delete('生图引擎', deleteImageEngine)
+                                : null,
+                          ),
                         _item(
                           t,
                           ok: _img?.model != null && _img!.decoder,

@@ -660,9 +660,15 @@ class _ShelfPageState extends State<ShelfPage> {
   Future<void> _drawCover(ShelfItem b) async {
     if (!await coverGeneratorReady()) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('先在 设置 → AI 管理 里装好生图引擎和模型')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppPlatformSupport.hasBundledImageEngine
+                ? '先在 设置 → AI 管理 里装好生图模型'
+                : '先在 设置 → AI 管理 里装好生图引擎和模型',
+          ),
+        ),
+      );
       return;
     }
     if (!mounted) return;
@@ -723,7 +729,7 @@ class _ShelfPageState extends State<ShelfPage> {
     onDeleteForever: () => _deleteForever(b),
     onEncoding: () => _pickEncoding(b),
     onRename: () => _editInfo(b),
-    onDrawCover: AppPlatformSupport.isDesktop ? () => _drawCover(b) : null,
+    onDrawCover: AppPlatformSupport.hasImageGen ? () => _drawCover(b) : null,
     onPin: () => _togglePin(b),
     onCategory: () => _chooseCategory(b),
   );
@@ -742,7 +748,7 @@ class _ShelfPageState extends State<ShelfPage> {
                 (book.pinned ? '取消置顶' : '置顶', () => _togglePin(book)),
                 ('加入分类', () => _chooseCategory(book)),
                 ('编辑信息', () => _editInfo(book)),
-                if (AppPlatformSupport.isDesktop)
+                if (AppPlatformSupport.hasImageGen)
                   ('AI 生成封面', () => _drawCover(book)),
                 ('重新指定编码', () => _pickEncoding(book)),
                 (

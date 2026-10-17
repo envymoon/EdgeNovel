@@ -2,7 +2,9 @@
 //! covers. stable-diffusion.cpp's `sd-cli` is run as a one-shot child per
 //! picture, the same arrangement as read-aloud in [`crate::api::tts`]: a data
 //! dir the binary and weights live in, shallow file discovery, Windows spawns
-//! that never flash a console, and nothing ever leaves the device.
+//! that never flash a console, and nothing ever leaves the device. On iOS,
+//! which starts no process for an app, the engine is compiled into the app
+//! (ios_sd/) and draws on a thread, with the same settings.
 //!
 //! The model is Counterfeit V3 with Hyper-SD's 4-step LoRA merged in, its UNet
 //! convolutions quantized to Q5 as well (which takes a patched sd.cpp), the VAE
@@ -51,6 +53,10 @@ impl Slot {
         if let Some(child) = self.child.lock().unwrap().as_mut() {
             let _ = child.kill();
         }
+        #[cfg(in_process_engine)]
+        if DRAWING_FOR.load(Ordering::SeqCst) == self as *const Slot as usize {
+            engine::cancel();
+        }
     }
 
     fn stopped(&self) -> bool {
@@ -60,6 +66,11 @@ impl Slot {
 
 static COVER: Slot = Slot::new();
 static PLATES: Slot = Slot::new();
+
+/// iOS: the slot whose picture the engine is drawing (its address), 0 for
+/// none, so that each stops only its own.
+#[cfg(in_process_engine)]
+static DRAWING_FOR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(windows)]
 const ENGINE_EXE: &str = "sd-cli.exe";
@@ -75,6 +86,8 @@ const DECODER: &str = "taesd.safetensors";
 pub fn init_image(dir: String) -> Result<(), String> {
     let p = PathBuf::from(dir);
     std::fs::create_dir_all(&p).map_err(|e| format!("建生图目录失败: {e}"))?;
+    #[cfg(in_process_engine)]
+    engine::prepare(&p);
     let _ = IMAGE_DIR.set(p);
     Ok(())
 }
@@ -107,8 +120,15 @@ fn find_named(dir: &Path, name: &str, depth: u32) -> Option<PathBuf> {
         .find_map(|d| find_named(&d, name, depth - 1))
 }
 
+#[cfg(not(in_process_engine))]
 fn find_engine(dir: &Path) -> Option<PathBuf> {
     find_named(dir, ENGINE_EXE, 2)
+}
+
+/// Compiled into the app: always there, and nothing to download or delete.
+#[cfg(in_process_engine)]
+fn find_engine(_: &Path) -> Option<PathBuf> {
+    None
 }
 
 fn find_decoder(dir: &Path) -> Option<PathBuf> {
@@ -169,10 +189,11 @@ pub fn image_status() -> Result<ImageStatus, String> {
     let engine = find_engine(dir);
     let model = find_model(dir);
     let decoder = find_decoder(dir).is_some();
+    let built_in = cfg!(in_process_engine);
     Ok(ImageStatus {
         dir: dir.display().to_string(),
-        ready: engine.is_some() && model.is_some() && decoder,
-        engine: engine.is_some(),
+        ready: (built_in || engine.is_some()) && model.is_some() && decoder,
+        engine: built_in || engine.is_some(),
         engine_bytes: file_bytes(engine.as_ref()),
         model: model
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
@@ -810,6 +831,7 @@ fn draw(
 
 /// Run the engine once, into a temp file. `slot` says whose run it is; a stop
 /// asked of it before or during the run ends it.
+#[cfg(not(in_process_engine))]
 fn render(
     slot: &Slot,
     prompt: &str,
@@ -938,6 +960,216 @@ fn render(
     Ok(out)
 }
 
+/// iOS: the engine in the app, on the GPU while the app is on screen and on
+/// the CPU behind it (or when the reader chose 仅 CPU). A picture caught by the
+/// app moving between the two is drawn again where it now belongs.
+#[cfg(in_process_engine)]
+fn render(
+    slot: &'static Slot,
+    prompt: &str,
+    seed: u32,
+    report: &mut impl FnMut(CoverProgress),
+) -> Result<PathBuf, String> {
+    let dir = image_dir()?;
+    let model = find_model(dir).ok_or("生图模型未安装")?;
+    let decoder = find_decoder(dir).ok_or("生图模型不完整（缺 taesd）")?;
+    let out = next_tmp();
+    if slot.stopped() {
+        return Err("已取消".into());
+    }
+    // The cover and 章间立绘 one at a time: the phone has memory for one.
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    DRAWING_FOR.store(slot as *const Slot as usize, Ordering::SeqCst);
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            DRAWING_FOR.store(0, Ordering::SeqCst);
+        }
+    }
+    let _done = Done;
+    // A stop that came while another picture held the engine.
+    if slot.stopped() {
+        return Err("已取消".into());
+    }
+
+    let prefer_gpu = !crate::api::ai::cpu_only();
+    loop {
+        report(CoverProgress {
+            stage: 0,
+            step: 0,
+            steps: STEPS,
+            path: None,
+        });
+        let gpu = prefer_gpu && !engine::background();
+        let mut log = Log::default();
+        let drawn = engine::draw(
+            &model,
+            &decoder,
+            gpu,
+            prefer_gpu,
+            prompt,
+            NEGATIVE,
+            seed,
+            &out,
+            &mut |event| match event {
+                engine::Event::Log(error, text) => {
+                    let line = if error { format!("[E] {}", text.trim()) } else { text.trim().to_string() };
+                    if let Some(p) = log.feed(&line) {
+                        report(p);
+                    }
+                }
+                // Sampling steps; loading and the decoder's strips count
+                // their own.
+                engine::Event::Step(step) if log.stage == 1 => report(log.at(step.min(STEPS))),
+                engine::Event::Step(_) => {}
+            },
+        );
+        match drawn {
+            Ok(true) if !slot.stopped() && out.exists() => return Ok(out),
+            Ok(true) => {}
+            Ok(false) if !slot.stopped() => continue,
+            Ok(false) => {}
+            Err(e) => {
+                let _ = std::fs::remove_file(&out);
+                return Err(format!("生图失败：{}", log.error.unwrap_or(e)));
+            }
+        }
+        let _ = std::fs::remove_file(&out);
+        return Err(if slot.stopped() { "已取消" } else { "生图失败" }.into());
+    }
+}
+
+/// The engine compiled into the app (ios_sd/edge_sd.mm).
+#[cfg(in_process_engine)]
+mod engine {
+    use super::{Path, HEIGHT, STEPS, WIDTH};
+    use std::ffi::{c_char, c_int, c_void, CStr, CString};
+
+    extern "C" {
+        #[allow(clippy::too_many_arguments)]
+        fn edge_sd_draw(
+            model: *const c_char,
+            taesd: *const c_char,
+            gpu: c_int,
+            prefer_gpu: c_int,
+            prompt: *const c_char,
+            negative: *const c_char,
+            width: c_int,
+            height: c_int,
+            steps: c_int,
+            seed: i64,
+            out: *const c_char,
+            on_log: extern "C" fn(c_int, *const c_char, *mut c_void),
+            on_step: extern "C" fn(c_int, c_int, *mut c_void),
+            user: *mut c_void,
+        ) -> c_int;
+        fn edge_sd_cancel();
+        fn edge_sd_background() -> c_int;
+        fn edge_sd_error() -> *const c_char;
+    }
+
+    /// The engine's Metal kernels, compiled at build time rather than on the
+    /// device, written out for it to load.
+    const METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sd.metallib"));
+
+    /// Called once at startup: the Metal library in place, and the engine
+    /// watching the app go behind the screen and back.
+    pub fn prepare(dir: &Path) {
+        std::env::set_var("GGML_METAL_BF16_DISABLE", "1");
+        std::env::set_var("GGML_METAL_TENSOR_DISABLE", "1");
+        let lib = dir.join(env!("EDGE_SD_METALLIB"));
+        if !lib.is_file() {
+            // An earlier version's goes.
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("sd-") && name.ends_with(".metallib") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+            let part = lib.with_extension("part");
+            let _ = std::fs::write(&part, METALLIB).and_then(|_| std::fs::rename(&part, &lib));
+        }
+        if lib.is_file() {
+            std::env::set_var("EDGE_SD_METAL_LIBRARY", &lib);
+        }
+        background();
+    }
+
+    pub fn background() -> bool {
+        unsafe { edge_sd_background() != 0 }
+    }
+
+    pub fn cancel() {
+        unsafe { edge_sd_cancel() }
+    }
+
+    pub enum Event<'a> {
+        /// An error (true) or anything else the engine says.
+        Log(bool, &'a str),
+        /// A step of the run in hand.
+        Step(u32),
+    }
+
+    type Sink<'a> = &'a mut dyn FnMut(Event);
+
+    extern "C" fn take_log(level: c_int, text: *const c_char, user: *mut c_void) {
+        let on = unsafe { &mut *(user as *mut Sink) };
+        let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+        // SD_LOG_ERROR
+        on(Event::Log(level >= 4, &text));
+    }
+
+    extern "C" fn take_step(step: c_int, _steps: c_int, user: *mut c_void) {
+        let on = unsafe { &mut *(user as *mut Sink) };
+        on(Event::Step(step.max(0) as u32));
+    }
+
+    /// True when drawn into `out`; false when stopped, by [`cancel`] or by
+    /// the app moving between screen and background.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        model: &Path,
+        taesd: &Path,
+        gpu: bool,
+        prefer_gpu: bool,
+        prompt: &str,
+        negative: &str,
+        seed: u32,
+        out: &Path,
+        on: &mut dyn FnMut(Event),
+    ) -> Result<bool, String> {
+        let c = |s: &str| CString::new(s).map_err(|_| "参数无效".to_string());
+        let path = |p: &Path| c(&p.to_string_lossy());
+        let (model, taesd, out) = (path(model)?, path(taesd)?, path(out)?);
+        let (prompt, negative) = (c(prompt)?, c(negative)?);
+        let mut sink: Sink = on;
+        let rc = unsafe {
+            edge_sd_draw(
+                model.as_ptr(),
+                taesd.as_ptr(),
+                gpu as c_int,
+                prefer_gpu as c_int,
+                prompt.as_ptr(),
+                negative.as_ptr(),
+                WIDTH as c_int,
+                HEIGHT as c_int,
+                STEPS as c_int,
+                seed as i64,
+                out.as_ptr(),
+                take_log,
+                take_step,
+                &mut sink as *mut Sink as *mut c_void,
+            )
+        };
+        match rc {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err(unsafe { CStr::from_ptr(edge_sd_error()) }.to_string_lossy().into_owned()),
+        }
+    }
+}
+
 /// Where a book's 章间立绘 are kept: `<data>/plates/<book id>/<chapter>.png`,
 /// the chapter being the one a plate follows. Drawn again if deleted.
 fn plates_dir(book_id: i64) -> Result<PathBuf, String> {
@@ -1026,6 +1258,10 @@ fn plates(
     mut report: impl FnMut(PlateProgress),
 ) -> Result<(), String> {
     PLATES.cancel.store(false, Ordering::SeqCst);
+    // On a phone the chat model a task before this one left loaded goes
+    // first: there is memory for one model at a time.
+    #[cfg(in_process_engine)]
+    crate::api::ai::stop_ai();
     let (genre_tags, reading) = crate::api::book::plate_context(book_id)?;
     let plan = crate::api::book::plate_plan(path, book_id, every.max(1) as usize)?;
     let scene = default_cover_scene(genre_tags);
@@ -1303,6 +1539,41 @@ mod tests {
         let path = last.path.clone().unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > 100_000);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// The engine in the app, the way iOS runs it (CI): one cover on the GPU
+    /// (where this one can draw) and one on the CPU, each timed, with the most
+    /// memory the process took. NOVEL_IMAGE_DIR holds the model and its
+    /// decoder; the pictures go to NOVEL_IMAGE_OUT.
+    #[cfg(in_process_engine)]
+    #[test]
+    #[ignore]
+    fn draws_in_the_app() {
+        let dir = std::env::var("NOVEL_IMAGE_DIR").expect("set NOVEL_IMAGE_DIR");
+        let out = PathBuf::from(std::env::var("NOVEL_IMAGE_OUT").expect("set NOVEL_IMAGE_OUT"));
+        std::fs::create_dir_all(&out).unwrap();
+        init_image(dir).unwrap();
+        assert!(image_status().unwrap().ready);
+        for (name, backend) in [("gpu", 0u8), ("cpu", 1u8)] {
+            crate::api::ai::set_ai_runtime_config(0, backend, 0, 1, 0);
+            let t = std::time::Instant::now();
+            let mut seen = Vec::new();
+            draw(&strings(&["少女"]), &strings(&["仙侠"]), "", &[], 7, |p| seen.push(p)).unwrap();
+            let stages: Vec<(u8, u32)> = seen.iter().map(|p| (p.stage, p.step)).collect();
+            let (_, peak) = crate::engine_thread::footprint();
+            println!(
+                "[{name}] {:.1} 秒 · 内存最高 {} MB · {stages:?}",
+                t.elapsed().as_secs_f64(),
+                peak >> 20
+            );
+            assert!(stages.contains(&(1, STEPS)), "every step reported");
+            let path = seen.last().unwrap().path.clone().unwrap();
+            assert!(std::fs::metadata(&path).unwrap().len() > 100_000);
+            std::fs::rename(&path, out.join(format!("{name}.png")))
+                .or_else(|_| std::fs::copy(&path, out.join(format!("{name}.png"))).map(|_| ()))
+                .unwrap();
+        }
+        crate::api::ai::set_ai_runtime_config(0, 0, 0, 1, 0);
     }
 
     #[cfg(windows)]

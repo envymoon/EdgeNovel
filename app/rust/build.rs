@@ -1,8 +1,9 @@
-//! iOS: build the llama.cpp server from ios_engine/ and the 听书 engine from
-//! ios_tts/ and link them into this library (see src/engine_thread.rs and
-//! src/api/tts.rs), because iOS lets an app start no process of its own. A Mac
-//! builds them the same way for the engine test in CI. Every other platform
-//! runs the engines as executables, and nothing is built here.
+//! iOS: build the llama.cpp server from ios_engine/, the 听书 engine from
+//! ios_tts/ and the picture engine from ios_sd/ and link them into this
+//! library (see src/engine_thread.rs, src/api/tts.rs and src/api/image.rs),
+//! because iOS lets an app start no process of its own. A Mac builds them the
+//! same way for the engine test in CI. Every other platform runs the engines
+//! as executables, and nothing is built here.
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -59,6 +60,7 @@ fn main() {
     println!("cargo:rustc-link-lib=c++");
 
     build_tts(&cmake, sdk, arch, &out, &jobs);
+    build_sd(&cmake, sdk, arch, &out, &jobs);
 }
 
 /// qwentts.cpp and the ggml fork it needs, as one object in which everything
@@ -72,16 +74,40 @@ fn build_tts(cmake: &Path, sdk: &str, arch: &str, out: &Path, jobs: &str) {
         "cargo:rerun-if-changed={}",
         manifest.join("../../experiments/qwen-tts/qwentts.patch").display()
     );
-    let build = out.join("tts");
-    run(&mut configure(cmake, &src, &build, sdk, arch));
+    hidden(cmake, sdk, arch, out, jobs, &src, "tts");
+}
+
+/// stable-diffusion.cpp and the ggml it is pinned to, the same way: one
+/// object in which everything but `edge_sd_*` is local.
+fn build_sd(cmake: &Path, sdk: &str, arch: &str, out: &Path, jobs: &str) {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let src = manifest.join("ios_sd");
+    println!("cargo:rerun-if-changed={}", src.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest
+            .join("../../experiments/anime-cover-model/sdcpp-quantized-conv.patch")
+            .display()
+    );
+    hidden(cmake, sdk, arch, out, jobs, &src, "sd");
+}
+
+/// Builds `edge_<name>` from `src` and links it, everything but its
+/// `edge_<name>_*` functions hidden; and hands its compiled Metal library to
+/// the app (written out by src/api/tts.rs or src/api/image.rs for the engine
+/// to load), under a name that changes with its content.
+fn hidden(cmake: &Path, sdk: &str, arch: &str, out: &Path, jobs: &str, src: &Path, name: &str) {
+    let build = out.join(name);
+    let target = format!("edge_{name}");
+    run(&mut configure(cmake, src, &build, sdk, arch));
     run(Command::new(cmake)
         .arg("--build")
         .arg(&build)
-        .args(["--target", "edge_tts", "--parallel", jobs]));
+        .args(["--target", target.as_str(), "--parallel", jobs]));
 
     let mut archives = Vec::new();
     collect(&build, &mut archives);
-    let object = out.join("edge_tts.o");
+    let object = out.join(format!("edge_{name}.o"));
     let min = match sdk {
         "iphoneos" => format!("-mios-version-min={MIN_IOS}"),
         "iphonesimulator" => format!("-mios-simulator-version-min={MIN_IOS}"),
@@ -95,23 +121,22 @@ fn build_tts(cmake: &Path, sdk: &str, arch: &str, out: &Path, jobs: &str) {
         .arg("-o")
         .arg(&object)
         .args(&archives));
-    let merged = out.join("libedge_tts_all.a");
+    let merged = out.join(format!("libedge_{name}_all.a"));
     let _ = std::fs::remove_file(&merged);
     run(Command::new("xcrun")
         .args(["libtool", "-static", "-o"])
         .arg(&merged)
         .arg(&object));
-    println!("cargo:rustc-link-lib=static=edge_tts_all");
+    println!("cargo:rustc-link-lib=static=edge_{name}_all");
 
-    // The compiled Metal library, which src/api/tts.rs writes out for the
-    // engine to load, under a name that changes with its content.
     let metallib = std::fs::read(build.join("bin/default.metallib"))
-        .expect("the TTS Metal library was not built");
-    std::fs::write(out.join("tts.metallib"), &metallib).unwrap();
+        .unwrap_or_else(|_| panic!("the {name} Metal library was not built"));
+    std::fs::write(out.join(format!("{name}.metallib")), &metallib).unwrap();
     let hash = metallib
         .iter()
         .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100_0000_01b3));
-    println!("cargo:rustc-env=EDGE_TTS_METALLIB=tts-{hash:016x}.metallib");
+    let upper = name.to_uppercase();
+    println!("cargo:rustc-env=EDGE_{upper}_METALLIB={name}-{hash:016x}.metallib");
 }
 
 /// Release even in a debug app: an unoptimised engine is unusably slow.

@@ -101,7 +101,7 @@ jobs:
   # secret and never reach the log.
   engine:
     runs-on: macos-15
-    timeout-minutes: 100
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: app/rust
@@ -123,6 +123,11 @@ jobs:
           path: ~/asr
           key: asr-paraformer-zh-int8-2025-10-07
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/image
+          key: image-anime-cover-q5-taesd
+
       - name: Models
         run: |
           mkdir -p ~/models && cd ~/models
@@ -137,6 +142,11 @@ jobs:
           mkdir -p ~/tts && cd ~/tts
           get qwen-talker-0.6b-customvoice-Q8_0.gguf https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-talker-0.6b-customvoice-Q8_0.gguf 4eb38675c736ed6ac72012846ac8d6ef80e5af8bc05726870f0b3a6569588519
           get qwen-tokenizer-12hz-dec-Q8_0.gguf      https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-tokenizer-12hz-dec-Q8_0.gguf      72b05f6436093f4698fc7b2e69d726a26008c78d2cf7007413e39e9f4cd6b556
+          ls -l
+          # AI 封面 and 章间立绘: the model the app downloads.
+          mkdir -p ~/image && cd ~/image
+          get anime-cover-q5_0.gguf https://huggingface.co/ianhaimo/edgenovel-anime-cover/resolve/main/anime-cover-q5_0.gguf cb8c8ce181c2665c022c2a4211e9d593e705026ac07c3d474377921f19c00d38
+          get taesd.safetensors     https://huggingface.co/ianhaimo/edgenovel-anime-cover/resolve/main/taesd.safetensors     db169d69145ec4ff064e49d99c95fa05d3eb04ee453de35824a6d0f325513549
           ls -l
 
       - name: Machine
@@ -202,6 +212,22 @@ jobs:
         with:
           name: tts-experiments
           path: ${{ runner.temp }}/tts-exp
+
+      # AI 封面 the way iOS draws it: in the app's process, on the GPU where
+      # this one can and on the CPU. The pictures are kept with the run.
+      - name: Image test
+        if: always()
+        run: |
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          NOVEL_IMAGE_DIR=~/image NOVEL_IMAGE_OUT="$RUNNER_TEMP/image" lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" draws_in_the_app --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/image.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/image.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-test
+          path: ${{ runner.temp }}/image
 
   # The Rust shared with the Windows app must still compile for Windows.
   rust-windows:

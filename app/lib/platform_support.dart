@@ -50,6 +50,17 @@ abstract final class AppPlatformSupport {
   static bool get hasBundledTtsEngine =>
       defaultTargetPlatform == TargetPlatform.iOS;
 
+  /// AI 封面 and 章间立绘: a downloaded engine on desktop, one compiled into
+  /// the app on iOS, from the same 16.4 the AI engine needs.
+  static bool get hasImageGen =>
+      isDesktop ||
+      (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
+
+  /// The picture engine ships inside the app, so only the model is a
+  /// download.
+  static bool get hasBundledImageEngine =>
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   /// iPhone 听书 plays chapters spoken ahead into files (tts_chapters.dart)
   /// and nothing else: listening is mostly with the screen locked, where iOS
   /// lends no GPU to speak as the voice goes.
