@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:novel/paged_reader.dart';
 import 'package:novel/platform_services.dart';
 import 'package:novel/reader_page.dart';
 import 'package:novel/reader_state.dart';
@@ -358,28 +359,27 @@ void main() {
   ) async {
     await setCompactSize(tester);
     final settings = ReadingSettings();
+    final reader = _LongParagraphReader();
+    final pageInfo = ValueNotifier<(int, int)>((1, 1));
     await tester.pumpWidget(
       MaterialApp(
         home: ListenableBuilder(
           listenable: settings,
-          builder: (context, _) => ReaderPage(
-            reader: _LongParagraphReader(),
+          builder: (context, _) => PagedReader(
+            reader: reader,
             settings: settings,
-            localSpeech: _SilentSpeech(),
-            enableTtsIo: false,
-            onBack: (_) {},
+            padding: const EdgeInsets.all(20),
+            pageInfo: pageInfo,
           ),
         ),
       ),
     );
     await tester.pump();
-    await tester.tapAt(const Offset(195, 380));
-    await tester.pump();
+    expect(pageInfo.value.$2, greaterThan(3));
     // Page 2 opens in the middle of the first paragraph.
-    await tester.tapAt(const Offset(370, 380));
+    tester.state<PagedReaderState>(find.byType(PagedReader)).turn(1);
     await tester.pump();
-    final second = find.textContaining(RegExp(r'^2/\d+$'));
-    expect(second, findsOneWidget);
+    expect(pageInfo.value.$1, 2);
 
     settings.setFontSize(settings.fontSize + 1);
     await tester.pump();
@@ -387,7 +387,7 @@ void main() {
     settings.setFontSize(settings.fontSize - 1);
     await tester.pump();
     await tester.pump();
-    expect(second, findsOneWidget);
+    expect(pageInfo.value.$1, 2);
     expect(tester.takeException(), isNull);
   });
 
