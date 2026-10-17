@@ -141,6 +141,35 @@ class AppMemory {
   }
 }
 
+/// What the phone is doing right now (AppDelegate.swift): the CPU's busy
+/// share across all cores, and, where iOS shows them to an app, the GPU's and
+/// the battery's temperature. Null on other platforms.
+class DeviceLoad {
+  const DeviceLoad({this.cpu, this.gpu, this.batteryCelsius});
+
+  final int? cpu;
+  final int? gpu;
+  final double? batteryCelsius;
+
+  static Future<DeviceLoad?> read() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    try {
+      final m = await const MethodChannel(
+        'novel/device',
+      ).invokeMapMethod<String, int>('load');
+      if (m == null) return null;
+      final tenths = m['batteryTenths'];
+      return DeviceLoad(
+        cpu: m['cpu'],
+        gpu: m['gpu'],
+        batteryCelsius: tenths == null ? null : tenths / 10,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 abstract interface class DeviceStatusReader {
   Future<AiDeviceState> read();
 }

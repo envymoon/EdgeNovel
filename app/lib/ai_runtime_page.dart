@@ -25,14 +25,16 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
   final runtime = AiRuntimeSettings.instance;
   AiDeviceState? _device;
   AppMemory? _memory;
+  DeviceLoad? _load;
   Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    // Often enough to watch the phone warm up under a model.
     _refreshTimer = Timer.periodic(
-      const Duration(seconds: 10),
+      const Duration(seconds: 3),
       (_) => _refresh(),
     );
   }
@@ -47,10 +49,12 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
     try {
       final state = await runtime.readDeviceState();
       final memory = await AppMemory.read();
+      final load = await DeviceLoad.read();
       if (mounted) {
         setState(() {
           _device = state;
           _memory = memory;
+          _load = load;
         });
       }
     } catch (_) {}
@@ -367,8 +371,40 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
               style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
             ),
           ),
+        if (_loadLine(d) case final line?)
+          ListTile(
+            leading: Icon(Icons.thermostat_outlined, color: t.muted),
+            title: Text('负载', style: TextStyle(color: t.text, fontSize: 14)),
+            subtitle: Text(
+              line,
+              style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
+            ),
+          ),
       ],
     );
+  }
+
+  /// CPU, GPU and heat on one line; what the phone does not tell is left out.
+  /// iOS gives an app no temperature, only how warm it judges itself to be.
+  String? _loadLine(AiDeviceState? d) {
+    final l = _load;
+    if (l == null) return null;
+    final heat = switch (d?.thermalState) {
+      'nominal' => '正常',
+      'fair' => '偏热',
+      'serious' => '很热',
+      'critical' => '过热',
+      _ => null,
+    };
+    final parts = [
+      if (l.cpu != null) 'CPU ${l.cpu}%',
+      if (l.gpu != null) 'GPU ${l.gpu}%',
+      if (heat != null)
+        l.batteryCelsius == null
+            ? '温度 $heat'
+            : '温度 $heat · 电池 ${l.batteryCelsius!.toStringAsFixed(1)} °C',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   String _duration(int seconds) {

@@ -78,7 +78,13 @@ import os
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelDevice") {
       UIDevice.current.isBatteryMonitoringEnabled = true
       FlutterMethodChannel(name: "novel/device", binaryMessenger: registrar.messenger())
-        .setMethodCallHandler { _, result in result(AppDelegate.device()) }
+        .setMethodCallHandler { call, result in
+          if call.method == "load" {
+            AppDelegate.readLoad(result)
+          } else {
+            result(AppDelegate.device())
+          }
+        }
     }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelBackground") {
       let channel = FlutterMethodChannel(
@@ -106,6 +112,91 @@ import os
       // report in, and the session exists before Dart first asks for it.
       Transfers.shared.wake()
     }
+  }
+
+  /// What the phone is doing, for the 设备 card: how busy its CPU is across all
+  /// cores since the last read, and, where iOS lets an app see them, the GPU's
+  /// busy share and the battery's temperature. Taken off the main thread: the
+  /// first read waits a moment for a second sample.
+  private static var lastTicks: (busy: UInt64, total: UInt64)?
+
+  static func readLoad(_ result: @escaping FlutterResult) {
+    DispatchQueue.global(qos: .utility).async {
+      if lastTicks == nil {
+        _ = cpuBusy()
+        usleep(300_000)
+      }
+      var state: [String: Any] = [:]
+      if let cpu = cpuBusy() { state["cpu"] = cpu }
+      if let gpu = registryNumber(service: "IOAccelerator", key: "PerformanceStatistics",
+        inner: "Device Utilization %")
+      {
+        state["gpu"] = gpu.intValue
+      }
+      if let temp = registryNumber(service: "IOPMPowerSource", key: "Temperature") {
+        state["batteryTenths"] = temp.intValue / 10
+      }
+      DispatchQueue.main.async { result(state) }
+    }
+  }
+
+  private static func cpuBusy() -> Int? {
+    var cpus: natural_t = 0
+    var info: processor_info_array_t?
+    var count: mach_msg_type_number_t = 0
+    guard
+      host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &cpus, &info, &count)
+        == KERN_SUCCESS, let info = info
+    else { return nil }
+    defer {
+      vm_deallocate(
+        mach_task_self_, vm_address_t(UInt(bitPattern: info)),
+        vm_size_t(Int(count) * MemoryLayout<integer_t>.stride))
+    }
+    var busy: UInt64 = 0
+    var total: UInt64 = 0
+    for cpu in 0..<Int(cpus) {
+      func ticks(_ state: Int32) -> UInt64 {
+        UInt64(UInt32(bitPattern: info[cpu * Int(CPU_STATE_MAX) + Int(state)]))
+      }
+      let used = ticks(CPU_STATE_USER) + ticks(CPU_STATE_SYSTEM) + ticks(CPU_STATE_NICE)
+      busy += used
+      total += used + ticks(CPU_STATE_IDLE)
+    }
+    defer { lastTicks = (busy, total) }
+    guard let last = lastTicks, busy >= last.busy, total > last.total else { return nil }
+    return Int((Double(busy - last.busy) / Double(total - last.total) * 100).rounded())
+  }
+
+  /// A number from the I/O registry, looked up at run time: iOS has no public
+  /// interface for these, and refuses some apps; then this is nil.
+  private static func registryNumber(service: String, key: String, inner: String? = nil)
+    -> NSNumber?
+  {
+    typealias Matching = @convention(c) (UnsafePointer<CChar>) -> Unmanaged<CFMutableDictionary>?
+    typealias Service = @convention(c) (mach_port_t, CFMutableDictionary) -> mach_port_t
+    typealias Property = @convention(c) (mach_port_t, CFString, CFAllocator?, UInt32) ->
+      Unmanaged<CFTypeRef>?
+    typealias Release = @convention(c) (mach_port_t) -> kern_return_t
+    guard let kit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY),
+      let m = dlsym(kit, "IOServiceMatching"), let s = dlsym(kit, "IOServiceGetMatchingService"),
+      let p = dlsym(kit, "IORegistryEntryCreateCFProperty"), let r = dlsym(kit, "IOObjectRelease")
+    else { return nil }
+    let matching = unsafeBitCast(m, to: Matching.self)
+    let getService = unsafeBitCast(s, to: Service.self)
+    let property = unsafeBitCast(p, to: Property.self)
+    let release = unsafeBitCast(r, to: Release.self)
+    guard let dict = service.withCString({ matching($0) }) else { return nil }
+    // The lookup takes the matching dictionary's reference.
+    let entry = getService(0, dict.takeUnretainedValue())
+    guard entry != 0 else { return nil }
+    defer { _ = release(entry) }
+    guard let value = property(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+    else { return nil }
+    if let inner = inner {
+      return (value as? NSDictionary)?[inner] as? NSNumber
+    }
+    return value as? NSNumber
   }
 
   /// What the AI queue waits on: how hot the phone is, its power, its memory.
