@@ -1019,10 +1019,12 @@ fn render(
                         report(p);
                     }
                 }
-                // Sampling steps; loading and the decoder's strips count
-                // their own.
-                engine::Event::Step(step) if log.stage == 1 => report(log.at(step.min(STEPS))),
-                engine::Event::Step(_) => {}
+                // Sampling steps. Loading counts tensors and the decoder its
+                // strips, through the same callback.
+                engine::Event::Step(step, steps) if log.stage == 1 && steps == STEPS => {
+                    report(log.at(step.min(STEPS)))
+                }
+                engine::Event::Step(..) => {}
             },
         );
         match drawn {
@@ -1107,8 +1109,8 @@ mod engine {
     pub enum Event<'a> {
         /// An error (true) or anything else the engine says.
         Log(bool, &'a str),
-        /// A step of the run in hand.
-        Step(u32),
+        /// A step of the run in hand, and how many it has.
+        Step(u32, u32),
     }
 
     type Sink<'a> = &'a mut dyn FnMut(Event);
@@ -1120,9 +1122,9 @@ mod engine {
         on(Event::Log(level >= 4, &text));
     }
 
-    extern "C" fn take_step(step: c_int, _steps: c_int, user: *mut c_void) {
+    extern "C" fn take_step(step: c_int, steps: c_int, user: *mut c_void) {
         let on = unsafe { &mut *(user as *mut Sink) };
-        on(Event::Step(step.max(0) as u32));
+        on(Event::Step(step.max(0) as u32, steps.max(0) as u32));
     }
 
     /// True when drawn into `out`; false when stopped, by [`cancel`] or by
@@ -1567,6 +1569,7 @@ mod tests {
                 peak >> 20
             );
             assert!(stages.contains(&(1, STEPS)), "every step reported");
+            assert!(stages.windows(2).all(|w| w[0] <= w[1]), "the bar only goes forward");
             let path = seen.last().unwrap().path.clone().unwrap();
             assert!(std::fs::metadata(&path).unwrap().len() > 100_000);
             std::fs::rename(&path, out.join(format!("{name}.png")))
