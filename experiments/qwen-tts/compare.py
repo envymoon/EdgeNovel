@@ -3,7 +3,9 @@ experiment): every setting's WAVs against the plain setting's first round.
 
 With the same seed a setting that only changes how the codec is scheduled
 (chunk16, chunk32, thread) is handed the same codes, so its sound must match
-the plain one to the rounding: the SNR is the check. A setting that batches
+the plain one to the rounding: the SNR is the check. The codec on the CPU
+(cpu2, cpu4) gets the same codes too, and differs from the GPU's codec only
+by its arithmetic. A setting that batches
 sentences (batch2) runs the talker on two at once and may sample codes of its
 own, so it is checked by what a speech recogniser hears (CER against the text)
 and by the spectrum: a muffled voice shows as the top end going quiet.
@@ -97,7 +99,7 @@ def main():
         m = re.match(r"(.+)-r(\d+)-(\d+)\.wav$", os.path.basename(path))
         if m:
             clips[(m[1], int(m[2]), int(m[3]))] = path
-    order = ["base", "chunk16", "chunk32", "thread", "batch2"]
+    order = ["base", "chunk16", "chunk32", "thread", "batch2", "cpu2", "cpu4"]
     settings = sorted({k[0] for k in clips}, key=lambda s: (order.index(s) if s in order else len(order), s))
 
     speed = {}

@@ -1,6 +1,6 @@
 diff -ruN base/src/pipeline-codec.h work/src/pipeline-codec.h
 --- base/src/pipeline-codec.h	2026-10-16 21:18:33.905518300 -0700
-+++ work/src/pipeline-codec.h	2026-10-16 21:23:19.997817100 -0700
++++ work/src/pipeline-codec.h	2026-10-17 00:45:22.919349600 -0700
 @@ -50,7 +50,10 @@
  static const int CODEC_SNAP_SLOTS = 8;
  
@@ -15,7 +15,7 @@ diff -ruN base/src/pipeline-codec.h work/src/pipeline-codec.h
  // once, allocated once, replayed with per chunk uploads of codes,
 diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
 --- base/src/pipeline-tts.cpp	2026-10-16 21:18:34.183276400 -0700
-+++ work/src/pipeline-tts.cpp	2026-10-16 21:23:20.000915700 -0700
++++ work/src/pipeline-tts.cpp	2026-10-17 00:45:42.491554200 -0700
 @@ -19,9 +19,13 @@
  #include "talker-forward.h"
  #include "timer.h"
@@ -48,14 +48,29 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
  
      // Chunk width of the buffered decode. The conversion is a fixed
      // 12.5 Hz ratio, so it lands here once instead of per synthesis.
-@@ -205,7 +220,23 @@
+@@ -205,7 +220,38 @@
      pt->has_speaker_encoder = (pt->model_type == "base");
      pt->spk_enc_loaded      = false;
  
 -    if (!pipeline_codec_load(&pt->codec, codec_gguf_path, bp)) {
 +    if (const char * env = getenv("QWEN_TTS_CODEC_THREAD")) {
 +        if (std::strcmp(env, "1") == 0) {
-+            BackendPair own = backend_init("Codec", ggml_backend_name(bp.backend));
++            // QWEN_TTS_CODEC_CPU=N: the codec on the CPU with N threads,
++            // beside the talker on the GPU, instead of a second queue there.
++            const char * cpu     = getenv("QWEN_TTS_CODEC_CPU");
++            const int    threads = cpu ? atoi(cpu) : 0;
++            BackendPair  own     = backend_init("Codec", threads > 0 ? "CPU" : ggml_backend_name(bp.backend));
++            if (own.backend && threads > 0) {
++                ggml_backend_dev_t dev = ggml_backend_get_device(own.cpu_backend);
++                ggml_backend_reg_t reg = dev ? ggml_backend_dev_backend_reg(dev) : NULL;
++                auto set_fn = reg ? (ggml_backend_set_n_threads_t) ggml_backend_reg_get_proc_address(
++                                        reg, "ggml_backend_set_n_threads") :
++                                    NULL;
++                if (set_fn) {
++                    set_fn(own.cpu_backend, threads);
++                }
++                qt_log(QT_LOG_INFO, "[Pipeline] Codec on the CPU, %d threads", threads);
++            }
 +            if (own.backend) {
 +                pt->codec_bp    = own;
 +                pt->codec_async = true;
@@ -73,7 +88,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
          code_predictor_weights_free(&pt->code_predictor);
          talker_weights_free(&pt->talker);
          gf_close(&pt->gguf_talker);
-@@ -397,6 +428,11 @@
+@@ -397,6 +443,11 @@
          pt->sched = NULL;
      }
      pipeline_codec_free(&pt->codec);
@@ -85,7 +100,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
      if (pt->spk_enc_loaded) {
          speaker_encoder_weights_free(&pt->speaker_encoder);
          pt->spk_enc_loaded = false;
-@@ -570,8 +606,111 @@
+@@ -570,8 +621,111 @@
      std::vector<int32_t> codec_codes;      // [T, K, M] flush upload layout
      std::vector<float>   codec_audio;      // [lane][8 * hop] flush output
      std::vector<float *> codec_outs;       // per lane out or NULL
@@ -197,7 +212,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
  TtsEngine * tts_engine_new(PipelineTTS * pt, BPETokenizer * tok) {
      TtsEngine * e      = new TtsEngine();
      e->pt              = pt;
-@@ -589,10 +728,21 @@
+@@ -589,10 +743,21 @@
      e->codec_audio.assign(maxM * maxT * (size_t) TOKENIZER_HOP_LENGTH, 0.0f);
      e->codec_outs.assign(maxM, nullptr);
      e->slots.reserve(maxM);
@@ -219,7 +234,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
      delete e;
  }
  
-@@ -674,6 +824,32 @@
+@@ -674,6 +839,32 @@
      return true;
  }
  
@@ -252,7 +267,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
  // Attach a fresh streaming lane for an admitted slot: drain the
  // pending rows of the current lanes first (their chunks come out
  // shorter around the event), zero or ICL prime the new set, restart
-@@ -685,6 +861,9 @@
+@@ -685,6 +876,9 @@
      PipelineTTS *   pt = e->pt;
      PipelineCodec * pc = &pt->codec;
      const int       K  = pt->num_code_groups;
@@ -262,7 +277,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
      if (e->codec_pending_n > 0 && !tts_engine_codec_flush(e)) {
          return false;
      }
-@@ -1370,7 +1549,10 @@
+@@ -1370,7 +1564,10 @@
              any_stage  = any_stage || s.has_frame;
          }
          bool ok = true;
@@ -274,7 +289,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
              ok = tts_engine_codec_flush(e);
          }
          if (ok && any_stage) {
-@@ -1391,8 +1573,12 @@
+@@ -1391,8 +1588,12 @@
              if (any_finish) {
                  ok = tts_engine_codec_flush(e);
              } else if (e->codec_pending_n >= e->codec_target) {
@@ -289,7 +304,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
                      e->codec_target <<= 1;
                  }
              }
-@@ -1414,7 +1600,14 @@
+@@ -1414,7 +1615,14 @@
      // index; the bridge column and the predictor set rewrite next frame
      // before any read, so only the talker cache moves. The codec lane
      // span compacts the same way: the tail lane's stream state copies
@@ -307,7 +322,7 @@ diff -ruN base/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
              i++;
 diff -ruN base/src/pipeline-tts.h work/src/pipeline-tts.h
 --- base/src/pipeline-tts.h	2026-10-16 21:18:33.908101300 -0700
-+++ work/src/pipeline-tts.h	2026-10-16 21:23:19.998633900 -0700
++++ work/src/pipeline-tts.h	2026-10-17 00:45:22.945353200 -0700
 @@ -136,6 +136,16 @@
      int codec_chunk_frames;
      int codec_left_ctx_frames;

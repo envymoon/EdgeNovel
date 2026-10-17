@@ -85,12 +85,13 @@ pub fn init_tts(dir: String) -> Result<(), String> {
     engine::prepare(&p);
     let _ = TTS_DIR.set(p.clone());
     // A phone launched for the 听书 experiments runs them once, a little
-    // after the app is up, into tts/experiment.
+    // after the app is up, into tts/experiment: four rounds, as a phone
+    // warms up.
     #[cfg(in_process_engine)]
     if std::env::var_os("NOVEL_TTS_EXPERIMENT").is_some() {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(15));
-            let _ = experiment::run(&p.join("experiment"), 2);
+            let _ = experiment::run(&p.join("experiment"), 4);
         });
     }
     Ok(())
@@ -725,12 +726,13 @@ mod experiment {
     const VOICE: &str = "uncle_fu";
 
     /// The engine's environment at load for each; the plain one sets nothing.
-    static SETTINGS: [(&str, &[(&str, &str)]); 5] = [
+    /// Wider codec chunks, the codec on a GPU queue of its own and two
+    /// sentences at once were tried on 2026-10-17 and left out; now the codec
+    /// on the CPU, beside the talker on the GPU, with 2 threads and with 4.
+    static SETTINGS: [(&str, &[(&str, &str)]); 3] = [
         ("base", &[]),
-        ("chunk16", &[("QWEN_TTS_CODEC_MAX", "16")]),
-        ("chunk32", &[("QWEN_TTS_CODEC_MAX", "32")]),
-        ("thread", &[("QWEN_TTS_CODEC_THREAD", "1")]),
-        ("batch2", &[("EDGE_TTS_BATCH", "2")]),
+        ("cpu2", &[("QWEN_TTS_CODEC_THREAD", "1"), ("QWEN_TTS_CODEC_CPU", "2")]),
+        ("cpu4", &[("QWEN_TTS_CODEC_THREAD", "1"), ("QWEN_TTS_CODEC_CPU", "4")]),
     ];
 
     /// Short to long, with characters that are read more than one way.
