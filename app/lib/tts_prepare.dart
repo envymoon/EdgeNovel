@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -218,53 +219,73 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
       0,
       (n, w) => n + w.$2.fold<int>(0, (m, u) => m + u.text.length),
     );
-    var warm = false;
-    var paced = 0;
+    // As many sentences in flight as the voice speaks at once here: the
+    // engine takes them together, each in turn added to the chapter.
+    final lanes = await _lanes();
+    // Paced by characters spoken since the first one came back, which also
+    // waited for the voice to load.
+    final pace = Stopwatch();
     var pacedChars = 0;
-    var spent = Duration.zero;
     var skipped = 0;
+    Object? why;
     try {
       for (final (c, utts) in work) {
         final w = await store.write(book, c, voice, utts);
+        // Twice, then left out: a chapter missing one sentence is still
+        // worth having. Two left out in a row is the engine, not them.
+        Future<Uint8List?> speak(int i) async {
+          for (var attempt = 0; attempt < 2; attempt++) {
+            try {
+              return await s.synthesize(text: utts[i].text, voice: voice);
+            } catch (e) {
+              why = e;
+            }
+            if (gen != _gen) return null;
+          }
+          return null;
+        }
+
+        final flying = <int, Future<Uint8List?>>{};
         try {
           for (var i = 0; i < w.next; i++) {
             left -= utts[i].text.length;
           }
           done += w.next;
           notifyListeners();
+          var ahead = w.next;
           while (!w.done) {
-            await _mayRun(gen);
-            if (gen != _gen) return;
-            final text = utts[w.next].text;
-            final clock = Stopwatch()..start();
-            Uint8List? wav;
-            Object? why;
-            // Twice, then left out: a chapter missing one sentence is still
-            // worth having. Two left out in a row is the engine, not them.
-            for (var attempt = 0; attempt < 2 && wav == null; attempt++) {
-              try {
-                wav = await s.synthesize(text: text, voice: voice);
-              } catch (e) {
-                why = e;
-              }
+            // What is in flight is kept whatever happens; more only goes
+            // out while the job may run.
+            if (!flying.containsKey(w.next)) {
+              await _mayRun(gen);
               if (gen != _gen) return;
+              flying[w.next] = speak(w.next);
+              ahead = w.next + 1;
             }
+            while (ahead < utts.length && ahead < w.next + lanes && _mayGo) {
+              flying[ahead] = speak(ahead);
+              ahead++;
+            }
+            final text = utts[w.next].text;
+            final wav = await flying.remove(w.next)!;
+            if (gen != _gen) return;
             if (wav != null) {
               await w.add(wav);
               skipped = 0;
-              if (warm) {
-                paced++;
+              if (pace.isRunning) {
                 pacedChars += text.length;
-                spent += clock.elapsed;
+              } else {
+                pace.start();
               }
-              warm = true;
             } else {
               if (++skipped >= 2) throw why ?? '语音合成失败';
               await w.skip();
             }
             done++;
             left -= text.length;
-            if (paced >= 2) remaining = spent * (left / pacedChars);
+            if (pacedChars > 0 && pace.elapsed.inSeconds >= 20) {
+              remaining = pace.elapsed * (left / pacedChars);
+            }
             notifyListeners();
           }
           await w.finish();
@@ -280,6 +301,22 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
     bookId = null;
     notifyListeners();
     unawaited(_windDown());
+  }
+
+  bool get _mayGo => !_offScreen || AiRuntimeSettings.instance.lockedEnabled;
+
+  /// How many sentences the voice speaks at once on this phone: what the 听书
+  /// experiments found it does well (tts.rs, `tuned`), one without them.
+  static Future<int> _lanes() async {
+    try {
+      final dir = AppServices.instance.storage.supportChild('tts');
+      final file = File('${dir.path}${Platform.pathSeparator}engine.json');
+      if (!await file.exists()) return 1;
+      final lanes = (jsonDecode(await file.readAsString()) as Map)['lanes'];
+      return lanes is int ? lanes.clamp(1, 4) : 1;
+    } catch (_) {
+      return 1;
+    }
   }
 
   void cancel() {

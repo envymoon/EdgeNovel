@@ -1,5 +1,6 @@
---- a/src/ggml-metal/CMakeLists.txt
-+++ b/src/ggml-metal/CMakeLists.txt
+diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
+--- a/src/ggml-metal/CMakeLists.txt	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/CMakeLists.txt	2026-10-17 11:45:01.758014800 -0700
 @@ -193,9 +193,13 @@
      if (GGML_METAL_MACOSX_VERSION_MIN)
          message(STATUS "Adding  -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN} flag to metal compilation")
@@ -17,8 +18,57 @@
      endif()
  
      if (GGML_METAL_STD)
---- a/src/ggml-metal/ggml-metal-device.m
-+++ b/src/ggml-metal/ggml-metal-device.m
+diff -ruN a/src/ggml-metal/ggml-metal-common.cpp b/src/ggml-metal/ggml-metal-common.cpp
+--- a/src/ggml-metal/ggml-metal-common.cpp	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/ggml-metal-common.cpp	2026-10-17 11:45:34.747362900 -0700
+@@ -115,7 +115,14 @@
+     }
+ }
+ 
++bool ggml_metal_mma_disabled    = false;
++bool ggml_metal_mv_ext_disabled = false;
++
+ bool ggml_metal_op_mul_mat_use_mma(const struct ggml_tensor * op) {
++    if (ggml_metal_mma_disabled) {
++        return false;
++    }
++
+     const ggml_tensor * src0 = op->src[0];
+     const ggml_tensor * src1 = op->src[1];
+ 
+diff -ruN a/src/ggml-metal/ggml-metal-common.h b/src/ggml-metal/ggml-metal-common.h
+--- a/src/ggml-metal/ggml-metal-common.h	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/ggml-metal-common.h	2026-10-17 11:45:34.747362900 -0700
+@@ -56,6 +56,12 @@
+ bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
+ 
+ bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
++
++// read again at every backend init, so that a process can load the backend more than once with other
++// settings: GGML_METAL_MMA_DISABLE leaves the few-row MMA kernels out, GGML_METAL_MV_EXT_DISABLE the
++// small-batch mat-vec ones, and a mat-mul falls to the next kernel that takes it
++extern bool ggml_metal_mma_disabled;
++extern bool ggml_metal_mv_ext_disabled;
+ bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op); // graph structure only
+ 
+ // the few-row MMA kernel for a src0 type and rt src1 tiles: per 32-weight block (q4_0, q8_0 with one tile), q5_K, or the generic 64-weight chunk kernel
+diff -ruN a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-context.m
+--- a/src/ggml-metal/ggml-metal-context.m	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/ggml-metal-context.m	2026-10-17 11:45:34.748889000 -0700
+@@ -153,6 +153,10 @@
+         }
+ 
+         res->finfo = ggml_metal_device_get_fusion_info(dev);
++        // the device outlives a backend, and the next one may be asked for other kernels
++        ggml_metal_fusion_info_set_enabled(res->finfo, getenv("GGML_METAL_FUSION_DISABLE") == nil);
++        ggml_metal_mma_disabled    = getenv("GGML_METAL_MMA_DISABLE") != nil;
++        ggml_metal_mv_ext_disabled = getenv("GGML_METAL_MV_EXT_DISABLE") != nil;
+         if (ggml_metal_fusion_info_stats(res->finfo)) {
+             ggml_metal_fusion_info_labels_init(res->finfo);
+             res->n_cb = 0;
+diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
+--- a/src/ggml-metal/ggml-metal-device.m	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/ggml-metal-device.m	2026-10-17 11:45:01.779272800 -0700
 @@ -507,7 +507,9 @@
      const int64_t t_start = ggml_time_us();
  
@@ -30,3 +80,15 @@
  
      if (path_lib != nil) {
          // pre-compiled library found: a single combined default.metallib
+diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
+--- a/src/ggml-metal/ggml-metal-ops.cpp	2026-10-14 00:20:01.000000000 -0700
++++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-10-17 11:45:34.752423100 -0700
+@@ -2618,7 +2618,7 @@
+ 
+     // first try to use small-batch mat-mv kernels
+     // these should be efficient for BS [2, ~8]
+-    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
++    if (!ggml_metal_mv_ext_disabled && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+         (
+          (
+           (

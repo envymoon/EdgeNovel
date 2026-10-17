@@ -145,7 +145,10 @@ class _ReaderPageState extends State<ReaderPage> {
           SnackBar(
             content: Text(msg),
             action: SnackBarAction(
-              label: context.tr('设置'),
+              // On iPhone what is wanted is more spoken, from the panel.
+              label: context.tr(
+                AppPlatformSupport.speaksByChapter ? '合成' : '设置',
+              ),
               onPressed: _openTtsSettings,
             ),
           ),
@@ -840,9 +843,9 @@ class _ReaderPageState extends State<ReaderPage> {
         final showControls = !compact || _chromeVisible || _annotationMode;
         // With the bars away, a quiet line under the text says where you are.
         final footer = compact && !showControls;
-        // A tap in the middle of a page shows the bars over the text: making
-        // room for them would move every line on the page.
-        final barsOverText = _isPaged && compact;
+        // A tap in the middle shows the bars over the text, paged or
+        // scrolling: making room for them would move every line on screen.
+        final barsOverText = compact;
         final systemInsets = MediaQuery.paddingOf(context);
         final readerPadding = EdgeInsets.fromLTRB(
           compact ? 20 : 28,

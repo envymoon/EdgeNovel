@@ -354,6 +354,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the bars come and go over scrolling text without moving it', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings()..pageMode = PageMode.scroll;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: settings,
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final third = find.byType(ParagraphView).at(2);
+    final shown = tester.getTopLeft(third);
+    expect(find.byTooltip('目录'), findsOneWidget);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsNothing);
+    expect(tester.getTopLeft(third), shown);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsOneWidget);
+    expect(tester.getTopLeft(third), shown);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('A+ then A- comes back to the page, not the paragraph start', (
     tester,
   ) async {

@@ -77,12 +77,21 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  test('a chapter plays only once every sentence is in', () async {
+  test('what is spoken plays at once, and speaking carries on', () async {
     final b = book();
+    expect(await store.chapter(b, 0), isNull);
     var w = await store.write(b, 0, 'serena', utts);
     await w.add(clip(1000));
     await w.close();
-    expect(await store.chapter(b, 0), isNull);
+
+    // One sentence in: it plays, as a WAV of what there is.
+    final part = await store.chapter(b, 0);
+    expect(part, isNotNull);
+    expect(part!.complete, isFalse);
+    expect(part.sentences.map((s) => s.ms), [0]);
+    expect(part.path, endsWith('.part.wav'));
+    final head = ByteData.sublistView(await File(part.path).readAsBytes());
+    expect(head.getUint32(40, Endian.little), (1000 + 220) * 24 * 2);
 
     // Spoken again later: it carries on from the second sentence.
     w = await store.write(b, 0, 'serena', utts);
@@ -94,7 +103,8 @@ void main() {
 
     final spoken = await store.chapter(b, 0);
     expect(spoken, isNotNull);
-    expect(spoken!.voice, 'serena');
+    expect(spoken!.complete, isTrue);
+    expect(spoken.voice, 'serena');
     // 1 s, a pause of 0.22 s; 0.5 s, then 0.48 s at the paragraph's end;
     // the sentence left out is a pause of its own.
     expect(spoken.sentences.map((s) => s.ms), [0, 1220, 2200]);
@@ -108,6 +118,21 @@ void main() {
     expect(d.getUint32(40, Endian.little), samples * 2);
     expect(wav.length, 44 + samples * 2);
     expect(d.getInt16(44, Endian.little), 1000);
+  });
+
+  test('a chapter half spoken by an earlier version carries on', () async {
+    final b = book();
+    var w = await store.write(b, 0, 'serena', utts);
+    await w.add(clip(1000));
+    await w.close();
+    // The name the earlier version gave it.
+    await File('${dir.path}/7/0.part.wav').rename('${dir.path}/7/0.wav.part');
+    expect(await store.chapter(b, 0), isNull);
+
+    w = await store.write(b, 0, 'serena', utts);
+    expect(w.next, 1);
+    await w.close();
+    expect((await store.chapter(b, 0))!.sentences, hasLength(1));
   });
 
   test('another voice or other text starts the chapter over', () async {

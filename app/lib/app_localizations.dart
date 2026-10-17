@@ -649,6 +649,7 @@ const _english = <String, String>{
   '未合成': 'Not prepared',
   '本章未合成': 'This chapter is not prepared',
   '下一章未合成': 'The next chapter is not prepared',
+  '只合成到这里': 'Prepared only up to here',
   '暂无已合成章节': 'Nothing prepared yet',
   '听书合成中': 'Preparing read-aloud',
   '需要先下载生图模型': 'Download the image model first',

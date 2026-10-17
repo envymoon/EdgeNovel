@@ -110,6 +110,10 @@ extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     if (const char * batch = getenv("EDGE_TTS_BATCH")) {
         p.max_batch = atoi(batch) > 1 ? atoi(batch) : 1;
     }
+    // EDGE_TTS_FA=0: attention as plain arithmetic, for the experiments.
+    if (const char * fa = getenv("EDGE_TTS_FA")) {
+        p.use_fa = atoi(fa) != 0;
+    }
     g_ctx         = qt_init(&p);
     g_gpu         = gpu != 0;
     if (!g_ctx) {
@@ -125,6 +129,19 @@ extern "C" void edge_tts_unload(void) {
         qt_free(g_ctx);
         g_ctx = nullptr;
     }
+}
+
+// The 听书 experiments' checks (qt_diag in qwen.h), with nothing else being
+// spoken: one sentence alone and several at once, frame by frame, and what
+// each part of the voice costs. The report goes to `report`.
+extern "C" int edge_tts_diag(const char * text, const char * speaker, int frames, int greedy, int profile,
+                             const char * report) {
+    std::shared_lock<std::shared_mutex> lock(g_mutex);
+    if (!g_ctx) {
+        g_error = "voice not loaded";
+        return -1;
+    }
+    return qt_diag(g_ctx, text, speaker, frames, greedy, profile, report);
 }
 
 typedef void (*edge_tts_pcm_cb)(const float * samples, int n_samples, void * user);

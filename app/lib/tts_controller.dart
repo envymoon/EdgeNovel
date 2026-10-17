@@ -27,9 +27,9 @@ import 'tts_text.dart';
 /// clip, because the audio backends want a path. Sentences spoken ahead of time
 /// (`tts_prepare.dart`) come back from the local engine's own cache.
 ///
-/// On iPhone nothing is spoken as the voice goes: a chapter plays only once it
-/// has been spoken ahead into a file of its own ([TtsChapters]), and the
-/// voice follows its index from sentence to sentence.
+/// On iPhone nothing is spoken as the voice goes: a chapter plays from the
+/// file it is spoken ahead into ([TtsChapters]), as far as it has been
+/// spoken, and the voice follows its index from sentence to sentence.
 class TtsController extends ChangeNotifier {
   final ReaderState reader;
   final ReadingSettings settings;
@@ -196,6 +196,7 @@ class TtsController extends ChangeNotifier {
     _failed.clear();
     _spoken = null;
     _pausedAt = null;
+    TtsChapters.instance.playing = null;
     await _player?.stop();
     notifyListeners();
   }
@@ -316,6 +317,7 @@ class TtsController extends ChangeNotifier {
     final player = _player;
     final spoken = _spoken;
     if (player == null || spoken == null) return;
+    TtsChapters.instance.playing = spoken.path;
     await player.setSource(DeviceFileSource(spoken.path));
     if (gen != _gen) return;
     if (at > Duration.zero) await player.seek(at);
@@ -336,11 +338,39 @@ class TtsController extends ChangeNotifier {
   }
 
   /// The chapter heard to the end: on into the next one if it has been
-  /// spoken, and otherwise the voice stops here.
+  /// spoken, and otherwise the voice stops here. A chapter heard as far as
+  /// it had been spoken goes on with whatever has been spoken since, and
+  /// stops where that runs out.
   Future<void> _onSpokenEnd() async {
-    if (!playing || _spoken == null) return;
+    final was = _spoken;
+    if (!playing || was == null) return;
     final gen = _gen;
     final info = reader.info;
+    if (!was.complete) {
+      final now = info == null
+          ? null
+          : await TtsChapters.instance.chapter(info, reader.chapterIndex);
+      if (gen != _gen) return;
+      final from = was.sentences.length;
+      if (now == null || now.sentences.length <= from) {
+        notice = '只合成到这里';
+        playing = false;
+        _pausedAt = null;
+        // Played again, it goes on from what has been spoken by then.
+        _pos = from;
+        _clearActive();
+        notifyListeners();
+        return;
+      }
+      _spoken = now;
+      _utts = _spokenUtts(now);
+      _pos = from;
+      final u = _utts[from];
+      _setActive(u.paragraphIndex, u.start, u.end);
+      notifyListeners();
+      await _playSpoken(gen, Duration(milliseconds: now.sentences[from].ms));
+      return;
+    }
     final next = reader.chapterIndex + 1;
     final last = info == null || next >= info.chapters.length;
     final spoken = info == null || last

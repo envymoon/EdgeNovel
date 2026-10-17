@@ -1,3 +1,4 @@
+import AVFoundation
 import BackgroundTasks
 import Flutter
 import UIKit
@@ -103,6 +104,24 @@ import os
       }
       backgroundChannel = channel
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelAudio") {
+      FlutterMethodChannel(name: "novel/audio", binaryMessenger: registrar.messenger())
+        .setMethodCallHandler { call, result in
+          let args = call.arguments as? [String: Any] ?? [:]
+          guard call.method == "m4a", let from = args["from"] as? String,
+            let to = args["to"] as? String
+          else {
+            result(FlutterMethodNotImplemented)
+            return
+          }
+          DispatchQueue.global(qos: .utility).async {
+            let failure = AppDelegate.m4a(from: from, to: to)
+            DispatchQueue.main.async {
+              result(failure.map { FlutterError(code: "m4a", message: $0, details: nil) })
+            }
+          }
+        }
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelTransfer") {
       let channel = FlutterMethodChannel(
         name: "novel/transfer", binaryMessenger: registrar.messenger())
@@ -112,6 +131,44 @@ import os
       // report in, and the session exists before Dart first asks for it.
       Transfers.shared.wake()
     }
+  }
+
+  /// A spoken chapter's WAV as AAC in an .m4a (tts_chapters.dart): speech at
+  /// 64 kbit/s, which is what a book app's audio is, a sixth of the WAV. The
+  /// encoder may not take that rate at every sample rate, so lower ones are
+  /// tried after it. Nil when written, why not otherwise.
+  static func m4a(from: String, to: String) -> String? {
+    var why = "无法编码"
+    for rate in [64000, 48000, 32000] {
+      do {
+        let input = try AVAudioFile(forReading: URL(fileURLWithPath: from))
+        let format = input.processingFormat
+        try? FileManager.default.removeItem(atPath: to)
+        // Closed, and so finished, when it goes out of scope.
+        let output = try AVAudioFile(
+          forWriting: URL(fileURLWithPath: to),
+          settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: format.channelCount,
+            AVEncoderBitRateKey: rate,
+          ],
+          commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1 << 15) else {
+          return why
+        }
+        while input.framePosition < input.length {
+          try input.read(into: buffer)
+          if buffer.frameLength == 0 { break }
+          try output.write(from: buffer)
+        }
+        return nil
+      } catch {
+        why = error.localizedDescription
+        try? FileManager.default.removeItem(atPath: to)
+      }
+    }
+    return why
   }
 
   /// What the phone is doing, for the 设备 card: how busy its CPU is across all

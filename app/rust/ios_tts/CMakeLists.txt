@@ -13,7 +13,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # The revisions of the Windows engine (experiments/qwen-tts), with its patch,
 # and two of its own: as many CPU threads as performance cores, not half the
 # cores, which assumes SMT; and the 听书 experiments (wider codec chunks, the
-# codec on a thread of its own), off unless their variables are set.
+# codec on a thread of its own, and qt_diag, which checks several sentences at
+# once against one), off unless their variables are set or qt_diag is called.
 set(EDGE_QWENTTS_COMMIT 177925ecc54fed51c868985efd7dd01a8ae4fa29)
 set(EDGE_QWENTTS_GGML_COMMIT 2be5947ac234d277714e824a5c7eb23880557543)
 include(FetchContent)
@@ -27,7 +28,8 @@ FetchContent_Declare(edge_qwentts
     # Sources only: its own CMakeLists builds the tools and the server.
     SOURCE_SUBDIR no-cmake)
 # The ggml it is pinned to. The patch lets the app say where the compiled Metal
-# library is, and compiles it for the oldest iOS that runs the engine.
+# library is, compiles it for the oldest iOS that runs the engine, and lets
+# each load of the backend leave some of its kernels out (the experiments).
 FetchContent_Declare(edge_qwentts_ggml
     URL "https://codeload.github.com/ServeurpersoCom/ggml/tar.gz/${EDGE_QWENTTS_GGML_COMMIT}"
     URL_HASH SHA256=aa59ede8471d7d6c679e697c83c5a9392b3f8fc8cbc16d5b11dfab21865c1139

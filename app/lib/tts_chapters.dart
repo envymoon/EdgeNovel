@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'platform_services.dart';
 import 'src/rust/api/book.dart';
@@ -12,12 +14,13 @@ import 'tts_text.dart';
 /// into files of their own, which is all listening plays. Listening is mostly
 /// with the screen locked, where iOS lends no GPU to speak as the voice goes.
 ///
-/// A chapter is one WAV holding its sentences with the pauses between them
+/// A chapter is one file holding its sentences with the pauses between them
 /// already in, and beside it an index of where each sentence starts, so the
-/// reader can follow the voice. It counts once the index is written, which is
-/// last; until then it is a `.wav.part` of the sentences so far and a
-/// `.part.json` saying how far it got, so speaking it again carries on from
-/// there.
+/// reader can follow the voice. It is finished once the index is written,
+/// which is last; then the WAV becomes an .m4a (AAC, as a book app's audio
+/// is), a sixth of the size. Until then it is a `.part.wav` of the sentences
+/// so far and a `.part.json` saying how far it got: what is in plays, and
+/// speaking it again carries on from there.
 ///
 /// Everything here can be spoken again: deleting it costs only the time.
 class TtsChapters extends ChangeNotifier {
@@ -36,33 +39,67 @@ class TtsChapters extends ChangeNotifier {
   String _base(int book, int chapter) =>
       '${_book(book)}${Platform.pathSeparator}$chapter';
 
-  /// The chapter as spoken, or null when it is not (or was spoken from a
-  /// different book that had the same id before it).
+  /// The file playing now, which a WAV made smaller is not deleted under.
+  String? playing;
+
+  /// The chapter as spoken, as far as it has been, or null when none of it
+  /// is (or it was spoken from a different book that had the same id
+  /// before it).
   Future<SpokenChapter?> chapter(BookInfo book, int index) async {
     if (index < 0 || index >= book.chapters.length) return null;
     final base = _base(book.id, index);
+    final title = book.chapters[index].title;
     try {
       final meta = await _readJson(File('$base.json'));
-      final wav = File('$base.wav');
-      if (meta == null || !await wav.exists()) return null;
-      if (meta['title'] != book.chapters[index].title) return null;
-      final rate = meta['rate'] as int;
-      return SpokenChapter(
-        path: wav.path,
-        voice: meta['voice'] as String,
-        sentences: [
-          for (final s in meta['s'] as List)
-            SpokenSentence(
-              s[0] as int,
-              s[1] as int,
-              s[2] as int,
-              (s[3] as int) * 1000 ~/ rate,
-            ),
-        ],
-      );
+      if (meta != null && meta['title'] == title) {
+        final m4a = File('$base.m4a');
+        final wav = File('$base.wav');
+        if (await m4a.exists()) {
+          // The WAV it was made from, once nothing plays it.
+          if (playing != wav.path && await wav.exists()) {
+            try {
+              await wav.delete();
+            } catch (_) {}
+          }
+          return _spoken(m4a.path, meta, complete: true);
+        }
+        if (await wav.exists()) return _spoken(wav.path, meta, complete: true);
+      }
+      final part = await _readJson(File('$base.part.json'));
+      final audio = File('$base.part.wav');
+      if (part == null ||
+          part['title'] != title ||
+          (part['n'] as int) == 0 ||
+          !await audio.exists() ||
+          await audio.length() < _head + (part['bytes'] as int)) {
+        return null;
+      }
+      return _spoken(audio.path, part, complete: false);
     } catch (_) {
       return null;
     }
+  }
+
+  static SpokenChapter _spoken(
+    String path,
+    Map<String, dynamic> meta, {
+    required bool complete,
+  }) {
+    final rate = meta['rate'] as int;
+    return SpokenChapter(
+      path: path,
+      voice: meta['voice'] as String,
+      complete: complete,
+      sentences: [
+        for (final s in meta['s'] as List)
+          SpokenSentence(
+            s[0] as int,
+            s[1] as int,
+            s[2] as int,
+            (s[3] as int) * 1000 ~/ rate,
+          ),
+      ],
+    );
   }
 
   /// Start (or carry on with) speaking chapter [index] of [book] as [utts].
@@ -81,8 +118,13 @@ class TtsChapters extends ChangeNotifier {
     final base = _base(book.id, index);
     final title = book.chapters[index].title;
     final text = _fnv(utts.map((u) => u.text));
-    final part = File('$base.wav.part');
+    final part = File('$base.part.wav');
     final progress = File('$base.part.json');
+    // An earlier version's name for it, which no player takes for a WAV.
+    final old = File('$base.wav.part');
+    if (await old.exists() && !await part.exists()) {
+      await old.rename(part.path);
+    }
     var next = 0;
     var bytes = 0;
     var rate = 0;
@@ -102,10 +144,13 @@ class TtsChapters extends ChangeNotifier {
       ];
     }
     final raf = await part.open(mode: FileMode.append);
-    // Whatever was written after the last sentence counted goes. Room is
-    // left for the header, written once the chapter is finished and its
-    // length known.
+    // Whatever was written after the last sentence counted goes. The header
+    // in front says how much there is, so what is in plays as it is.
     await raf.truncate(_head + bytes);
+    await raf.setPosition(0);
+    await raf.writeFrom(
+      ChapterWriter._header(bytes, rate == 0 ? 24000 : rate),
+    );
     await raf.setPosition(_head + bytes);
     return ChapterWriter._(
       this,
@@ -138,7 +183,7 @@ class TtsChapters extends ChangeNotifier {
         if (f is! File) continue;
         final name = f.path.split(Platform.pathSeparator).last;
         final m = RegExp(
-          r'^(\d+)\.(wav|json|wav\.part|part\.json)$',
+          r'^(\d+)\.(m4a|wav|json|part\.wav|wav\.part|part\.json)$',
         ).firstMatch(name);
         if (m == null) continue;
         final c = int.parse(m[1]!);
@@ -175,7 +220,15 @@ class TtsChapters extends ChangeNotifier {
   Future<void> deleteChapter(int book, int index) async {
     final base = _base(book, index);
     // The index first: without it the rest is never played.
-    for (final ext in ['json', 'wav', 'wav.part', 'part.json']) {
+    for (final ext in [
+      'json',
+      'm4a',
+      'wav',
+      'part.json',
+      'part.wav',
+      'wav.part',
+      'tmp.m4a',
+    ]) {
       final f = File('$base.$ext');
       if (await f.exists()) await f.delete();
     }
@@ -245,11 +298,15 @@ class SpokenChapter {
     required this.path,
     required this.voice,
     required this.sentences,
+    this.complete = true,
   });
 
   final String path;
   final String voice;
   final List<SpokenSentence> sentences;
+
+  /// Every sentence is in; otherwise [sentences] are the ones spoken so far.
+  final bool complete;
 
   /// The sentence playing at [at].
   int sentenceAt(Duration at) {
@@ -350,8 +407,11 @@ class ChapterWriter {
     final even = pcm.length & ~1;
     await _raf.writeFrom(pcm, 0, even);
     await _raf.writeFrom(gap);
-    await _raf.flush();
     _bytes += even + gap.length;
+    await _raf.setPosition(0);
+    await _raf.writeFrom(_header(_bytes, rate));
+    await _raf.setPosition(TtsChapters._head + _bytes);
+    await _raf.flush();
     next++;
     await TtsChapters._writeJson(File('$base.part.json'), {
       'voice': voice,
@@ -364,7 +424,8 @@ class ChapterWriter {
     });
   }
 
-  /// Every sentence in: the chapter becomes playable.
+  /// Every sentence in: the chapter is whole, and on an iPhone it is then
+  /// made smaller while the next one is spoken.
   Future<void> finish() async {
     final rate = _rate == 0 ? 24000 : _rate;
     await _raf.setPosition(0);
@@ -374,7 +435,10 @@ class ChapterWriter {
     // An index of another voice's audio never stands beside the new audio.
     final index = File('$base.json');
     if (await index.exists()) await index.delete();
-    await File('$base.wav.part').rename('$base.wav');
+    for (final f in [File('$base.m4a'), File('$base.wav')]) {
+      if (await f.exists()) await f.delete();
+    }
+    await File('$base.part.wav').rename('$base.wav');
     await TtsChapters._writeJson(index, {
       'voice': voice,
       'title': title,
@@ -383,6 +447,31 @@ class ChapterWriter {
     });
     await File('$base.part.json').delete();
     _store._changed();
+    if (Platform.isIOS) unawaited(_shrink());
+  }
+
+  static const _audio = MethodChannel('novel/audio');
+
+  /// The WAV as AAC (AppDelegate.swift), written aside and renamed, so a
+  /// chapter is never half one. The WAV goes once nothing plays it
+  /// ([TtsChapters.chapter]); a chapter that would not convert stays a WAV.
+  Future<void> _shrink() async {
+    final aside = '$base.tmp.m4a';
+    try {
+      await _audio.invokeMethod('m4a', {'from': '$base.wav', 'to': aside});
+      // Deleted, or spoken again, meanwhile.
+      if (!await File('$base.json').exists() ||
+          !await File('$base.wav').exists()) {
+        await File(aside).delete();
+        return;
+      }
+      await File(aside).rename('$base.m4a');
+      _store._changed();
+    } catch (_) {
+      try {
+        await File(aside).delete();
+      } catch (_) {}
+    }
   }
 
   Future<void> close() async {
