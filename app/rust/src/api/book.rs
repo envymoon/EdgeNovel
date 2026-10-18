@@ -1519,11 +1519,20 @@ pub(crate) fn residual_relations(
         .into_iter()
         .map(|(a, b, l)| ((a, b), l))
         .collect();
+    // An edge to a word the model threw out is never drawn: 冬日重现's 周围 had
+    // five of them summarized for nothing.
+    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let kept = |i: usize| *verdicts.get(&cast.people[i].name).unwrap_or(&true);
     Ok(cast
         .edges
         .iter()
         .filter(|e| {
-            !done.contains_key(&(cast.people[e.a].name.clone(), cast.people[e.b].name.clone()))
+            kept(e.a)
+                && kept(e.b)
+                && !done.contains_key(&(cast.people[e.a].name.clone(), cast.people[e.b].name.clone()))
         })
         .map(|e| {
             (
