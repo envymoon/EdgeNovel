@@ -343,6 +343,37 @@ class _CastGraphPageState extends State<CastGraphPage> {
     if (outdated > 0) '$outdated 位人物的背景可以重写得更完整',
   ].join('、');
 
+  /// In the accent, not the muted grey of the counts above it: it changes
+  /// what the page is worth, so it should be seen.
+  Widget _overviewHint(ReadingTheme t) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: t.isDark ? 0.22 : 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome, size: 15, color: accent),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              '先跑完全书章节概览，人物关系更准确',
+              style: TextStyle(
+                color: t.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _bar(ReadingTheme t, CastGraph g) {
     final residual = g.edges.where((e) => _labelOf(e) == null).length;
     final unwritten = g.people.where((p) => _backgroundOf(p) == null).length;
@@ -362,11 +393,8 @@ class _CastGraphPageState extends State<CastGraphPage> {
             style: TextStyle(color: t.muted, fontSize: 12),
           ),
           if (!widget.overviewDone && AppPlatformSupport.hasAiEngine) ...[
-            const SizedBox(height: 4),
-            Text(
-              '先跑完全书章节概览，人物关系更准确',
-              style: TextStyle(color: t.muted, fontSize: 11),
-            ),
+            const SizedBox(height: 8),
+            _overviewHint(t),
           ],
           if (_error != null) ...[
             const SizedBox(height: 8),
