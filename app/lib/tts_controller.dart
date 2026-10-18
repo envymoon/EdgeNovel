@@ -46,13 +46,30 @@ class TtsController extends ChangeNotifier {
            : null,
        _remote = enableIo ? TtsRemoteClient() : null {
     final player = _player;
-    if (_byChapter && player != null) {
-      _positionSub = player.onPositionChanged.listen(_onSpokenPosition);
-      _completeSub = player.onPlayerComplete.listen((_) => _onSpokenEnd());
-    }
+    if (_byChapter && player != null) _listen(player);
   }
 
-  final AudioPlayer? _player;
+  AudioPlayer? _player;
+
+  void _listen(AudioPlayer player) {
+    _positionSub = player.onPositionChanged.listen(_onSpokenPosition);
+    _completeSub = player.onPlayerComplete.listen((_) => _onSpokenEnd());
+  }
+
+  /// What plays after a piece ends plays in a player of its own. The one
+  /// that played it lets go of its file by itself once through, a moment
+  /// after saying so — late enough to take the next piece with it, were that
+  /// handed to it — and then says where it stopped, which is not where the
+  /// next piece is.
+  Future<void> _freshPlayer() async {
+    final old = _player;
+    if (old == null) return;
+    await _positionSub?.cancel();
+    await _completeSub?.cancel();
+    final player = _player = AudioPlayer();
+    _listen(player);
+    unawaited(Future.delayed(const Duration(seconds: 5), old.dispose));
+  }
 
   /// iPhone: chapters spoken ahead are played, and nothing else.
   static bool get _byChapter => AppPlatformSupport.speaksByChapter;
@@ -339,8 +356,15 @@ class TtsController extends ChangeNotifier {
     if (player == null || spoken == null) return;
     _piece = spoken.pieceAt(at);
     final piece = spoken.pieces[_piece];
-    TtsChapters.instance.playing = piece.path;
-    await player.setSource(DeviceFileSource(piece.path));
+    // A piece being spoken into when the chapter was read has been made
+    // smaller since, and its WAV gone.
+    var path = piece.path;
+    if (path.endsWith('.wav') && !await File(path).exists()) {
+      path = '${path.substring(0, path.length - 4)}.m4a';
+    }
+    if (gen != _gen) return;
+    TtsChapters.instance.playing = path;
+    await player.setSource(DeviceFileSource(path));
     if (gen != _gen) return;
     final within = at - Duration(milliseconds: piece.ms);
     if (within > Duration.zero) await player.seek(within);
@@ -352,7 +376,11 @@ class TtsController extends ChangeNotifier {
   void _onSpokenPosition(Duration at) {
     final spoken = _spoken;
     if (!playing || spoken == null || _utts.isEmpty) return;
-    final i = spoken.sentenceAt(_pieceStart + at).clamp(0, _utts.length - 1);
+    // Only where the piece playing is: what a player says as it lets go of
+    // one is not.
+    final t = _pieceStart + at;
+    if (spoken.pieceAt(t) != _piece) return;
+    final i = spoken.sentenceAt(t).clamp(0, _utts.length - 1);
     if (i == _pos) return;
     _pos = i;
     final u = _utts[i];
@@ -368,6 +396,8 @@ class TtsController extends ChangeNotifier {
     final was = _spoken;
     if (!playing || was == null) return;
     final gen = _gen;
+    await _freshPlayer();
+    if (gen != _gen) return;
     // On into the chapter's next piece.
     if (_piece + 1 < was.pieces.length) {
       await _playSpoken(gen, Duration(milliseconds: was.pieces[_piece + 1].ms));
