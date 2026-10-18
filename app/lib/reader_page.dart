@@ -433,37 +433,58 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  /// The 章间立绘 on screen, between the chapter just finished and the next.
+  /// The 章间立绘 on screen, between the chapter just finished and the next:
+  /// a page of its own, over the start of the chapter it leads into.
   String? _plate;
   int? _plateBook;
   int _plateChapter = -1;
 
-  /// Reading on from a chapter a plate was drawn after shows it first. Only
-  /// reading on: a jump from the table of contents, or back, does not.
+  /// The plate drawn before the chapter being read, if any.
+  String? _plateBefore;
+
+  /// Reading on from a chapter a plate was drawn after shows it first, and
+  /// paging back off the next chapter's first page shows it again
+  /// ([_plateOnTheWayBack]). A jump from the table of contents does not.
   void _onChapter() {
     final book = widget.reader.info?.id;
     final chapter = widget.reader.chapterIndex;
     if (book == null || (book == _plateBook && chapter == _plateChapter)) {
       return;
     }
-    final from = _plateChapter;
-    final onward = book == _plateBook && chapter == from + 1;
+    final onward = book == _plateBook && chapter == _plateChapter + 1;
     _plateBook = book;
     _plateChapter = chapter;
+    _plateBefore = null;
     if (_plate != null) setState(() => _plate = null);
+    if (chapter == 0) return;
     // Any plate drawn for the chapter shows, whatever spacing drew it.
-    if (!onward) return;
-    platePath(bookId: book, chapter: from).then((path) {
+    platePath(bookId: book, chapter: chapter - 1).then((path) {
       if (path == null || !mounted) return;
       if (widget.reader.info?.id != book ||
-          widget.reader.chapterIndex != from + 1) {
+          widget.reader.chapterIndex != chapter) {
         return;
       }
-      setState(() => _plate = path);
+      _plateBefore = path;
+      if (onward) setState(() => _plate = path);
     });
   }
 
   void _closePlate() => setState(() => _plate = null);
+
+  /// Paging back off a chapter's first page: the plate before it comes first.
+  bool _plateOnTheWayBack() {
+    final path = _plateBefore;
+    if (path == null || _plate != null) return false;
+    setState(() => _plate = path);
+    return true;
+  }
+
+  /// Back from the plate: by pages, into the chapter before it, at its end.
+  /// Scrolling never crosses a chapter's edge, so there it only closes.
+  void _plateBack() {
+    _closePlate();
+    if (_isPaged) _pagedKey.currentState?.turn(-1, pastPlate: true);
+  }
 
   /// From the table of contents: the plate after [chapter], over the start of
   /// the chapter it leads into.
@@ -477,18 +498,26 @@ class _ReaderPageState extends State<ReaderPage> {
     if (!mounted || widget.reader.info?.id != info.id) return;
     _plateBook = info.id;
     _plateChapter = widget.reader.chapterIndex;
+    _plateBefore = next == chapter + 1 ? path : null;
     setState(() => _plate = path);
   }
 
-  Widget _withPlate(ReadingTheme t, Widget page) => Stack(
-    children: [
-      page,
-      if (_plate != null)
-        Positioned.fill(
-          child: PlateView(path: _plate!, theme: t, onDone: _closePlate),
-        ),
-    ],
-  );
+  Widget _withPlate(ReadingTheme t, Widget page, {required bool compact}) =>
+      Stack(
+        children: [
+          page,
+          if (_plate != null)
+            Positioned.fill(
+              child: PlateView(
+                path: _plate!,
+                theme: t,
+                compactTapZones: compact,
+                onForward: _closePlate,
+                onBack: _plateBack,
+              ),
+            ),
+        ],
+      );
 
   /// Chapter navigation by hand invalidates the read-aloud queue, so stop it.
   void _navChapter(void Function() go) {
@@ -699,7 +728,14 @@ class _ReaderPageState extends State<ReaderPage> {
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     if (_plate != null) {
-      _closePlate();
+      final key = e.logicalKey;
+      if (key == LogicalKeyboardKey.pageUp ||
+          key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowUp) {
+        _plateBack();
+      } else {
+        _closePlate();
+      }
       return KeyEventResult.handled;
     }
     final key = e.logicalKey;
@@ -892,6 +928,10 @@ class _ReaderPageState extends State<ReaderPage> {
             onKeyEvent: _onKey,
             child: Scaffold(
               key: _scaffoldKey,
+              // The edges belong to turning pages: 目录 and 阅读助手 open
+              // only from their buttons, never from a swipe off the edge.
+              drawerEnableOpenDragGesture: false,
+              endDrawerEnableOpenDragGesture: false,
               extendBodyBehindAppBar: barsOverText,
               extendBody: barsOverText,
               floatingActionButton: compact
@@ -978,6 +1018,7 @@ class _ReaderPageState extends State<ReaderPage> {
               ),
               body: _withPlate(
                 t,
+                compact: compact,
                 _textArea(
                   barsOverText: barsOverText,
                   showControls: showControls,
@@ -1002,6 +1043,7 @@ class _ReaderPageState extends State<ReaderPage> {
                                   onAnnotationSelection: _setAnnotationDraft,
                                   compactTapZones: compact,
                                   onToggleControls: _toggleChrome,
+                                  onBackOffStart: _plateOnTheWayBack,
                                   tts: _tts,
                                 ),
                                 if (footer)

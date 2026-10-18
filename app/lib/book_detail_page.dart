@@ -243,11 +243,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextCover(
-          title: widget.book.title,
-          hue: widget.book.coverHue,
-          coverPath: widget.book.coverPath,
-          width: compact ? 72 : 82,
+        GestureDetector(
+          onTap: () => showCoverLarge(
+            context,
+            title: widget.book.title,
+            hue: widget.book.coverHue,
+            coverPath: widget.book.coverPath,
+          ),
+          child: TextCover(
+            title: widget.book.title,
+            hue: widget.book.coverHue,
+            coverPath: widget.book.coverPath,
+            width: compact ? 72 : 82,
+          ),
         ),
         const SizedBox(width: 16),
         Expanded(

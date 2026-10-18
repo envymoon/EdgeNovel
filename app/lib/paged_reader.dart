@@ -270,6 +270,11 @@ class PagedReader extends StatefulWidget {
   final bool compactTapZones;
   final VoidCallback? onToggleControls;
 
+  /// Paging back off the chapter's first page, before the chapter before it
+  /// opens: true when the reader put something there (a 章间立绘), and this
+  /// chapter stays.
+  final bool Function()? onBackOffStart;
+
   /// 听书: the page follows the sentence being spoken, and shows it.
   final TtsController? tts;
 
@@ -283,6 +288,7 @@ class PagedReader extends StatefulWidget {
     this.onAnnotationSelection,
     this.compactTapZones = false,
     this.onToggleControls,
+    this.onBackOffStart,
     this.tts,
   });
 
@@ -366,7 +372,9 @@ class PagedReaderState extends State<PagedReader> {
       : _ctrl?.initialPage ?? 0;
 
   /// Turn one page; roll into the neighbouring chapter at either edge.
-  void turn(int dir) {
+  /// [pastPlate]: back from the plate before this chapter, so on into the
+  /// chapter before without showing it again.
+  void turn(int dir, {bool pastPlate = false}) {
     final r = widget.reader;
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
@@ -376,6 +384,7 @@ class PagedReaderState extends State<PagedReader> {
     } else if (dir > 0) {
       r.next();
     } else if (r.chapterIndex > 0) {
+      if (!pastPlate && (widget.onBackOffStart?.call() ?? false)) return;
       _landAtEnd = true;
       r.prev();
     }
