@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 15;
+pub const SCAN_VERSION: u32 = 16;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -204,6 +204,10 @@ const TITLES: &[&str] = &[
     "先生", "公子", "姑娘", "老爷", "少爷", "大人", "前辈", "夫人", "娘子", "道长", "真人", "大师",
     "掌柜", "师傅", "老板", "老祖", "宗主", "掌门",
 ];
+
+/// What a surname turns into a role rather than a name (宋老师, 徐叔): never a
+/// rival host when 老宋 looks for the full name it stands for.
+const ROLE_TAILS: &[&str] = &["老师", "同学", "叔", "姨", "伯", "哥", "姐", "总", "队", "局", "警官"];
 
 /// Affectionate suffixes that follow the last character of a given name (觉哥,
 /// 树兄). Longest first so 哥哥 is stripped whole.
@@ -339,6 +343,8 @@ const NOT_A_NAME: &[&str] = &[
     "小孩",
     "男孩",
     "女孩",
+    // what stands before a name, not a name: 名叫……的
+    "名叫",
     // narrative formulas that stand before speech verbs
     "突然",
     "忽然",
@@ -1387,7 +1393,7 @@ pub fn scan(text: &str, chapters: &[Chapter], upto: usize) -> Cast {
         }
     }
     let cands = candidates(&paras);
-    let members = select(&cands);
+    let members = select(&cands, &paras);
     let (people, edges, n_chapters) = graph(&paras, members);
     let romance_focus = crate::focus::analyze(text, &chapters[..n]).romance.zh();
     let relationship = crate::romance::analyze(&paras, &people, &edges, n_chapters, romance_focus);
@@ -1411,7 +1417,7 @@ pub fn scan_ranked(text: &str, chapters: &[Chapter], upto: usize) -> Vec<Person>
         }
     }
     let cands = candidates(&paras);
-    let members = select(&cands);
+    let members = select(&cands, &paras);
     graph(&paras, members).0
 }
 
@@ -1661,6 +1667,39 @@ fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
     }
 }
 
+/// Does `host` ever speak of themselves as `alias`? A quoted line that says
+/// 老宋 not as a vocative (“老宋，……” is someone talking *to* him), spoken by
+/// the host: their name right after the closing quote (“……”宋南山浓眉一竖) or
+/// leading into it (胡不归道：“我老胡……”).
+fn speaks_as(paras: &[(usize, &str)], alias: &str, host: &str) -> bool {
+    paras.iter().any(|&(_, line)| {
+        let mut rest = line;
+        while let Some(open) = rest.find('“') {
+            let before = &rest[..open];
+            let body_start = open + '“'.len_utf8();
+            let Some(len) = rest[body_start..].find('”') else {
+                break;
+            };
+            let quote = &rest[body_start..body_start + len];
+            let after = &rest[body_start + len + '”'.len_utf8()..];
+            let named = quote.match_indices(alias).any(|(i, _)| {
+                let prev = quote[..i].chars().next_back();
+                let next = quote[i + alias.len()..].chars().next();
+                let opens_clause = prev.map_or(true, |c| "，。！？…".contains(c));
+                !(opens_clause && next.is_some_and(|c| "，,！!".contains(c)))
+            });
+            let lead = before.char_indices().rev().nth(19).map_or(before, |(i, _)| &before[i..]);
+            let by_host = after.starts_with(host)
+                || (lead.contains(host) && lead.ends_with(|c| "：:，,".contains(c)));
+            if named && by_host {
+                return true;
+            }
+            rest = after;
+        }
+        false
+    })
+}
+
 /// A full name the acted-upon test killed although one of its own fragments
 /// survived on ink this name lent it. 冬日重现's lead 张述桐 (18749 mentions)
 /// is nearly always a sentence subject — 张述桐想、张述桐看 — so it ends a
@@ -1746,7 +1785,7 @@ pub fn verdicts(text: &str, chapters: &[Chapter], upto: usize) -> Vec<VerdictRow
         .collect()
 }
 
-fn select(cands: &[(String, Stat)]) -> Vec<Member> {
+fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
     let frequent: Vec<usize> = (0..cands.len())
         .filter(|&i| cands[i].1.count >= MIN_MENTIONS)
         .collect();
@@ -1863,6 +1902,39 @@ fn select(cands: &[(String, Stat)]) -> Vec<Member> {
         if let Some(f) = host_of(&cands[t].0, &taken) {
             titled.entry(f).or_default().push(t);
             taken.insert(t);
+        }
+    }
+
+    // Fold 老+姓 (老宋 → 宋南山) into the one full name on that surname, the way
+    // 齐先生 folds into 齐静春 — but only once the book has the host say it: a
+    // surname is a family's, and across the corpus the one 楚 full name was not
+    // always the 老楚 (龙族's is 楚子航's father), nor 路依依 老路 (上海堡垒 says
+    // outright they are unrelated). Every fold the host's own lines vouched for
+    // was right. A 姓+老师 form is not a rival host — 宋老师 is the same 宋南山 —
+    // nor is anything else a role word makes of the surname.
+    for &t in &alive {
+        if taken.contains(&t) {
+            continue;
+        }
+        let name = cands[t].0.as_str();
+        let mut cs = name.chars();
+        let surname = match (cs.next(), cs.next(), cs.next()) {
+            (Some('老'), Some(s), None) if SURNAMES.contains(s) => s,
+            _ => continue,
+        };
+        let mut hosts = alive.iter().copied().filter(|&f| {
+            let host = cands[f].0.as_str();
+            f != t
+                && !taken.contains(&f)
+                && host.starts_with(surname)
+                && full_name_shaped(host)
+                && !TITLES.iter().chain(ROLE_TAILS).any(|k| host.ends_with(k))
+        });
+        if let (Some(f), None) = (hosts.next(), hosts.next()) {
+            if speaks_as(paras, name, &cands[f].0) {
+                titled.entry(f).or_default().push(t);
+                taken.insert(t);
+            }
         }
     }
 
@@ -2410,6 +2482,11 @@ mod tests {
         )
     }
 
+    /// The rules on candidate statistics alone, with no text to read.
+    fn select(cands: &[(String, Stat)]) -> Vec<Member> {
+        super::select(cands, &[])
+    }
+
     fn by_name<'a>(members: &'a [Member], name: &str) -> Option<&'a Member> {
         members.iter().find(|m| m.name == name)
     }
@@ -2490,6 +2567,43 @@ mod tests {
         ]);
         assert!(by_name(&members, "大哥").is_some());
         assert!(by_name(&members, "王哥").is_some());
+    }
+
+    #[test]
+    fn lao_and_a_surname_folds_into_the_one_full_name() {
+        // 冬日重现: the class calls 宋南山 老宋, and 宋老师 is him too, not a
+        // second 宋 the fold has to choose between.
+        let cands = [
+            cand("宋南山", 600, 0.6, 0.1, 0.05),
+            cand("老宋", 1288, 0.6, 0.3, 0.05),
+            cand("宋老师", 106, 0.6, 0.3, 0.05),
+        ];
+        let line = "“老宋是你能喊的，没大没小。”宋南山浓眉一竖。";
+        assert!(by_name(&select(&cands), "老宋").is_some(), "no line of his, no fold");
+        let members = super::select(&cands, &[(0, line)]);
+        let song = by_name(&members, "宋南山").expect("宋南山");
+        assert!(song.aliases.contains(&"老宋".to_string()), "{:?}", song.aliases);
+        assert!(by_name(&members, "老宋").is_none());
+    }
+
+    #[test]
+    fn a_host_calling_out_to_lao_is_someone_else() {
+        // 你赛博在哪儿了: 张海生 talks *to* 老张, so they are two people.
+        let cands = [cand("张海生", 204, 0.6, 0.1, 0.05), cand("老张", 116, 0.6, 0.3, 0.05)];
+        let line = "张海生扫了他一眼，冷笑道，“老张，你有没有想过？”";
+        assert!(by_name(&super::select(&cands, &[(0, line)]), "老张").is_some());
+    }
+
+    #[test]
+    fn lao_and_a_surname_two_names_could_claim_stays_apart() {
+        let members = select(&[
+            cand("萧湘儿", 3000, 0.6, 0.1, 0.05),
+            cand("萧绮", 1500, 0.6, 0.1, 0.05),
+            cand("萧庭", 900, 0.6, 0.1, 0.05),
+            cand("萧思凝", 900, 0.6, 0.1, 0.05),
+            cand("老萧", 365, 0.6, 0.3, 0.05),
+        ]);
+        assert!(by_name(&members, "老萧").is_some());
     }
 
     #[test]
