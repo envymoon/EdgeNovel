@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -72,8 +71,10 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
     required String voice,
     LocalSpeechSynthesizer? speech,
     ReaderState? reader,
+    int lanes = 1,
   }) async {
     final gen = ++_gen;
+    _laneCount = lanes;
     final s = speech ?? AppServices.instance.localSpeech;
     final end = (fromChapter + count).clamp(0, book.chapters.length);
     bookId = book.id;
@@ -305,18 +306,22 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get _mayGo => !_offScreen || AiRuntimeSettings.instance.lockedEnabled;
 
-  /// How many sentences the voice speaks at once on this phone: what the 听书
-  /// experiments found it does well (tts.rs, `tuned`), one without them.
-  static Future<int> _lanes() async {
+  int _laneCount = 1;
+
+  /// How many sentences the voice speaks at once, as chosen in the panel
+  /// (同时合成): kept beside the voice, where the engine reads it as it loads
+  /// (tts.rs, `tuned`). The voice is let go after every job, so the next one
+  /// loads with this.
+  Future<int> _lanes() async {
+    final lanes = _laneCount.clamp(1, 6);
     try {
       final dir = AppServices.instance.storage.supportChild('tts');
-      final file = File('${dir.path}${Platform.pathSeparator}engine.json');
-      if (!await file.exists()) return 1;
-      final lanes = (jsonDecode(await file.readAsString()) as Map)['lanes'];
-      return lanes is int ? lanes.clamp(1, 4) : 1;
+      await File('${dir.path}${Platform.pathSeparator}lanes')
+          .writeAsString('$lanes');
     } catch (_) {
       return 1;
     }
+    return lanes;
   }
 
   void cancel() {

@@ -1,6 +1,6 @@
 diff -ruN pbase/src/pipeline-codec.h work/src/pipeline-codec.h
---- pbase/src/pipeline-codec.h	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/pipeline-codec.h	2026-10-17 11:16:57.137953400 -0700
+--- pbase/src/pipeline-codec.h	2026-10-17 22:53:52.396507100 -0700
++++ work/src/pipeline-codec.h	2026-10-17 22:53:53.116047800 -0700
 @@ -50,7 +50,10 @@
  static const int CODEC_SNAP_SLOTS = 8;
  
@@ -14,8 +14,8 @@ diff -ruN pbase/src/pipeline-codec.h work/src/pipeline-codec.h
  // One static stream graph of chunk width T and lane count M: built
  // once, allocated once, replayed with per chunk uploads of codes,
 diff -ruN pbase/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
---- pbase/src/pipeline-tts.cpp	2026-10-17 11:44:18.274814700 -0700
-+++ work/src/pipeline-tts.cpp	2026-10-17 11:47:20.079139100 -0700
+--- pbase/src/pipeline-tts.cpp	2026-10-17 22:53:52.496788900 -0700
++++ work/src/pipeline-tts.cpp	2026-10-17 22:53:53.134052000 -0700
 @@ -19,9 +19,13 @@
  #include "talker-forward.h"
  #include "timer.h"
@@ -341,8 +341,8 @@ diff -ruN pbase/src/pipeline-tts.cpp work/src/pipeline-tts.cpp
          if (!e->slots[(size_t) i].finished) {
              i++;
 diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
---- pbase/src/pipeline-tts.h	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/pipeline-tts.h	2026-10-17 11:47:20.045135800 -0700
+--- pbase/src/pipeline-tts.h	2026-10-17 22:53:52.401535400 -0700
++++ work/src/pipeline-tts.h	2026-10-17 22:53:53.151183600 -0700
 @@ -136,6 +136,16 @@
      int codec_chunk_frames;
      int codec_left_ctx_frames;
@@ -373,8 +373,8 @@ diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
  
  // Batch engine: drives up to pt->max_batch concurrent synthesis slots
 diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
---- pbase/src/qwen.cpp	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/qwen.cpp	2026-10-17 16:49:26.366506900 -0700
+--- pbase/src/qwen.cpp	2026-10-17 22:53:52.425789900 -0700
++++ work/src/qwen.cpp	2026-10-17 22:59:41.350521100 -0700
 @@ -25,7 +25,9 @@
  #include "timer.h"
  #include "version.h"
@@ -638,7 +638,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    }
 +}
 +
-+// The lone run's codes through 1, 2 and 4 codec lanes at once, 8 frames
++// The lone run's codes through 1, 2, 4 and 6 codec lanes at once, 8 frames
 +// a chunk: every lane's audio against the one lane's. The codes, and the
 +// audio of one lane and of the first of four, go beside the report.
 +void diag_codec(qt_context * q, const DiagRun & ref, FILE * f, const char * report) {
@@ -652,7 +652,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +        return;
 +    }
 +    std::vector<float> one;
-+    for (int M : { 1, 2, 4 }) {
++    for (int M : { 1, 2, 4, 6 }) {
 +        if (M > pc->stream_sets - 1) {
 +            break;
 +        }
@@ -749,7 +749,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +            diag_profile_all(q, 1, f);
 +            fflush(f);
 +        }
-+        for (int k : { 2, 4 }) {
++        for (int k : { 2, 4, 6 }) {
 +            if (k > q->pt.max_batch) {
 +                break;
 +            }
@@ -784,7 +784,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +            fprintf(f, "RESULT %s N=%d lanes_same=%d agree=%d of=%d logit_gap=%.4f at=%d top=%.1f ms_per_frame=%.1f\n",
 +                    mode, k, same_lanes, agree, F1, gap, gap_frame, top, ms / std::max(most, 1) / k);
 +            fflush(f);
-+            if (profile && k == std::min(4, q->pt.max_batch)) {
++            if (profile && (k == std::min(4, q->pt.max_batch) || k == 6)) {
 +                diag_profile_all(q, k, f);
 +                fflush(f);
 +            }
@@ -798,16 +798,16 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    return 0;
 +}
 diff -ruN pbase/src/qwen.h work/src/qwen.h
---- pbase/src/qwen.h	2026-10-14 00:22:38.000000000 -0700
-+++ work/src/qwen.h	2026-10-17 11:50:50.538688300 -0700
+--- pbase/src/qwen.h	2026-10-17 22:53:52.431788400 -0700
++++ work/src/qwen.h	2026-10-17 22:59:33.793876300 -0700
 @@ -404,6 +404,17 @@
  // stays valid until qt_free.
  QT_API const char * qt_model_type(const struct qt_context * q);
  
 +// The app's 听书 experiments: with nothing else being spoken on the
-+// handle, speaks `text` alone, then as 2 and 4 copies at once (up to
++// handle, speaks `text` alone, then as 2, 4 and 6 copies at once (up to
 +// max_batch), and compares every frame's codes and c0 logits with the
-+// lone run's; decodes the lone run's codes on 1, 2 and 4 codec lanes and
++// lone run's; decodes the lone run's codes on 1, 2, 4 and 6 codec lanes and
 +// compares the audio; with `profile`, times every node of the talker,
 +// predictor and codec graphs. `greedy` takes the most likely code
 +// everywhere, so that only the arithmetic tells two runs apart. The

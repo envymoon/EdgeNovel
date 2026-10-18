@@ -665,6 +665,8 @@ const _english = <String, String>{
   '10 章': '10 chapters',
   '20 章': '20 chapters',
   '已合成': 'Prepared',
+  '同时合成': 'Sentences at once',
+  '句数越多合成越快，内存占用也越高': 'More is faster and uses more memory',
   '合成': 'Prepare',
   '播放': 'Play',
   '未合成': 'Not prepared',
@@ -705,6 +707,8 @@ String translateUi(String source, material.Locale locale) {
   if (minutes != null) return '${minutes.group(1)} min';
   final minutesLeft = RegExp(r'^剩 (\d+) 分钟$').firstMatch(source);
   if (minutesLeft != null) return '${minutesLeft.group(1)} min left';
+  final sentences = RegExp(r'^(\d+) 句$').firstMatch(source);
+  if (sentences != null) return sentences.group(1)!;
   final seconds = RegExp(r'^(\d+) 秒$').firstMatch(source);
   if (seconds != null) return '${seconds.group(1)} s';
   final days = RegExp(r'^(\d+) 天$').firstMatch(source);

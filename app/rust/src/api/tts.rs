@@ -273,22 +273,36 @@ fn kill() {
     engine::unload();
 }
 
-/// What the 听书 experiments found this phone's GPU runs well, kept in
-/// `engine.json` beside the voice: how many sentences it speaks at once, and
-/// the engine settings that takes. Without the file, one at a time.
+/// The most sentences the GPU speaks at once (听书 同时合成).
+#[cfg(in_process_engine)]
+const MOST_LANES: usize = 6;
+
+/// What the GPU runs under: the codec's fusions of its arithmetic left out
+/// (with them, several sentences at once come out wrong) and its data moved
+/// by the faster kernels (the same audio to the bit). The 听书 experiments
+/// found both on the phone.
+#[cfg(in_process_engine)]
+const GPU_ENV: [(&str, &str); 2] = [("GGML_METAL_FUSION_DISABLE", "1"), ("GGML_METAL_FAST_MOVE", "1")];
+
+/// How many sentences the GPU speaks at once, as the reader chose in the 听书
+/// panel (`lanes` beside the voice, written by TtsPrepare), and the engine
+/// settings that takes; `engine.json` there may set others in their place.
+/// One at a time when nothing says.
 #[cfg(in_process_engine)]
 fn tuned(dir: &Path) -> (usize, Vec<(String, String)>) {
-    let Some(v) = std::fs::read_to_string(dir.join("engine.json"))
+    let json = std::fs::read_to_string(dir.join("engine.json"))
         .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-    else {
-        return (1, Vec::new());
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let lanes = std::fs::read_to_string(dir.join("lanes"))
+        .ok()
+        .and_then(|t| t.trim().parse::<usize>().ok())
+        .or_else(|| json.as_ref()?["lanes"].as_u64().map(|n| n as usize))
+        .unwrap_or(1)
+        .clamp(1, MOST_LANES);
+    let env = match json.as_ref().and_then(|v| v["env"].as_object()) {
+        Some(o) => o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect(),
+        None => GPU_ENV.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
     };
-    let lanes = v["lanes"].as_u64().unwrap_or(1).clamp(1, 4) as usize;
-    let env = v["env"]
-        .as_object()
-        .map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect())
-        .unwrap_or_default();
     (lanes, env)
 }
 
@@ -297,7 +311,10 @@ fn tuned(dir: &Path) -> (usize, Vec<(String, String)>) {
 fn ensure() -> Result<(), String> {
     let _g = LIFECYCLE.lock().unwrap();
     let dir = tts_dir()?;
-    let talker = find_model(dir, TALKER).ok_or("中文语音未安装")?;
+    let talker = match experiment::talker() {
+        Some(t) => t,
+        None => find_model(dir, TALKER).ok_or("中文语音未安装")?,
+    };
     let codec = find_model(dir, CODEC).ok_or("中文语音未安装（缺编解码器）")?;
     let first = !engine::loaded();
     // Set for the load about to happen, not under a voice that is running;
@@ -776,24 +793,21 @@ mod engine {
 }
 
 /// The 听书 experiments (ios_tts/qwentts-experiments.patch): can the GPU
-/// speak several sentences at once and sound exactly as it does speaking one,
-/// and does the codec's data move faster with GGML_METAL_FAST_MOVE and come
-/// out the same to the bit?
+/// speak six sentences at once and sound as it does speaking one, and how do
+/// the voice's talker in 4 bits (Q4_K_M, the same model in a smaller file)
+/// sound and run beside the 8-bit one the app downloads?
 ///
-/// First the checks (qt_diag): one sentence alone, then two and four copies of
-/// it at once, compared frame by frame, under the engine as it is and under
-/// settings that each leave one fusion of the GPU's arithmetic out, so a
-/// difference can be put down to the part that makes it; what every part of
-/// the voice costs comes with them, with the data moved either way. The codes
-/// and audio of the settings with FAST_MOVE are held against the same
-/// settings without it, byte for byte. Then the timings: the same sentences
-/// with the same seed, one at a time and four at once, under the setting the
-/// checks chose and under it with FAST_MOVE, kept as WAVs to compare by ear
-/// and by experiments/qwen-tts/compare.py. They run there and back (ABBA), so
-/// a phone warming up costs every one alike. Nothing here changes what the
-/// app does: that is `engine.json` ([`tuned`]). Run by the tts_experiments
-/// test in CI, and on a phone launched with NOVEL_TTS_EXPERIMENT set
-/// ([`init_tts`]).
+/// First the checks (qt_diag), with each talker: one sentence alone, then two,
+/// four and six copies of it at once, compared frame by frame; what every part
+/// of the voice costs comes with them. Then the timings: the same sentences
+/// with the same seed, one, four and six at a time, with each talker, kept as
+/// WAVs to compare by ear and by experiments/qwen-tts/compare.py. They run
+/// there and back (ABBA), so a phone warming up costs every one alike. The
+/// 4-bit talker is the one `q4/` beside the voice holds, put there by hand;
+/// without it, only the app's. All under the settings the app runs the GPU
+/// with ([`GPU_ENV`]). Nothing here changes what the app does. Run by the
+/// tts_experiments test in CI, and on a phone launched with
+/// NOVEL_TTS_EXPERIMENT set ([`init_tts`]).
 #[cfg(in_process_engine)]
 mod experiment {
     use super::*;
@@ -806,23 +820,22 @@ mod experiment {
     /// While the experiments run: they set the engine up themselves.
     pub(super) static RUNNING: AtomicBool = AtomicBool::new(false);
 
-    const FAST: (&str, &str) = ("GGML_METAL_FAST_MOVE", "1");
+    /// The talker loaded in place of the app's while they run.
+    static IN_PLACE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-    /// The settings the checks run under, the voice loaded for four sentences
-    /// at once. Only the first on a CPU, where the others change nothing.
-    static CHECKS: [(&str, &[(&str, &str)]); 8] = [
-        ("default", &[]),
-        ("fast", &[FAST]),
-        ("noaddb", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_batch")]),
-        ("noaddp", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add_part")]),
-        ("noadd", &[("GGML_METAL_FUSION_SKIP", "mul_mat_add")]),
-        ("nosnake", &[("GGML_METAL_FUSION_SKIP", "snake")]),
-        ("nofuse", &[("GGML_METAL_FUSION_DISABLE", "1")]),
-        ("nofuse-fast", &[("GGML_METAL_FUSION_DISABLE", "1"), FAST]),
-    ];
+    pub(super) fn talker() -> Option<PathBuf> {
+        IN_PLACE.lock().unwrap().clone()
+    }
 
-    /// Each setting with FAST_MOVE and the one it should match to the byte.
-    static SAME: [(&str, &str); 2] = [("fast", "default"), ("nofuse-fast", "nofuse")];
+    /// The talkers held side by side, by the names their timings go under:
+    /// the app's, and the 4-bit one when there is one.
+    fn talkers() -> Vec<(&'static str, Option<PathBuf>)> {
+        let mut v = vec![("q8", None)];
+        if let Some(q4) = tts_dir().ok().and_then(|d| find_model(&d.join("q4"), TALKER)) {
+            v.push(("q4", Some(q4)));
+        }
+        v
+    }
 
     /// The sentence the checks speak, and how many frames of it.
     const CHECK_LINE: usize = 3;
@@ -854,27 +867,24 @@ mod experiment {
     }
 
     fn clear_vars() {
-        let knobs = [
-            "GGML_METAL_FUSION_DISABLE",
-            "GGML_METAL_MMA_DISABLE",
-            "GGML_METAL_MV_EXT_DISABLE",
-            "GGML_METAL_FAST_MOVE",
-            "EDGE_TTS_FA",
-        ];
-        for var in CHECKS.iter().flat_map(|(_, vars)| vars.iter().map(|(var, _)| *var)).chain(knobs) {
+        for (var, _) in GPU_ENV {
             std::env::remove_var(var);
         }
         std::env::remove_var("EDGE_TTS_BATCH");
     }
 
-    /// Loaded afresh with these settings, for `batch` sentences at once.
-    fn load(vars: &[(&str, &str)], batch: usize) -> Result<(), String> {
+    /// Loaded afresh with `talker` (the app's when None), for `batch`
+    /// sentences at once.
+    fn load(talker: &Option<PathBuf>, batch: usize) -> Result<(), String> {
         stop_tts();
         clear_vars();
-        for (var, value) in vars {
-            std::env::set_var(var, value);
+        if engine::gpu() {
+            for (var, value) in GPU_ENV {
+                std::env::set_var(var, value);
+            }
         }
         std::env::set_var("EDGE_TTS_BATCH", batch.to_string());
+        *IN_PLACE.lock().unwrap() = talker.clone();
         ensure()
     }
 
@@ -883,14 +893,21 @@ mod experiment {
         let _ = std::fs::remove_file(out.join("done.txt"));
         std::fs::write(out.join("lines.txt"), LINES.join("\n") + "\n").map_err(|e| e.to_string())?;
         let mut log = String::new();
-        note(out, &mut log, format!("[实验] GPU {} · 种子 {SEED} · 音色 {VOICE} · {rounds} 轮", engine::gpu()));
+        let talkers = talkers();
+        let names: Vec<_> = talkers.iter().map(|(name, _)| *name).collect();
+        note(
+            out,
+            &mut log,
+            format!("[实验] GPU {} · 种子 {SEED} · 音色 {VOICE} · {rounds} 轮 · {}", engine::gpu(), names.join(" ")),
+        );
         RUNNING.store(true, Ordering::SeqCst);
         std::env::set_var("EDGE_TTS_SEED", SEED);
         engine::keep_awake(true);
-        let result = checks(out, &mut log).and_then(|chosen| timings(out, &mut log, rounds, chosen));
+        let result = checks(out, &mut log, &talkers).and_then(|_| timings(out, &mut log, rounds, &talkers));
         clear_vars();
         std::env::remove_var("EDGE_TTS_SEED");
         stop_tts();
+        *IN_PLACE.lock().unwrap() = None;
         engine::keep_awake(false);
         RUNNING.store(false, Ordering::SeqCst);
         let end = match &result {
@@ -902,17 +919,11 @@ mod experiment {
         result
     }
 
-    /// Every check, greedy and sampled, each into check-<setting>-<mode>.txt;
-    /// the parts' costs with the first and with each FAST_MOVE one. The first
-    /// setting without FAST_MOVE under which two and four sentences at once
-    /// came out as one alone does is the one the timings use (the engine as
-    /// it is when none did).
-    fn checks(out: &Path, log: &mut String) -> Result<&'static [(&'static str, &'static str)], String> {
-        let all = if engine::gpu() { &CHECKS[..] } else { &CHECKS[..1] };
-        let mut chosen = None;
-        for (i, (name, vars)) in all.iter().enumerate() {
-            let fast = vars.contains(&FAST);
-            load(vars, 4).map_err(|e| format!("{name}：{e}"))?;
+    /// Every check with each talker, greedy and sampled, each into
+    /// check-<talker>-<mode>.txt, the parts' costs with the greedy ones.
+    fn checks(out: &Path, log: &mut String, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
+        for (name, talker) in talkers {
+            load(talker, MOST_LANES).map_err(|e| format!("{name}：{e}"))?;
             let mut same = true;
             for greedy in [true, false] {
                 if engine::background() {
@@ -921,7 +932,7 @@ mod experiment {
                 let mode = if greedy { "greedy" } else { "sampled" };
                 let file = out.join(format!("check-{name}-{mode}.txt"));
                 let _busy = InFlight::new();
-                engine::diag(LINES[CHECK_LINE], VOICE, CHECK_FRAMES, greedy, (i == 0 || fast) && greedy, &file)
+                engine::diag(LINES[CHECK_LINE], VOICE, CHECK_FRAMES, greedy, greedy, &file)
                     .map_err(|e| format!("{name}：{e}"))?;
                 let report = std::fs::read_to_string(&file).unwrap_or_default();
                 for line in report.lines().filter(|l| l.starts_with("RESULT")) {
@@ -934,41 +945,13 @@ mod experiment {
                 }
             }
             note(out, log, format!("[{name}] {}", if same { "几句同时合成与单句一致" } else { "几句同时合成与单句不一致" }));
-            if same && !fast && chosen.is_none() {
-                chosen = Some(*vars);
-            }
         }
-        for (fast, plain) in SAME {
-            if all.iter().any(|(name, _)| *name == fast) {
-                byte_for_byte(out, log, fast, plain);
-            }
-        }
-        let chosen = chosen.unwrap_or(&[]);
-        note(out, log, format!("[计时用] {chosen:?}"));
-        Ok(chosen)
+        Ok(())
     }
 
-    /// Whether setting `fast` gave the codes and the codec's audio, one lane
-    /// and four, that setting `plain` did, to the byte.
-    fn byte_for_byte(out: &Path, log: &mut String, fast: &str, plain: &str) {
-        let mut parts = Vec::new();
-        let mut all = true;
-        for (what, label) in [("codes", "码"), ("codec1", "一路解码"), ("codec4", "四路解码")] {
-            let read = |name: &str| std::fs::read(out.join(format!("check-{name}-greedy.txt.{what}"))).ok();
-            let same = match (read(fast), read(plain)) {
-                (Some(a), Some(b)) => !a.is_empty() && a == b,
-                _ => false,
-            };
-            all &= same;
-            parts.push(format!("{label}{}", if same { "相同" } else { "不同" }));
-        }
-        note(out, log, format!("[逐位] {fast} 对 {plain}：{}", parts.join(" · ")));
-        note(out, log, format!("RESULT same {fast} {plain} {}", all as u8));
-    }
-
-    /// Whether, greedy, every lane of two and of four came out alike and like
-    /// the lone run for more than a stray tie, its c0 logits close to the lone
-    /// run's, and the codec's lanes like its one lane.
+    /// Whether, greedy, every lane of two, four and six came out alike and
+    /// like the lone run for more than a stray tie, its c0 logits close to the
+    /// lone run's, and the codec's lanes like its one lane.
     fn agrees(report: &str) -> bool {
         let field = |line: &str, key: &str| {
             line.split_whitespace()
@@ -977,7 +960,7 @@ mod experiment {
         };
         let mut batches = 0;
         for line in report.lines().filter(|l| l.starts_with("RESULT")) {
-            if line.contains(" N=2 ") || line.contains(" N=4 ") {
+            if [" N=2 ", " N=4 ", " N=6 "].iter().any(|n| line.contains(n)) {
                 batches += 1;
                 let fine = field(line, "lanes_same") == Some(1.0)
                     && field(line, "agree").is_some_and(|a| a >= 4.0)
@@ -995,45 +978,42 @@ mod experiment {
         batches > 0
     }
 
-    /// The sentences one at a time and four at once, under `chosen` and
-    /// under it with FAST_MOVE.
-    fn timings(out: &Path, log: &mut String, rounds: usize, chosen: &[(&str, &str)]) -> Result<(), String> {
-        let with = |n: &'static str, fast: bool| {
-            let mut v = chosen.to_vec();
-            if fast {
-                v.push(FAST);
+    /// The sentences one, four and six at a time, with each talker: the
+    /// app's as base, b4 and b6, the 4-bit one as q4, q4b4 and q4b6.
+    fn timings(out: &Path, log: &mut String, rounds: usize, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
+        let mut settings = Vec::new();
+        for (name, talker) in talkers {
+            let prefix = if *name == "q8" { "" } else { *name };
+            for (lanes, suffix) in [(1, ""), (4, "b4"), (MOST_LANES, "b6")] {
+                let label = match (prefix, suffix) {
+                    ("", "") => "base".to_string(),
+                    (p, s) => format!("{p}{s}"),
+                };
+                settings.push((label, talker.clone(), lanes));
             }
-            v.push(("EDGE_TTS_BATCH", n));
-            v
-        };
-        let settings: [(&str, Vec<(&str, &str)>); 4] = [
-            ("base", with("1", false)),
-            ("b4", with("4", false)),
-            ("b4fast", with("4", true)),
-            ("basefast", with("1", true)),
-        ];
+        }
         for round in 1..=rounds {
             let mut order: Vec<_> = settings.iter().collect();
             if round % 2 == 0 {
                 order.reverse();
             }
-            for (name, vars) in order {
-                setting(out, log, round, name, vars)?;
+            for (name, talker, lanes) in order {
+                setting(out, log, round, name, talker, *lanes)?;
             }
         }
         Ok(())
     }
 
-    /// One setting, one round: loaded afresh with its environment, then every
-    /// sentence, one at a time or as many at once as it batches.
-    fn setting(out: &Path, log: &mut String, round: usize, name: &str, vars: &[(&str, &str)]) -> Result<(), String> {
-        stop_tts();
-        clear_vars();
-        for (var, value) in vars {
-            std::env::set_var(var, value);
-        }
-        let lanes: usize =
-            vars.iter().find(|(var, _)| *var == "EDGE_TTS_BATCH").and_then(|(_, v)| v.parse().ok()).unwrap_or(1);
+    /// One setting, one round: loaded afresh, then every sentence, `lanes`
+    /// at a time.
+    fn setting(
+        out: &Path,
+        log: &mut String,
+        round: usize,
+        name: &str,
+        talker: &Option<PathBuf>,
+        lanes: usize,
+    ) -> Result<(), String> {
         // The idle watcher leaves a voice in use alone.
         let _busy = InFlight::new();
         let peak = Arc::new(AtomicU64::new(0));
@@ -1048,7 +1028,7 @@ mod experiment {
             })
         };
         let t = Instant::now();
-        let spoken = ensure().and_then(|_| {
+        let spoken = load(talker, lanes).and_then(|_| {
             let load = t.elapsed().as_secs_f64();
             Ok((load, speak_all(lanes)?))
         });

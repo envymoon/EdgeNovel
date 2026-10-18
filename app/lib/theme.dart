@@ -273,6 +273,11 @@ class ReadingSettings extends ChangeNotifier {
   /// `localVoices`), used when [ttsRemote] is off.
   String ttsLocalVoice = 'uncle_fu';
 
+  /// Sentences the iPhone's GPU speaks at once (听书 同时合成): more is
+  /// faster and holds more memory.
+  int ttsLanes = 4;
+  static const ttsLaneChoices = [1, 4, 6];
+
   TtsServer get ttsServer => TtsServer(
     baseUrl: ttsServerUrl,
     apiKey: ttsServerKey,
@@ -321,6 +326,8 @@ class ReadingSettings extends ChangeNotifier {
     s.wheelScale = p.getDouble('wheelScale') ?? s.wheelScale;
     s.ttsSpeed = p.getDouble('ttsSpeed') ?? s.ttsSpeed;
     s.ttsLocalVoice = p.getString('ttsLocalSpeaker') ?? s.ttsLocalVoice;
+    final lanes = p.getInt('ttsLanes');
+    if (ttsLaneChoices.contains(lanes)) s.ttsLanes = lanes!;
     s.ttsServerUrl = p.getString('ttsServerUrl') ?? s.ttsServerUrl;
     s.ttsServerKey = p.getString('ttsServerKey') ?? s.ttsServerKey;
     s.ttsServerModel = p.getString('ttsServerModel') ?? s.ttsServerModel;
@@ -352,12 +359,20 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('wheelScale', wheelScale);
     p.setDouble('ttsSpeed', ttsSpeed);
     p.setString('ttsLocalSpeaker', ttsLocalVoice);
+    p.setInt('ttsLanes', ttsLanes);
     p.setBool('ttsRemote', ttsRemote);
     p.setString('ttsServerUrl', ttsServerUrl);
     p.setString('ttsServerKey', ttsServerKey);
     p.setString('ttsServerModel', ttsServerModel);
     p.setString('ttsServerVoice', ttsServerVoice);
     p.setString('appLanguage', language.code);
+  }
+
+  void setTtsLanes(int n) {
+    if (!ttsLaneChoices.contains(n)) return;
+    ttsLanes = n;
+    notifyListeners();
+    _persist();
   }
 
   void setTtsLocalVoice(String id) {

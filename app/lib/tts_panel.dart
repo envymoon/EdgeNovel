@@ -118,6 +118,7 @@ class _TtsPanelState extends State<TtsPanel> {
         voice: widget.settings.ttsLocalVoice,
         speech: widget.localSpeech,
         reader: widget.reader,
+        lanes: widget.settings.ttsLanes,
       ),
     );
   }
@@ -269,6 +270,30 @@ class _TtsPanelState extends State<TtsPanel> {
                             widget.settings.setTtsLocalVoice(v.id),
                       ),
                   ],
+                ),
+                const SizedBox(height: 18),
+                Text('同时合成', style: label),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final n in ReadingSettings.ttsLaneChoices)
+                      ChoiceChip(
+                        label: Text('$n 句'),
+                        selected: widget.settings.ttsLanes == n,
+                        // The voice loads for a number at the start of a
+                        // job: changed between jobs, not under one.
+                        onSelected: job.running
+                            ? null
+                            : (_) => widget.settings.setTtsLanes(n),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '句数越多合成越快，内存占用也越高',
+                  style: TextStyle(color: t.muted, fontSize: 12),
                 ),
                 const SizedBox(height: 18),
                 Text(

@@ -6,10 +6,11 @@ With the same seed a setting that only changes how the codec is scheduled
 the plain one to the rounding: the SNR is the check. The codec on the CPU
 (cpu2, cpu4) gets the same codes too, and differs from the GPU's codec only
 by its arithmetic. A setting that batches
-sentences (b2, b4: two and four at once) runs the talker on several at once
+sentences (b2, b4, b6: two, four and six at once) runs the talker on several at once
 and may sample codes of its own, so it is checked by what a speech recogniser
 hears (CER against the text) and by the spectrum: a muffled voice shows as the
-top end going quiet.
+top end going quiet. The talker in 4 bits (q4, q4b4, q4b6) samples codes of its
+own too, and is checked the same way.
 
     python compare.py <experiment dir> [paraformer dir]
 
@@ -100,7 +101,7 @@ def main():
         m = re.match(r"(.+)-r(\d+)-(\d+)\.wav$", os.path.basename(path))
         if m:
             clips[(m[1], int(m[2]), int(m[3]))] = path
-    order = ["base", "basefast", "b2", "b4", "b4fast", "chunk16", "chunk32", "thread", "batch2", "cpu2", "cpu4"]
+    order = ["base", "basefast", "b2", "b4", "b4fast", "b6", "q4", "q4b4", "q4b6", "chunk16", "chunk32", "thread", "batch2", "cpu2", "cpu4"]
     settings = sorted({k[0] for k in clips}, key=lambda s: (order.index(s) if s in order else len(order), s))
 
     speed = {}
