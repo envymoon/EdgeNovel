@@ -101,7 +101,7 @@ def main():
         m = re.match(r"(.+)-r(\d+)-(\d+)\.wav$", os.path.basename(path))
         if m:
             clips[(m[1], int(m[2]), int(m[3]))] = path
-    order = ["base", "basefast", "b2", "b4", "b4fast", "b6", "q4", "q4b4", "q4b6", "chunk16", "chunk32", "thread", "batch2", "cpu2", "cpu4"]
+    order = ["base", "b4", "b4keep", "basefast", "b2", "b4fast", "b6", "q4", "q4b4", "q4b6", "chunk16", "chunk32", "thread", "batch2", "cpu2", "cpu4"]
     settings = sorted({k[0] for k in clips}, key=lambda s: (order.index(s) if s in order else len(order), s))
 
     speed = {}

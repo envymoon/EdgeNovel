@@ -793,8 +793,10 @@ mod engine {
 }
 
 /// The 听书 experiments (ios_tts/qwentts-experiments.patch): can the GPU
-/// speak four sentences at once and sound as it does speaking one, and how
-/// fast?
+/// speak four sentences at once and sound as it does speaking one, how fast,
+/// and how much faster with the codec's chunks kept wide as sentences come
+/// and go? The checks also time every kind of the codec's work where it
+/// stands in its graph, and each of its chunk widths.
 ///
 /// First the checks (qt_diag): one sentence alone, then two and four copies
 /// of it at once, compared frame by frame; what every part of the voice costs
@@ -866,11 +868,13 @@ mod experiment {
             std::env::remove_var(var);
         }
         std::env::remove_var("EDGE_TTS_BATCH");
+        std::env::remove_var("QWEN_TTS_CODEC_KEEP");
     }
 
     /// Loaded afresh with `talker` (the app's when None), for `batch`
-    /// sentences at once.
-    fn load(talker: &Option<PathBuf>, batch: usize) -> Result<(), String> {
+    /// sentences at once; with `keep`, a sentence admitted beside others
+    /// leaves the codec's chunks as wide as they were (QWEN_TTS_CODEC_KEEP).
+    fn load(talker: &Option<PathBuf>, batch: usize, keep: bool) -> Result<(), String> {
         stop_tts();
         clear_vars();
         if engine::gpu() {
@@ -879,6 +883,9 @@ mod experiment {
             }
         }
         std::env::set_var("EDGE_TTS_BATCH", batch.to_string());
+        if keep {
+            std::env::set_var("QWEN_TTS_CODEC_KEEP", "1");
+        }
         *IN_PLACE.lock().unwrap() = talker.clone();
         ensure()
     }
@@ -918,7 +925,7 @@ mod experiment {
     /// check-<talker>-<mode>.txt, the parts' costs with the greedy ones.
     fn checks(out: &Path, log: &mut String, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
         for (name, talker) in talkers {
-            load(talker, MOST_LANES).map_err(|e| format!("{name}：{e}"))?;
+            load(talker, MOST_LANES, false).map_err(|e| format!("{name}：{e}"))?;
             let mut same = true;
             for greedy in [true, false] {
                 if engine::background() {
@@ -974,17 +981,18 @@ mod experiment {
     }
 
     /// The sentences one and four at a time, with each talker: the app's as
-    /// base and b4.
+    /// base and b4, and four at a time with the codec's chunks kept wide as
+    /// sentences come and go as b4keep.
     fn timings(out: &Path, log: &mut String, rounds: usize, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
         let mut settings = Vec::new();
         for (name, talker) in talkers {
             let prefix = if *name == "q8" { "" } else { *name };
-            for (lanes, suffix) in [(1, ""), (MOST_LANES, "b4")] {
+            for (lanes, suffix, keep) in [(1, "", false), (MOST_LANES, "b4", false), (MOST_LANES, "b4keep", true)] {
                 let label = match (prefix, suffix) {
                     ("", "") => "base".to_string(),
                     (p, s) => format!("{p}{s}"),
                 };
-                settings.push((label, talker.clone(), lanes));
+                settings.push((label, talker.clone(), lanes, keep));
             }
         }
         for round in 1..=rounds {
@@ -992,8 +1000,8 @@ mod experiment {
             if round % 2 == 0 {
                 order.reverse();
             }
-            for (name, talker, lanes) in order {
-                setting(out, log, round, name, talker, *lanes)?;
+            for (name, talker, lanes, keep) in order {
+                setting(out, log, round, name, talker, *lanes, *keep)?;
             }
         }
         Ok(())
@@ -1008,6 +1016,7 @@ mod experiment {
         name: &str,
         talker: &Option<PathBuf>,
         lanes: usize,
+        keep: bool,
     ) -> Result<(), String> {
         // The idle watcher leaves a voice in use alone.
         let _busy = InFlight::new();
@@ -1023,7 +1032,7 @@ mod experiment {
             })
         };
         let t = Instant::now();
-        let spoken = load(talker, lanes).and_then(|_| {
+        let spoken = load(talker, lanes, keep).and_then(|_| {
             let load = t.elapsed().as_secs_f64();
             Ok((load, speak_all(lanes)?))
         });
