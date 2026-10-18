@@ -275,7 +275,7 @@ fn kill() {
 
 /// The most sentences the GPU speaks at once (听书 同时合成).
 #[cfg(in_process_engine)]
-const MOST_LANES: usize = 6;
+const MOST_LANES: usize = 4;
 
 /// What the GPU runs under: the codec's fusions of its arithmetic left out
 /// (with them, several sentences at once come out wrong) and its data moved
@@ -793,19 +793,18 @@ mod engine {
 }
 
 /// The 听书 experiments (ios_tts/qwentts-experiments.patch): can the GPU
-/// speak six sentences at once and sound as it does speaking one, and how do
-/// the voice's talker in 4 bits (Q4_K_M, the same model in a smaller file)
-/// sound and run beside the 8-bit one the app downloads?
+/// speak four sentences at once and sound as it does speaking one, and how
+/// fast?
 ///
-/// First the checks (qt_diag), with each talker: one sentence alone, then two,
-/// four and six copies of it at once, compared frame by frame; what every part
-/// of the voice costs comes with them. Then the timings: the same sentences
-/// with the same seed, one, four and six at a time, with each talker, kept as
-/// WAVs to compare by ear and by experiments/qwen-tts/compare.py. They run
-/// there and back (ABBA), so a phone warming up costs every one alike. The
-/// 4-bit talker is the one `q4/` beside the voice holds, put there by hand;
-/// without it, only the app's. All under the settings the app runs the GPU
-/// with ([`GPU_ENV`]). Nothing here changes what the app does. Run by the
+/// First the checks (qt_diag): one sentence alone, then two and four copies
+/// of it at once, compared frame by frame; what every part of the voice costs
+/// comes with them. Then the timings: the same sentences with the same seed,
+/// one and four at a time, kept as WAVs to compare by ear and by
+/// experiments/qwen-tts/compare.py. They run there and back (ABBA), so a
+/// phone warming up costs every one alike. (Six at once ran 10% faster than
+/// four and the talker in 4 bits no faster at four, its lanes unlike its one
+/// on the phone's GPU: both dropped, 2026-10-18.) All under the settings the
+/// app runs the GPU with ([`GPU_ENV`]). Nothing here changes what the app does. Run by the
 /// tts_experiments test in CI, and on a phone launched with
 /// NOVEL_TTS_EXPERIMENT set ([`init_tts`]).
 #[cfg(in_process_engine)]
@@ -828,13 +827,9 @@ mod experiment {
     }
 
     /// The talkers held side by side, by the names their timings go under:
-    /// the app's, and the 4-bit one when there is one.
+    /// the app's alone now.
     fn talkers() -> Vec<(&'static str, Option<PathBuf>)> {
-        let mut v = vec![("q8", None)];
-        if let Some(q4) = tts_dir().ok().and_then(|d| find_model(&d.join("q4"), TALKER)) {
-            v.push(("q4", Some(q4)));
-        }
-        v
+        vec![("q8", None)]
     }
 
     /// The sentence the checks speak, and how many frames of it.
@@ -949,7 +944,7 @@ mod experiment {
         Ok(())
     }
 
-    /// Whether, greedy, every lane of two, four and six came out alike and
+    /// Whether, greedy, every lane of two and four came out alike and
     /// like the lone run for more than a stray tie, its c0 logits close to the
     /// lone run's, and the codec's lanes like its one lane.
     fn agrees(report: &str) -> bool {
@@ -960,7 +955,7 @@ mod experiment {
         };
         let mut batches = 0;
         for line in report.lines().filter(|l| l.starts_with("RESULT")) {
-            if [" N=2 ", " N=4 ", " N=6 "].iter().any(|n| line.contains(n)) {
+            if [" N=2 ", " N=4 "].iter().any(|n| line.contains(n)) {
                 batches += 1;
                 let fine = field(line, "lanes_same") == Some(1.0)
                     && field(line, "agree").is_some_and(|a| a >= 4.0)
@@ -978,13 +973,13 @@ mod experiment {
         batches > 0
     }
 
-    /// The sentences one, four and six at a time, with each talker: the
-    /// app's as base, b4 and b6, the 4-bit one as q4, q4b4 and q4b6.
+    /// The sentences one and four at a time, with each talker: the app's as
+    /// base and b4.
     fn timings(out: &Path, log: &mut String, rounds: usize, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
         let mut settings = Vec::new();
         for (name, talker) in talkers {
             let prefix = if *name == "q8" { "" } else { *name };
-            for (lanes, suffix) in [(1, ""), (4, "b4"), (MOST_LANES, "b6")] {
+            for (lanes, suffix) in [(1, ""), (MOST_LANES, "b4")] {
                 let label = match (prefix, suffix) {
                     ("", "") => "base".to_string(),
                     (p, s) => format!("{p}{s}"),

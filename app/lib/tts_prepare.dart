@@ -313,7 +313,7 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
   /// (tts.rs, `tuned`). The voice is let go after every job, so the next one
   /// loads with this.
   Future<int> _lanes() async {
-    final lanes = _laneCount.clamp(1, 6);
+    final lanes = _laneCount.clamp(1, 4);
     try {
       final dir = AppServices.instance.storage.supportChild('tts');
       await File('${dir.path}${Platform.pathSeparator}lanes')

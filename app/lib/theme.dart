@@ -276,7 +276,7 @@ class ReadingSettings extends ChangeNotifier {
   /// Sentences the iPhone's GPU speaks at once (听书 同时合成): more is
   /// faster and holds more memory.
   int ttsLanes = 4;
-  static const ttsLaneChoices = [1, 4, 6];
+  static const ttsLaneChoices = [1, 4];
 
   TtsServer get ttsServer => TtsServer(
     baseUrl: ttsServerUrl,
