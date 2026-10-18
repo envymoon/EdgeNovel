@@ -717,11 +717,9 @@ fn chat_engine_args<'a>(context: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
 /// tuning depends on the full 8K of it.
 const FULL_CONTEXT: u32 = 8192;
 
-/// The chapter pass reads about 1800 characters ([book::chapter_digest]): at
-/// most 1507 tokens over 3,628 chapters measured for the head-and-tail cut it
-/// replaced, about 8% more for the digest, plus 76 of chat template and 120 of
-/// answer; one that runs over moves the run to [FULL_CONTEXT]. A quarter of the
-/// KV cache, about 360 MB back on a phone.
+/// The chapter pass reads a fixed 1400+400-character excerpt: at most 1507
+/// tokens over 3,628 chapters measured, plus 76 of chat template and 120 of
+/// answer. A quarter of the KV cache, about 360 MB back on a phone.
 const SUMMARY_CONTEXT: u32 = 2048;
 
 /// The window is sized to what a task reads, never the other way round, and
@@ -1179,7 +1177,7 @@ pub fn enrich_book(
         // One excerpt, a summary and (while [MOOD_LABELS] is on) a mood over
         // it. Each piece is written only when it was missing, so a re-run never
         // re-pays finished work.
-        let result = book::chapter_digest(&path, idx as u32).and_then(|ex| {
+        let result = book::chapter_excerpt(&path, idx as u32, 1400, 400).and_then(|ex| {
             let summary = if need_summary {
                 match summarize_excerpt(&ex, context)? {
                     Some(s) => Some(s),

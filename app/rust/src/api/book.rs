@@ -1074,142 +1074,20 @@ pub(crate) fn read_quietly<T>(
     Ok(f(&d.text, &b.chapters))
 }
 
-/// What the chapter pass reads: the chapter's title, its opening and its close,
-/// and between them, from each quarter of the middle, the paragraphs that carry
-/// the plot. The same 1800 characters the old head-and-tail cut read, but the
-/// middle no longer goes unseen. Measured on 30 chapters of one book against
-/// the original text, same model: better on 16, worse on 3; reading the whole
-/// chapter was no better still, so the rest is the model's own reach.
-pub(crate) fn chapter_digest(path: &str, index: u32) -> Result<String, String> {
+/// The slice of a chapter the summarizer reads: the opening carries the scene,
+/// the closing carries the outcome; the middle is where the token budget dies.
+pub(crate) fn chapter_excerpt(
+    path: &str,
+    index: u32,
+    head_chars: usize,
+    tail_chars: usize,
+) -> Result<String, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
     let c = l.chapters.get(index as usize).ok_or("章节不存在")?;
-    Ok(digest(&c.title, &l.text[c.body_start..c.span.end]))
+    Ok(excerpt(&l.text[c.body_start..c.span.end], head_chars, tail_chars))
 }
 
-const DIGEST_BUDGET: usize = 1800;
-const DIGEST_HEAD: usize = 450;
-const DIGEST_TAIL: usize = 350;
-const DIGEST_ZONES: usize = 4;
-
-/// Words that tend to sit where something happens.
-const PLOT_CUES: [&str; 31] = [
-    "发现", "原来", "竟然", "居然", "突然", "终于", "决定", "真相", "凶手", "计划", "死", "杀",
-    "逃", "救", "抓", "失踪", "承认", "答应", "拒绝", "告诉", "明白", "意识到", "怀疑", "确认",
-    "消失", "出现", "离开", "回溯", "报警", "警察", "受伤",
-];
-
-pub(crate) fn digest(title: &str, body: &str) -> String {
-    let body = body.trim();
-    let paras: Vec<&str> = body
-        .split('\n')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect();
-    let n = |p: &str| p.chars().count();
-    if n(body) <= DIGEST_BUDGET || paras.len() < 3 {
-        let body = if n(body) <= DIGEST_BUDGET {
-            body.to_string()
-        } else {
-            excerpt(body, 1400, 400)
-        };
-        return format!("章名：{title}\n\n{body}");
-    }
-
-    // The opening, the last paragraph cut at a sentence end.
-    let mut head: Vec<String> = vec![];
-    let mut used = 0;
-    let mut i = 0;
-    while i < paras.len() && used < DIGEST_HEAD {
-        let p = if used + n(paras[i]) > DIGEST_HEAD + 80 {
-            clip(paras[i], DIGEST_HEAD - used)
-        } else {
-            paras[i].to_string()
-        };
-        used += n(&p);
-        head.push(p);
-        i += 1;
-    }
-    // The close, whole paragraphs from the end.
-    let mut j = paras.len();
-    let mut tail_used = 0;
-    while j > i && tail_used < DIGEST_TAIL {
-        if tail_used + n(paras[j - 1]) > DIGEST_TAIL + 80 && tail_used > 0 {
-            break;
-        }
-        j -= 1;
-        tail_used += n(paras[j]);
-    }
-    // In each quarter of the middle, the paragraphs that score best, in turn,
-    // while its share of the budget lasts.
-    let middle: Vec<usize> = (i..j).collect();
-    let share = DIGEST_BUDGET.saturating_sub(used + tail_used) / DIGEST_ZONES;
-    let mut picked: Vec<(usize, String)> = vec![];
-    if !middle.is_empty() {
-        let zone = middle.len().div_ceil(DIGEST_ZONES);
-        for quarter in middle.chunks(zone) {
-            let mut order = quarter.to_vec();
-            order.sort_by(|&a, &b| plot_score(paras[b]).total_cmp(&plot_score(paras[a])));
-            let mut left = share;
-            for k in order {
-                if left < 30 {
-                    break;
-                }
-                let p = clip(paras[k], left);
-                if n(&p) < 10 {
-                    continue;
-                }
-                left -= n(&p);
-                picked.push((k, p));
-            }
-        }
-    }
-    picked.sort();
-
-    // In the book's order; a gap is marked, so no line reads as following on
-    // from one it did not follow.
-    let mut out = vec![head.join("\n")];
-    let mut last = i - 1;
-    for (k, p) in picked {
-        out.push(if k == last + 1 { p } else { format!("……\n{p}") });
-        last = k;
-    }
-    let tail = paras[j..].join("\n");
-    out.push(if j == last + 1 { tail } else { format!("……\n{tail}") });
-    format!("章名：{title}\n\n{}", out.join("\n"))
-}
-
-/// Narration over dialogue, plot words over scenery, per length so a long
-/// paragraph does not win by size alone.
-fn plot_score(p: &str) -> f64 {
-    let len = p.chars().count();
-    let mut s = 2.0 * PLOT_CUES.iter().map(|k| p.matches(k).count()).sum::<usize>() as f64;
-    if !p.starts_with(['“', '"', '「']) {
-        s += 1.5;
-    }
-    if len < 10 {
-        s -= 2.0;
-    }
-    s / (len as f64).powf(0.3)
-}
-
-/// At most `max` characters, ending on a sentence end when one comes late
-/// enough.
-fn clip(p: &str, max: usize) -> String {
-    let chars: Vec<char> = p.chars().collect();
-    if chars.len() <= max {
-        return p.to_string();
-    }
-    let cut = chars[..max]
-        .iter()
-        .rposition(|c| "。！？…”".contains(*c));
-    match cut {
-        Some(c) if c > max / 3 => chars[..=c].iter().collect(),
-        _ => chars[..max].iter().collect(),
-    }
-}
-
-/// The opening and the close, the middle left out.
 pub(crate) fn excerpt(body: &str, head_chars: usize, tail_chars: usize) -> String {
     let body = body.trim();
     let n = body.chars().count();
