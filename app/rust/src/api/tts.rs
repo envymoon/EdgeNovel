@@ -868,13 +868,12 @@ mod experiment {
             std::env::remove_var(var);
         }
         std::env::remove_var("EDGE_TTS_BATCH");
-        std::env::remove_var("QWEN_TTS_CODEC_KEEP");
     }
 
     /// Loaded afresh with `talker` (the app's when None), for `batch`
-    /// sentences at once; with `keep`, a sentence admitted beside others
-    /// leaves the codec's chunks as wide as they were (QWEN_TTS_CODEC_KEEP).
-    fn load(talker: &Option<PathBuf>, batch: usize, keep: bool) -> Result<(), String> {
+    /// sentences at once; with `moves`, the GPU's 1D IM2COL by tiles and its
+    /// copies whose rows stay rows by whole rows (GGML_METAL_FAST_MOVE=2).
+    fn load(talker: &Option<PathBuf>, batch: usize, moves: bool) -> Result<(), String> {
         stop_tts();
         clear_vars();
         if engine::gpu() {
@@ -883,8 +882,8 @@ mod experiment {
             }
         }
         std::env::set_var("EDGE_TTS_BATCH", batch.to_string());
-        if keep {
-            std::env::set_var("QWEN_TTS_CODEC_KEEP", "1");
+        if moves && engine::gpu() {
+            std::env::set_var("GGML_METAL_FAST_MOVE", "2");
         }
         *IN_PLACE.lock().unwrap() = talker.clone();
         ensure()
@@ -925,7 +924,7 @@ mod experiment {
     /// check-<talker>-<mode>.txt, the parts' costs with the greedy ones.
     fn checks(out: &Path, log: &mut String, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
         for (name, talker) in talkers {
-            load(talker, MOST_LANES, false).map_err(|e| format!("{name}：{e}"))?;
+            load(talker, MOST_LANES, true).map_err(|e| format!("{name}：{e}"))?;
             let mut same = true;
             for greedy in [true, false] {
                 if engine::background() {
@@ -981,18 +980,17 @@ mod experiment {
     }
 
     /// The sentences one and four at a time, with each talker: the app's as
-    /// base and b4, and four at a time with the codec's chunks kept wide as
-    /// sentences come and go as b4keep.
+    /// base and b4, and four at a time with the GPU's new moves as b4move.
     fn timings(out: &Path, log: &mut String, rounds: usize, talkers: &[(&str, Option<PathBuf>)]) -> Result<(), String> {
         let mut settings = Vec::new();
         for (name, talker) in talkers {
             let prefix = if *name == "q8" { "" } else { *name };
-            for (lanes, suffix, keep) in [(1, "", false), (MOST_LANES, "b4", false), (MOST_LANES, "b4keep", true)] {
+            for (lanes, suffix, moves) in [(1, "", false), (MOST_LANES, "b4", false), (MOST_LANES, "b4move", true)] {
                 let label = match (prefix, suffix) {
                     ("", "") => "base".to_string(),
                     (p, s) => format!("{p}{s}"),
                 };
-                settings.push((label, talker.clone(), lanes, keep));
+                settings.push((label, talker.clone(), lanes, moves));
             }
         }
         for round in 1..=rounds {
@@ -1000,8 +998,8 @@ mod experiment {
             if round % 2 == 0 {
                 order.reverse();
             }
-            for (name, talker, lanes, keep) in order {
-                setting(out, log, round, name, talker, *lanes, *keep)?;
+            for (name, talker, lanes, moves) in order {
+                setting(out, log, round, name, talker, *lanes, *moves)?;
             }
         }
         Ok(())
@@ -1016,7 +1014,7 @@ mod experiment {
         name: &str,
         talker: &Option<PathBuf>,
         lanes: usize,
-        keep: bool,
+        moves: bool,
     ) -> Result<(), String> {
         // The idle watcher leaves a voice in use alone.
         let _busy = InFlight::new();
@@ -1032,7 +1030,7 @@ mod experiment {
             })
         };
         let t = Instant::now();
-        let spoken = load(talker, lanes, keep).and_then(|_| {
+        let spoken = load(talker, lanes, moves).and_then(|_| {
             let load = t.elapsed().as_secs_f64();
             Ok((load, speak_all(lanes)?))
         });
