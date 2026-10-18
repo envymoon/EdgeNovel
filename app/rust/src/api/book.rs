@@ -1080,7 +1080,7 @@ pub(crate) fn read_quietly<T>(
 /// middle no longer goes unseen. Measured on 30 chapters of one book against
 /// the original text, same model: better on 16, worse on 3; reading the whole
 /// chapter was no better still, so the rest is the model's own reach.
-pub(crate) fn chapter_digest(path: &str, index: u32) -> Result<String, String> {
+pub(crate) fn summary_excerpt(path: &str, index: u32) -> Result<String, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
     let c = l.chapters.get(index as usize).ok_or("章节不存在")?;
