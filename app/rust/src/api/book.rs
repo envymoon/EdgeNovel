@@ -1074,17 +1074,20 @@ pub(crate) fn read_quietly<T>(
     Ok(f(&d.text, &b.chapters))
 }
 
-/// What the chapter pass reads: the chapter's title, its opening and its close,
-/// and between them, from each quarter of the middle, the paragraphs that carry
-/// the plot. The same 1800 characters the old head-and-tail cut read, but the
+/// What the chapter pass reads: the chapter's opening and its close, and
+/// between them, from each quarter of the middle, the paragraphs that carry the
+/// plot. The same 1800 characters the old head-and-tail cut read, but the
 /// middle no longer goes unseen. Measured on 30 chapters of one book against
 /// the original text, same model: better on 16, worse on 3; reading the whole
 /// chapter was no better still, so the rest is the model's own reach.
+///
+/// Not the title: handed 「第81章 ……」 the model copied it into 29 of 502
+/// summaries, and the backgrounds read from them went chapter by chapter.
 pub(crate) fn summary_excerpt(path: &str, index: u32) -> Result<String, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
     let c = l.chapters.get(index as usize).ok_or("章节不存在")?;
-    Ok(digest(&c.title, &l.text[c.body_start..c.span.end]))
+    Ok(digest(&l.text[c.body_start..c.span.end]))
 }
 
 const DIGEST_BUDGET: usize = 1800;
@@ -1099,7 +1102,7 @@ const PLOT_CUES: [&str; 31] = [
     "消失", "出现", "离开", "回溯", "报警", "警察", "受伤",
 ];
 
-pub(crate) fn digest(title: &str, body: &str) -> String {
+pub(crate) fn digest(body: &str) -> String {
     let body = body.trim();
     let paras: Vec<&str> = body
         .split('\n')
@@ -1108,12 +1111,11 @@ pub(crate) fn digest(title: &str, body: &str) -> String {
         .collect();
     let n = |p: &str| p.chars().count();
     if n(body) <= DIGEST_BUDGET || paras.len() < 3 {
-        let body = if n(body) <= DIGEST_BUDGET {
+        return if n(body) <= DIGEST_BUDGET {
             body.to_string()
         } else {
             excerpt(body, 1400, 400)
         };
-        return format!("章名：{title}\n\n{body}");
     }
 
     // The opening, the last paragraph cut at a sentence end.
@@ -1176,7 +1178,7 @@ pub(crate) fn digest(title: &str, body: &str) -> String {
     }
     let tail = paras[j..].join("\n");
     out.push(if j == last + 1 { tail } else { format!("……\n{tail}") });
-    format!("章名：{title}\n\n{}", out.join("\n"))
+    out.join("\n")
 }
 
 /// Narration over dialogue, plot words over scenery, per length so a long
