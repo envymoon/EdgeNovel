@@ -388,7 +388,7 @@ diff -ruN pbase/src/pipeline-tts.h work/src/pipeline-tts.h
  // Batch engine: drives up to pt->max_batch concurrent synthesis slots
 diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 --- pbase/src/qwen.cpp	2026-10-18 13:11:07.502293700 -0700
-+++ work/src/qwen.cpp	2026-10-18 13:11:07.355334000 -0700
++++ work/src/qwen.cpp	2026-10-18 13:57:37.112094200 -0700
 @@ -25,7 +25,9 @@
  #include "timer.h"
  #include "version.h"
@@ -399,7 +399,7 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
  #include <cctype>
  #include <condition_variable>
  #include <cstdarg>
-@@ -796,3 +798,455 @@
+@@ -796,3 +798,473 @@
  }
  
  }  // extern "C"
@@ -605,12 +605,30 @@ diff -ruN pbase/src/qwen.cpp work/src/qwen.cpp
 +    // Alone, a node pays for what the graph would have shared or hidden.
 +    // What a kind of node costs where it stands: the whole graph again with
 +    // every node of that kind left empty, and the time that saves. What it
-+    // computes then is wrong; only the time is kept.
++    // computes then is wrong; only the time is kept. What a row is picked
++    // by (the predictor's argmax, say) is always computed: left empty it
++    // holds rubbish, and the pick reads out of its table.
++    std::vector<struct ggml_tensor *> picks;
++    for (int j = 0; j < n; j++) {
++        struct ggml_tensor * t = ggml_graph_node(gf, j);
++        if ((t->op == GGML_OP_GET_ROWS || t->op == GGML_OP_SET_ROWS) && t->src[1]) {
++            picks.push_back(t->src[1]);
++        }
++    }
++    for (size_t k = 0; k < picks.size(); k++) {
++        for (int j = 0; j < GGML_MAX_SRC; j++) {
++            struct ggml_tensor * s = picks[k]->src[j];
++            if (s && (s->type == GGML_TYPE_I32 || s->type == GGML_TYPE_I64) &&
++                std::find(picks.begin(), picks.end(), s) == picks.end()) {
++                picks.push_back(s);
++            }
++        }
++    }
 +    for (size_t i = 0; i < by_op.size() && i < 10; i++) {
 +        std::vector<std::pair<struct ggml_tensor *, enum ggml_op>> left;
 +        for (int j = 0; j < n; j++) {
 +            struct ggml_tensor * t = ggml_graph_node(gf, j);
-+            if (by_op[i].first == ggml_op_desc(t)) {
++            if (by_op[i].first == ggml_op_desc(t) && std::find(picks.begin(), picks.end(), t) == picks.end()) {
 +                left.push_back({ t, t->op });
 +            }
 +        }
