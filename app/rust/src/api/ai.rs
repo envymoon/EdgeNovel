@@ -1316,7 +1316,7 @@ fn summarize_relation(a: &str, b: &str, evidence: &[(usize, String)]) -> Result<
     Ok(format!("{a}与{b}多次同场，模型没能概括出两人的来往。"))
 }
 
-/// One character → a short account of who they are, written from their own
+/// One character → a short account of how they are and what they did, from their own
 /// sampled sentences read in chronological order.
 ///
 /// Deliberately the same shape as [`summarize_relation`], and for the same
@@ -1337,16 +1337,19 @@ fn summarize_person(
     } else {
         format!("（书中也称作 {}）", aliases.join("、"))
     };
+    // Not asked who they are: scattered sentences rarely say, and asked for
+    // 身份来历 the model made one up — 冬日重现's class teacher came back an
+    // 调查员 three times in three, 冯若萍 清逸的妹妹. A 庙祝 or a 剑仙 the
+    // sentences do spell out still gets written.
     let system = format!(
         "你是小说人物档案整理助手。下面按时间先后给出提到【{name}】{also}的多段原文，\
-         请通读全部片段、前后联系起来，用两三句话（不超过 80 字）介绍这个人物。要点：\
-         优先说清楚 TA 的身份来历（出身、门派、职位、称号）、性情为人、以及经历过的重要转折；\
+         请通读全部片段、前后联系起来，用两三句话（不超过 80 字）说说 TA 为人怎样、在书里做过哪些事，写成连贯的句子。要点：\
+         不要写 TA 的身份、职业、职位、出身来历，也不要写 TA 是谁的家人、恋人或助手——零散的片段猜不准这些；\
          只依据给出的片段，如实概括，片段里没提到的一律不写，不要编造、不要推测、不要联想到别的作品；\
          片段彼此并不相连，不要把它们硬串成因果；同一句里别的人物的身份、外貌和举动不要安到 TA 身上；\
          一时的衣着打扮和琐碎动作不用写；\
          不要评价 TA 是主角还是配角、是好人还是坏人，只说原文里看得到的；\
-         若片段实在看不出这个人是谁，就如实说「原文片段里看不出 TA 的来历」。\
-         先在心里分析，最后只输出那两三句介绍，不要复述原文、不要分点、不要加引号。"
+         先在心里分析，最后只输出那两三句话，不要加小标题、不要复述原文、不要分点、不要加引号。"
     );
     let scenes: String = evidence
         .iter()
@@ -1356,7 +1359,7 @@ fn summarize_person(
         .join("\n");
     let user = format!(
         "原文片段（共 {} 段，按时间先后排列）：\n{scenes}\n\n\
-         用两三句话介绍【{name}】这个人物。",
+         用两三句话说说【{name}】为人怎样、做过哪些事。",
         evidence.len()
     );
     for _ in 0..2 {
@@ -1366,7 +1369,7 @@ fn summarize_person(
             return Ok(summary);
         }
     }
-    Ok(format!("{name}多次出场，模型没能概括出 TA 的来历。"))
+    Ok(format!("{name}多次出场，模型没能概括出 TA 的为人和经历。"))
 }
 
 /// A background needs this many chapter summaries that name the person before
