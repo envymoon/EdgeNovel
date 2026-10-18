@@ -1508,8 +1508,7 @@ fn write_background(
             if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
                 return Ok(None);
             }
-            let (from, to) = (chunk[0].0 + 1, chunk[chunk.len() - 1].0 + 1);
-            stages.push((from, to, stage_from_lines(name, aliases, from, to, chunk)?));
+            stages.push(stage_from_lines(name, aliases, chunk)?);
         }
         if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
             return Ok(None);
@@ -1584,22 +1583,25 @@ fn story_from_lines(
 }
 
 /// One stage of a long story: what happened to the person in these chapters.
+///
+/// The stage is not named by its chapters, here or in [story_from_stages]:
+/// told 「第 83–163 章」 the model wrote the numbers back, the rule against it
+/// notwithstanding — in 2 of 9 backgrounds for a book's three leads, 4 of 9 on
+/// the summaries before, and none of 18 without them.
 fn stage_from_lines(
     name: &str,
     aliases: &[String],
-    from: usize,
-    to: usize,
     lines: &[(usize, String)],
 ) -> Result<String, String> {
     let also = also_called(aliases);
     let system = format!(
-        "你是小说人物档案整理助手。下面按章节顺序给出小说第 {from}–{to} 章里与【{name}】{also}有关的内容：\
+        "你是小说人物档案整理助手。下面按章节顺序给出小说其中一段里与【{name}】{also}有关的内容：\
          「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
          请通读，用两三句话（不超过 80 字）写出【{name}】在这一段里的处境和经历，\
          身份地位的变化也要写。要点：{DIGEST_RULES}"
     );
     let user = format!(
-        "{}\n\n用两三句话写出【{name}】在第 {from}–{to} 章的经历。",
+        "{}\n\n用两三句话写出【{name}】在这一段的经历。",
         joined(lines)
     );
     ask_for_text(&system, &user, 120)
@@ -1611,7 +1613,7 @@ fn stage_from_lines(
 fn story_from_stages(
     name: &str,
     aliases: &[String],
-    stages: &[(usize, usize, String)],
+    stages: &[String],
 ) -> Result<String, String> {
     let also = also_called(aliases);
     let system = format!(
@@ -1620,11 +1622,7 @@ fn story_from_stages(
          不用介绍 TA 是谁，从最早的阶段写起，一直写到最后一个阶段，后面的阶段同样重要，\
          身份地位的变化也算经历。要点：{DIGEST_RULES}"
     );
-    let body = stages
-        .iter()
-        .map(|(from, to, text)| format!("第 {from}–{to} 章：{text}"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body = stages.join("\n");
     let user = format!("{body}\n\n用三四句话写出【{name}】一路上的经历。");
     ask_for_text(&system, &user, 160)
 }
