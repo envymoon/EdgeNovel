@@ -27,13 +27,16 @@ FetchContent_Declare(edge_sd_ggml
     PATCH_COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/ggml-metal-library.patch"
     # Sources only: sd.cpp adds it itself.
     SOURCE_SUBDIR no-cmake)
-# Upstream keeps src/convert.cpp with CRLF line ends and the patch has LF.
+# Upstream keeps src/convert.cpp with CRLF line ends and the patch has LF. The
+# second patch leaves out every tokenizer table but CLIP's, the one the app's
+# model reads.
 FetchContent_Declare(edge_sd
     URL "https://codeload.github.com/leejet/stable-diffusion.cpp/tar.gz/${EDGE_SD_COMMIT}"
     URL_HASH SHA256=af0d33ffe265503ece89526b283015a4c987cfdf54479559e7ce08fc32327216
     TLS_VERIFY TRUE
     PATCH_COMMAND perl -pi -e "s/\\r$//" src/convert.cpp
-          COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/../../../experiments/anime-cover-model/sdcpp-quantized-conv.patch")
+          COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/../../../experiments/anime-cover-model/sdcpp-quantized-conv.patch"
+          COMMAND patch -p1 -i "${CMAKE_CURRENT_SOURCE_DIR}/sdcpp-clip-vocab-only.patch")
 FetchContent_MakeAvailable(edge_sd_ggml)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

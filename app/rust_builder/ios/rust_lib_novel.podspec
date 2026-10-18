@@ -41,7 +41,8 @@ A new Flutter FFI plugin project.
     # Flutter.framework does not contain a i386 slice.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
     # The llama.cpp engine linked into the Rust library (rust/build.rs) is C++
-    # and Objective-C on Metal.
-    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_novel.a -lc++ -framework Metal -framework MetalKit -framework Foundation -framework Accelerate',
+    # and Objective-C on Metal. -x leaves the local symbols' names out of the
+    # framework (7 MB); what Dart looks up is global and stays.
+    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_novel.a -lc++ -framework Metal -framework MetalKit -framework Foundation -framework Accelerate -Wl,-x',
   }
 end
