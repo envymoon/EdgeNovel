@@ -328,8 +328,6 @@ const _english = <String, String>{
   '正在打开书籍…': 'Opening book…',
   '正在启动本机引擎…': 'Starting local engine…',
   '启动中…': 'Starting…',
-  '先跑完全书章节概览，人物关系更准确':
-      "Finish the whole book's chapter overview for more accurate relationships",
   '中断': 'Interrupt',
   '排雷需要检索模型': 'Content-warning search requires a search model',
   '纯粹相关嫌疑片段，仅作参考': 'Potentially relevant passages for reference only',

@@ -545,12 +545,12 @@ class CastPerson {
   final String? background;
 
   /// What [`Self::background`] was written from, said for the reader
-  /// (章节概览 / 章节概览与原文摘句 / 原文摘句), or None when unknown.
+  /// (原文摘句), or None when unknown.
   final String? backgroundSource;
 
-  /// The background could now be written from better material — more
-  /// chapter summaries than when it was written, or it predates them. The old
-  /// one is still shown until the reader asks for a new one.
+  /// The background predates recorded sources and came from the older
+  /// sentence sample. The old one is still shown until the reader asks for a
+  /// new one.
   final bool backgroundOutdated;
 
   /// The sentences that account rests on — shown to the reader, so a claim

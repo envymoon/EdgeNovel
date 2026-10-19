@@ -1265,11 +1265,11 @@ pub struct CastPerson {
     /// written one. Every UI must render correctly when this is None.
     pub background: Option<String>,
     /// What [`Self::background`] was written from, said for the reader
-    /// (章节概览 / 章节概览与原文摘句 / 原文摘句), or None when unknown.
+    /// (原文摘句), or None when unknown.
     pub background_source: Option<String>,
-    /// The background could now be written from better material — more
-    /// chapter summaries than when it was written, or it predates them. The old
-    /// one is still shown until the reader asks for a new one.
+    /// The background predates recorded sources and came from the older
+    /// sentence sample. The old one is still shown until the reader asks for a
+    /// new one.
     pub background_outdated: bool,
     /// The sentences that account rests on — shown to the reader, so a claim
     /// about a character can always be traced back to the book.
@@ -1420,7 +1420,7 @@ pub fn cast_graph(
         .unwrap_or_default()
         .into_iter()
         .collect();
-    let sources = background_sources(book_id, upto)?;
+    let sources = background_sources(book_id)?;
 
     // Renumber around anyone the model threw out, and anyone past `top`.
     let keep = shown(&cast, &verdicts, top);
@@ -1439,7 +1439,7 @@ pub fn cast_graph(
             first_chapter: p.first_chapter as u32,
             // A verdict of "yes" settles it; only an unjudged one stays dim.
             uncertain: p.uncertain && !verdicts.contains_key(&p.name),
-            background: backgrounds.get(&p.name).cloned(),
+            background: backgrounds.get(&p.name).map(|b| first_paragraph(b)),
             background_source: sources
                 .get(&p.name)
                 .and_then(|(source, _)| source.as_deref())
@@ -1673,67 +1673,40 @@ pub(crate) fn residual_relations(
         .collect())
 }
 
-/// Chapters with a usable summary right now.
-fn summarized_chapters(book_id: i64) -> Result<usize, String> {
-    Ok(with_store!(s => s.chapter_summaries(book_id))
-        .unwrap_or_default()
-        .iter()
-        .filter(|(_, t)| !t.trim().is_empty())
-        .count())
+/// A background written before sources were recorded came from the older,
+/// cruder sentence sample and is worth writing again. Every one since is
+/// read from the same sampled sentences, so nothing newer makes it stale.
+fn background_outdated(source: Option<&str>) -> bool {
+    source.is_none()
 }
 
-/// Has the material a background could be written from improved since it was?
-/// A background written before sources were recorded always has: it came from
-/// the older, cruder sentence sample. Otherwise it is worth rewriting once the
-/// chapter summaries have grown by a real step — a tenth of the book, and at
-/// least twenty chapters — so a pass that is still running does not flag every
-/// background again after each chapter.
-fn background_outdated(
-    source: Option<&str>,
-    basis: Option<i64>,
-    now: usize,
-    chapters: usize,
-) -> bool {
-    match source {
-        None => true,
-        Some(_) => now as i64 >= basis.unwrap_or(0) + (chapters / 10).max(20) as i64,
-    }
-}
-
+/// Every background is now read from the person's sampled sentences. Those
+/// stored as `summaries` or `mixed` carried a second paragraph of story read
+/// from the chapter summaries; [`first_paragraph`] drops it on display, and
+/// what is left was written from the sentences too.
 fn source_label(source: &str) -> Option<&'static str> {
     match source {
-        "summaries" => Some("章节概览"),
-        "mixed" => Some("章节概览与原文摘句"),
-        "sentences" => Some("原文摘句"),
+        "summaries" | "mixed" | "sentences" => Some("原文摘句"),
         _ => None,
     }
 }
 
+/// The 为人 paragraph of a stored background. The story paragraph the
+/// chapter summaries used to add read as scenes picked at random — a line here,
+/// a line there, never the main thread — so it is no longer written or shown.
+fn first_paragraph(background: &str) -> String {
+    background.split('\n').next().unwrap_or("").trim().to_string()
+}
+
 /// Per character with a background: (source, outdated).
-fn background_sources(
-    book_id: i64,
-    chapters: usize,
-) -> Result<HashMap<String, (Option<String>, bool)>, String> {
-    let now = summarized_chapters(book_id)?;
+fn background_sources(book_id: i64) -> Result<HashMap<String, (Option<String>, bool)>, String> {
     Ok(with_store!(s => s.person_summary_sources(book_id))
         .unwrap_or_default()
         .into_iter()
-        .map(|(name, source, basis)| {
-            let stale = background_outdated(source.as_deref(), basis, now, chapters);
+        .map(|(name, source, _)| {
+            let stale = background_outdated(source.as_deref());
             (name, (source, stale))
         })
-        .collect())
-}
-
-/// The book's chapter summaries, by chapter index — the better material a
-/// background is written from when the reader has run 章节分析. Empty when
-/// they have not; the writer then falls back to the person's own sentences.
-pub(crate) fn chapter_digest(book_id: i64) -> Result<Vec<(usize, String)>, String> {
-    Ok(with_store!(s => s.chapter_summaries(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, t)| !t.trim().is_empty())
-        .map(|(i, t)| (i as usize, t.trim().to_string()))
         .collect())
 }
 
@@ -1747,8 +1720,8 @@ pub(crate) fn residual_people(
     up_to_chapter: i64,
     top: u32,
 ) -> Result<Vec<(String, Vec<String>, Vec<(usize, String)>)>, String> {
-    let (cast, upto) = scan_cached(path, book_id, up_to_chapter)?;
-    let sources = background_sources(book_id, upto)?;
+    let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
+    let sources = background_sources(book_id)?;
     // Anyone the model has already thrown out is not worth a biography.
     let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
         .unwrap_or_default()

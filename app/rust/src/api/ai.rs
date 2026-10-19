@@ -1426,210 +1426,6 @@ fn summarize_person(
     Ok(format!("{name}多次出场，模型没能概括出 TA 的为人和经历。"))
 }
 
-/// A background needs this many chapter summaries that name the person before
-/// they are worth more than the person's own sentences. Below it the person is
-/// a walk-on the summaries hardly mention, and the sentences say more.
-const MIN_DIGEST_LINES: usize = 8;
-/// Lines per model call: about 3k tokens of 「概括：……」, which leaves the 8k
-/// window room for thinking.
-const PHASE_LINES: usize = 80;
-/// Beyond this many stages a lead's lines are thinned evenly instead: eight
-/// stages are enough to say how a life went, and each one is another call.
-const MAX_PHASES: usize = 8;
-
-/// A background, and what it was written from (`summaries`, `mixed` or
-/// `sentences`, as stored). None when the run was cancelled part-way.
-///
-/// Uses what is there. With 章节分析 run, the person's story is read from the
-/// chapter summaries that name them — each written with the whole chapter in
-/// view, so they carry the plot the sampled sentences miss, and none of the
-/// one-scene clothes or bystander descriptions that sentences drag in. Chapters
-/// without a summary are filled with the person's own sentences from those
-/// chapters. Without 章节分析, the sentences alone, as before.
-///
-/// The two sources are good at different things, so each is asked for what it
-/// knows, and the answers are kept as two paragraphs: who the person is, from
-/// their own sentences, then what happened to them, from the summaries. The
-/// summaries rarely say where someone started, and a small model reading only
-/// them opens with whatever title the story ends on (陈平安 came back as 大骊国师
-/// who 守泥瓶巷老宅 — true only of the last hundred chapters). Asked to merge the
-/// two paragraphs into one, it copied the first and dropped the story, so they
-/// are not merged.
-///
-/// A long life is read in stages and then put together: a small model given
-/// 900 summaries at once could not hold them, and one given a thinned sample
-/// would be back to reading scattered moments.
-fn write_background(
-    name: &str,
-    aliases: &[String],
-    evidence: &[(usize, String)],
-    digest: &[(usize, String)],
-) -> Result<Option<(String, &'static str)>, String> {
-    let names: Vec<&str> = std::iter::once(name)
-        .chain(aliases.iter().map(String::as_str))
-        .collect();
-    let mut lines: Vec<(usize, String)> = digest
-        .iter()
-        .filter(|(_, t)| names.iter().any(|n| t.contains(n)))
-        .map(|(c, t)| (*c, format!("概括：{t}")))
-        .collect();
-    if lines.len() < MIN_DIGEST_LINES {
-        let text = summarize_person(name, aliases, evidence)?;
-        return Ok(Some((text, "sentences")));
-    }
-    let covered: std::collections::HashSet<usize> = digest.iter().map(|(c, _)| *c).collect();
-    let from_digest = lines.len();
-    lines.extend(
-        evidence
-            .iter()
-            .filter(|(c, _)| !covered.contains(c))
-            .map(|(c, t)| (*c, format!("原文：{t}"))),
-    );
-    let source = if lines.len() == from_digest {
-        "summaries"
-    } else {
-        "mixed"
-    };
-    lines.sort_by_key(|(c, _)| *c);
-
-    let cap = PHASE_LINES * MAX_PHASES;
-    if lines.len() > cap {
-        let n = lines.len();
-        lines = (0..cap).map(|i| lines[i * n / cap].clone()).collect();
-    }
-    let who = summarize_person(name, aliases, evidence)?;
-    if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-        return Ok(None);
-    }
-    let phases = lines.len().div_ceil(PHASE_LINES);
-    let story = if phases == 1 {
-        story_from_lines(name, aliases, &lines)?
-    } else {
-        let size = lines.len().div_ceil(phases);
-        let mut stages = Vec::new();
-        for chunk in lines.chunks(size) {
-            if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-                return Ok(None);
-            }
-            stages.push(stage_from_lines(name, aliases, chunk)?);
-        }
-        if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        story_from_stages(name, aliases, &stages)?
-    };
-    Ok(Some((format!("{who}\n{story}"), source)))
-}
-
-fn also_called(aliases: &[String]) -> String {
-    if aliases.is_empty() {
-        String::new()
-    } else {
-        format!("（书中也称作 {}）", aliases.join("、"))
-    }
-}
-
-/// The ground rules every digest prompt shares, worded for any genre. Two
-/// wordings were tried and dropped on real books: asking outright for the
-/// person's 身份 made the model invent one when the summaries never said it
-/// (宁姚 became a 武术家), and numbering each line made it list chapters back
-/// instead of summarizing them.
-const DIGEST_RULES: &str = "不要逐章罗列，也不要写出章节号，要概括成连贯的几句话；\
-不要用「探索未知」「展现智慧」「经历成长」这类空泛的说法；\
-只写这个人本人的事，同一句里别的人物的身份、外貌和举动不要安到 TA 身上；\
-只依据给出的内容，不要编造、不要推测、不要联想到别的作品；\
-一时的衣着打扮和琐碎动作不用写；不要评价 TA 是主角还是配角、是好人还是坏人。\
-先在心里分析，最后只输出那段文字，不要复述原文、不要分点、不要加引号。";
-
-/// One considered pass, retried once if it comes back empty (all thinking, no
-/// answer) — the same footing as [`summarize_person`].
-fn ask_for_text(system: &str, user: &str, max_chars: usize) -> Result<String, String> {
-    for _ in 0..2 {
-        let raw = chat_once(system, user, 1400, 0.4)?;
-        let text = after_think(&raw, max_chars);
-        if !text.is_empty() {
-            return Ok(text);
-        }
-    }
-    Err("模型没有给出可用的概括".into())
-}
-
-fn joined(lines: &[(usize, String)]) -> String {
-    lines
-        .iter()
-        .map(|(_, t)| t.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// One call: the whole of a short story, straight to what happened. Never who
-/// the person is — that paragraph comes from their own sentences — but a rise
-/// or fall in standing is part of the story (陈平安 becoming 大骊国师 at the end).
-fn story_from_lines(
-    name: &str,
-    aliases: &[String],
-    lines: &[(usize, String)],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按章节顺序给出小说里与【{name}】{also}有关的内容：\
-         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
-         请通读全部内容，用三四句话（不超过 120 字）按时间顺序写出 TA 一路上的经历：\
-         不用介绍 TA 是谁，从最早的事写起，一直写到最后，身份地位的变化也算经历。\
-         要点：{DIGEST_RULES}"
-    );
-    let user = format!(
-        "{}\n\n用三四句话写出【{name}】一路上的经历。",
-        joined(lines)
-    );
-    ask_for_text(&system, &user, 160)
-}
-
-/// One stage of a long story: what happened to the person in these chapters.
-///
-/// The stage is not named by its chapters, here or in [story_from_stages]:
-/// told 「第 83–163 章」 the model wrote the numbers back, the rule against it
-/// notwithstanding — in 2 of 9 backgrounds for a book's three leads, 4 of 9 on
-/// the summaries before, and none of 18 without them.
-fn stage_from_lines(
-    name: &str,
-    aliases: &[String],
-    lines: &[(usize, String)],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按章节顺序给出小说其中一段里与【{name}】{also}有关的内容：\
-         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
-         请通读，用两三句话（不超过 80 字）写出【{name}】在这一段里的处境和经历，\
-         身份地位的变化也要写。要点：{DIGEST_RULES}"
-    );
-    let user = format!(
-        "{}\n\n用两三句话写出【{name}】在这一段的经历。",
-        joined(lines)
-    );
-    ask_for_text(&system, &user, 120)
-}
-
-/// The stages of a long story, joined into one account of what happened —
-/// the last stage as much as the first, which is where a background read from
-/// scattered moments used to stop.
-fn story_from_stages(
-    name: &str,
-    aliases: &[String],
-    stages: &[String],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按时间顺序给出【{name}】{also}在小说各个阶段的经历。\
-         请把它们按时间顺序连起来，用三四句话（不超过 120 字）写出 TA 一路上的经历：\
-         不用介绍 TA 是谁，从最早的阶段写起，一直写到最后一个阶段，后面的阶段同样重要，\
-         身份地位的变化也算经历。要点：{DIGEST_RULES}"
-    );
-    let body = stages.join("\n");
-    let user = format!("{body}\n\n用三四句话写出【{name}】一路上的经历。");
-    ask_for_text(&system, &user, 160)
-}
-
 #[derive(Debug, Clone)]
 pub struct DescribeProgress {
     /// The character just written up — Dart matches this to its node.
@@ -1663,7 +1459,6 @@ pub fn describe_people(
 
     let residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
-    let digest = book::chapter_digest(book_id)?;
 
     let mut consecutive_errors = 0;
     for (done, (name, aliases, evidence)) in residual.into_iter().enumerate() {
@@ -1677,11 +1472,10 @@ pub fn describe_people(
             total,
             error: None,
         });
-        let (background, error) = match write_background(&name, &aliases, &evidence, &digest) {
-            Ok(None) => break,
-            Ok(Some((b, source))) => {
+        let (background, error) = match summarize_person(&name, &aliases, &evidence) {
+            Ok(b) => {
                 consecutive_errors = 0;
-                let _ = book::remember_person(book_id, &name, &b, source, digest.len());
+                let _ = book::remember_person(book_id, &name, &b, "sentences", 0);
                 (b, None)
             }
             Err(e) => {
