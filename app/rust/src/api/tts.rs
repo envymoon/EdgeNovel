@@ -538,13 +538,33 @@ fn max_frames(line: &str) -> usize {
     (line.chars().count() * 6 + 40).min(900)
 }
 
+/// How freely the talker draws each sound. The model's own defaults (0.9, 50,
+/// a new seed every time) make each sentence a fresh guess at how it is said:
+/// spoken alone, without the ones around it, the guesses swing from line to
+/// line, and now and then wander into a dialect the voice never had. Lower and
+/// narrower, the voice reads evenly; one seed, and a sentence said again comes
+/// out the same.
+#[derive(Clone, Copy)]
+struct Sampling {
+    temperature: f32,
+    top_k: i32,
+    seed: i64,
+}
+
+const STEADY: Sampling = Sampling { temperature: 0.6, top_k: 30, seed: 1 };
+
 #[cfg(in_process_engine)]
 fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+    speak_with(line, voice, STEADY)
+}
+
+#[cfg(in_process_engine)]
+fn speak_with(line: &str, voice: &str, how: Sampling) -> Result<Vec<u8>, String> {
     let _busy = InFlight::new();
     let mut again = true;
     loop {
         ensure()?;
-        match engine::speak(line, voice, max_frames(line)) {
+        match engine::speak(line, voice, max_frames(line), how) {
             Ok(pcm) if pcm.is_empty() => return Err("语音合成为空".into()),
             Ok(pcm) => return Ok(wav(&pcm)),
             // Stopped on the GPU because the app went behind the screen:
@@ -568,6 +588,9 @@ fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
         "language": "chinese",
         "response_format": "pcm",
         "max_new_tokens": frames,
+        "temperature": STEADY.temperature,
+        "top_k": STEADY.top_k,
+        "seed": STEADY.seed,
     });
     let (status, pcm) = http(PORT, "POST", "/v1/audio/speech", Some(&body), 300)?;
     if status != 200 {
@@ -620,6 +643,9 @@ mod engine {
             text: *const c_char,
             speaker: *const c_char,
             max_frames: c_int,
+            temperature: f32,
+            top_k: c_int,
+            seed: i64,
             on_pcm: extern "C" fn(*const f32, c_int, *mut c_void),
             user: *mut c_void,
         ) -> c_int;
@@ -723,7 +749,7 @@ mod engine {
     }
 
     /// One sentence as bare 16-bit 24 kHz mono, decoded as the talker goes.
-    pub fn speak(line: &str, voice: &str, frames: usize) -> Result<Vec<u8>, String> {
+    pub fn speak(line: &str, voice: &str, frames: usize, how: super::Sampling) -> Result<Vec<u8>, String> {
         let text = CString::new(line).map_err(|_| "文本无效".to_string())?;
         let speaker = CString::new(voice).map_err(|_| "音色无效".to_string())?;
         let mut pcm: Vec<u8> = Vec::new();
@@ -732,6 +758,9 @@ mod engine {
                 text.as_ptr(),
                 speaker.as_ptr(),
                 frames as c_int,
+                how.temperature,
+                how.top_k as c_int,
+                how.seed,
                 take_pcm,
                 &mut pcm as *mut Vec<u8> as *mut c_void,
             )

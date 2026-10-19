@@ -126,9 +126,10 @@ struct pcm_sink {
 
 // 0 when spoken, the qt_status otherwise (-5: stopped because the app went
 // behind the screen). The audio comes as it is decoded, 24 kHz mono, through
-// `on_pcm`.
-extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_frames, edge_tts_pcm_cb on_pcm,
-                              void * user) {
+// `on_pcm`. How freely the talker draws each sound is the caller's
+// (tts.rs, `STEADY`); a seed of -1 draws a new one.
+extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_frames, float temperature, int top_k,
+                              long long seed, edge_tts_pcm_cb on_pcm, void * user) {
     std::shared_lock<std::shared_mutex> lock(g_mutex);
     if (!g_ctx) {
         g_error = "voice not loaded";
@@ -143,6 +144,9 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
     p.lang           = "chinese";
     p.speaker        = speaker;
     p.max_new_tokens = max_frames;
+    p.temperature    = temperature;
+    p.top_k          = top_k;
+    p.seed           = seed;
     p.cancel         = [](void *) -> bool { return g_cancel.load(); };
     p.on_chunk       = [](const float * s, int n, void * u) -> bool {
         auto * k = static_cast<pcm_sink *>(u);
