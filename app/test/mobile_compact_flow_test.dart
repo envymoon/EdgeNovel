@@ -107,10 +107,14 @@ class _ShortChapterReader extends _CompactOpenReader {
   int nexts = 0, prevs = 0;
 
   @override
-  Future<void> next() async => nexts++;
+  Future<void> next() async {
+    nexts++;
+  }
 
   @override
-  Future<void> prev() async => prevs++;
+  Future<void> prev() async {
+    prevs++;
+  }
 }
 
 class _SilentSpeech implements LocalSpeechSynthesizer {
@@ -443,7 +447,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a swipe off a chapter's edge goes on into the next one', (
+  testWidgets("a swipe off a chapter's edge goes on into the next one", (
     tester,
   ) async {
     await setCompactSize(tester);
