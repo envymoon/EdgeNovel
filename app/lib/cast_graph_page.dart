@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'ai_page.dart';
 import 'bloom.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -97,6 +98,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
         path: widget.book.path,
         bookId: widget.book.id,
         upToChapter: widget.book.chapterCount,
+        top: widget.settings.castTop,
       );
       final s = await aiStatus();
       if (!mounted) return;
@@ -128,6 +130,14 @@ class _CastGraphPageState extends State<CastGraphPage> {
     if (e.label != null) return e.label;
     final g = _graph!;
     return _modelLabel[_key(g.people[e.a].name, g.people[e.b].name)];
+  }
+
+  /// The first [n] of the ten: the graph is drawn again for them.
+  Future<void> _setTop(int n) async {
+    if (widget.settings.castTop == n) return;
+    widget.settings.setCastTop(n);
+    setState(() => _selected = null);
+    await _load();
   }
 
   Future<void> _runModel() async {
@@ -351,9 +361,28 @@ class _CastGraphPageState extends State<CastGraphPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '全书 ${g.upto} 章 · ${g.people.length} 人 · ${g.edges.length} 段关系',
-            style: TextStyle(color: t.muted, fontSize: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '全书 ${g.upto} 章 · ${g.people.length} 人 · ${g.edges.length} 段关系',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+              ),
+              for (final n in ReadingSettings.castTopChoices)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: ChoiceChip(
+                    label: Text('$n 人', style: const TextStyle(fontSize: 12)),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    selected: widget.settings.castTop == n,
+                    onSelected: (_) => _setTop(n),
+                  ),
+                ),
+            ],
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),
@@ -375,6 +404,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
     int unwritten,
     int outdated,
   ) {
+    if (!AppPlatformSupport.hasAiEngine) return const [];
     final r = widget.reader;
     final state = _castState;
     final small = TextStyle(color: t.muted, fontSize: 11, height: 1.5);
@@ -413,7 +443,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
                         ' · ${p.done} / ${p.total}',
                     if (remaining != null) formatRemaining(remaining),
                   ].join(' · '),
-            detail: p == null || p.detail.isEmpty ? '正在启动本机引擎…' : p.detail,
+            detail: p == null || p.detail.isEmpty ? '启动中…' : p.detail,
             value: p == null || p.total == 0 ? null : p.done / p.total,
             color: t.muted,
             textColor: t.text,

@@ -1,0 +1,63 @@
+diff -ruN a/src/tokenizers/vocab/vocab.cpp b/src/tokenizers/vocab/vocab.cpp
+--- a/src/tokenizers/vocab/vocab.cpp	2026-10-18 13:14:22.497731800 -0700
++++ b/src/tokenizers/vocab/vocab.cpp	2026-10-18 13:14:22.551492300 -0700
+@@ -1,12 +1,8 @@
++// The app speaks to one picture model, and its text encoder is CLIP: the
++// other tokenizers' tables (Qwen, Mistral, Gemma, T5, UMT5; some 28 MB)
++// stay out of the app and come back empty.
+ #include "vocab.h"
+ #include "clip_merges.hpp"
+-#include "gemma_merges.hpp"
+-#include "gemma_vocab.hpp"
+-#include "mistral_merges.hpp"
+-#include "mistral_vocab.hpp"
+-#include "qwen_merges.hpp"
+-#include "t5.hpp"
+-#include "umt5.hpp"
+ 
+ std::string load_clip_merges() {
+     std::string merges_utf8_str(reinterpret_cast<const char*>(clip_merges_utf8_c_str), sizeof(clip_merges_utf8_c_str));
+@@ -14,36 +10,29 @@
+ }
+ 
+ std::string load_qwen2_merges() {
+-    std::string merges_utf8_str(reinterpret_cast<const char*>(qwen2_merges_utf8_c_str), sizeof(qwen2_merges_utf8_c_str));
+-    return merges_utf8_str;
++    return std::string();
+ }
+ 
+ std::string load_mistral_merges() {
+-    std::string merges_utf8_str(reinterpret_cast<const char*>(mistral_merges_utf8_c_str), sizeof(mistral_merges_utf8_c_str));
+-    return merges_utf8_str;
++    return std::string();
+ }
+ 
+ std::string load_mistral_vocab_json() {
+-    std::string json_str(reinterpret_cast<const char*>(mistral_vocab_json_utf8_c_str), sizeof(mistral_vocab_json_utf8_c_str));
+-    return json_str;
++    return std::string();
+ }
+ 
+ std::string load_t5_tokenizer_json() {
+-    std::string json_str(reinterpret_cast<const char*>(t5_tokenizer_json_str), sizeof(t5_tokenizer_json_str));
+-    return json_str;
++    return std::string();
+ }
+ 
+ std::string load_umt5_tokenizer_json() {
+-    std::string json_str(reinterpret_cast<const char*>(umt5_tokenizer_json_str), sizeof(umt5_tokenizer_json_str));
+-    return json_str;
++    return std::string();
+ }
+ 
+ std::string load_gemma_merges() {
+-    std::string merges_utf8_str(reinterpret_cast<const char*>(gemma_merges_utf8_c_str), sizeof(gemma_merges_utf8_c_str));
+-    return merges_utf8_str;
++    return std::string();
+ }
+ 
+ std::string load_gemma_vocab_json() {
+-    std::string json_str(reinterpret_cast<const char*>(gemma_vocab_json_utf8_c_str), sizeof(gemma_vocab_json_utf8_c_str));
+-    return json_str;
++    return std::string();
+ }

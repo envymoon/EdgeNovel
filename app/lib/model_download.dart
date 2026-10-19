@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 enum DownloadStopKind { paused, cancelled }
 
 class DownloadStopped implements Exception {
@@ -25,17 +27,22 @@ class ResumableFileDownload {
   bool _pauseRequested = false;
   bool _cancelRequested = false;
 
+  /// On iOS, the .part file the system is filling for this download.
+  String? _systemPart;
+
   bool get stopping => _pauseRequested || _cancelRequested;
 
   void pause() {
     if (stopping) return;
     _pauseRequested = true;
     _client?.close(force: true);
+    if (_systemPart case final part?) _SystemTransfer.stop(part, keep: true);
   }
 
   Future<void> cancel(File target) async {
     _cancelRequested = true;
     _client?.close(force: true);
+    if (_systemPart case final part?) _SystemTransfer.stop(part, keep: false);
     final finished = _finished;
     if (finished != null) {
       await finished.future;
@@ -55,6 +62,8 @@ class ResumableFileDownload {
   static Future<void> discard(File target) async {
     final partial = partialFile(target);
     if (await partial.exists()) await partial.delete();
+    final resume = File('${partial.path}.resume');
+    if (await resume.exists()) await resume.delete();
     if (await target.exists()) await target.delete();
   }
 
@@ -96,6 +105,7 @@ class ResumableFileDownload {
     File target,
     DownloadProgressCallback onProgress,
   ) async {
+    if (Platform.isIOS) return _downloadBySystem(url, target, onProgress);
     final partial = partialFile(target);
     await partial.parent.create(recursive: true);
     var existing = await partial.exists() ? await partial.length() : 0;
@@ -151,6 +161,37 @@ class ResumableFileDownload {
     }
   }
 
+  /// iOS suspends an app soon after it leaves the screen, and a download the
+  /// app runs itself stops with it. The system's own transfer goes on: it
+  /// fetches the rest from [existing] and adds it to the same .part file.
+  Future<void> _downloadBySystem(
+    String url,
+    File target,
+    DownloadProgressCallback onProgress,
+  ) async {
+    final partial = partialFile(target);
+    await partial.parent.create(recursive: true);
+    final existing = await partial.exists() ? await partial.length() : 0;
+    onProgress(existing, null);
+    _throwIfStopped();
+    _systemPart = partial.path;
+    try {
+      await _SystemTransfer.fetch(url, partial.path, existing, onProgress);
+    } catch (error) {
+      _throwIfStopped();
+      if (error == 'HTTP 416' && existing > 0) {
+        await discard(target);
+        throw '服务器拒绝续传，正在重新下载';
+      }
+      rethrow;
+    } finally {
+      _systemPart = null;
+    }
+    _throwIfStopped();
+    if (await target.exists()) await target.delete();
+    await partial.rename(target.path);
+  }
+
   int? _totalBytes(HttpClientResponse response, int existing) {
     final contentRange = response.headers.value(HttpHeaders.contentRangeHeader);
     final match = contentRange == null
@@ -169,5 +210,67 @@ class ResumableFileDownload {
 
   void _throwIfStopped() {
     if (stopping) _stopped();
+  }
+}
+
+/// The app's side of the iOS background transfer (Transfers in AppDelegate).
+/// A transfer is known by its .part file, which outlives the app: one begun
+/// before the app was last ended is picked up again, not started twice.
+class _SystemTransfer {
+  static const _channel = MethodChannel('novel/transfer');
+  static final _waiting =
+      <String, (Completer<void>, DownloadProgressCallback)>{};
+  static bool _listening = false;
+
+  static Future<void> fetch(
+    String url,
+    String part,
+    int offset,
+    DownloadProgressCallback onProgress,
+  ) async {
+    if (!_listening) {
+      _listening = true;
+      _channel.setMethodCallHandler(_event);
+    }
+    final done = Completer<void>();
+    // It may end before the start call returns; awaited below all the same.
+    done.future.ignore();
+    _waiting[part] = (done, onProgress);
+    try {
+      await _channel.invokeMethod<String>('start', {
+        'url': url,
+        'part': part,
+        'offset': offset,
+      });
+      await done.future;
+    } finally {
+      if (identical(_waiting[part]?.$1, done)) _waiting.remove(part);
+    }
+  }
+
+  static Future<void> stop(String part, {required bool keep}) => _channel
+      .invokeMethod<void>(keep ? 'pause' : 'cancel', {'part': part})
+      .catchError((_) {});
+
+  static Future<void> _event(MethodCall call) async {
+    final args = Map<String, Object?>.from(call.arguments as Map);
+    final waiting = _waiting[args['part']];
+    if (waiting == null) return;
+    final (done, onProgress) = waiting;
+    switch (call.method) {
+      case 'progress':
+        onProgress(
+          (args['received'] as num).toInt(),
+          (args['total'] as num?)?.toInt(),
+        );
+      case 'done':
+        if (done.isCompleted) return;
+        final error = args['error'] as String?;
+        if (error == null) {
+          done.complete();
+        } else {
+          done.completeError(error);
+        }
+    }
   }
 }

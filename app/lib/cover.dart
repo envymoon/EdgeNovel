@@ -72,6 +72,43 @@ void forgetCovers() {
     ..clearLiveImages();
 }
 
+/// A cover over the whole screen, to see its details: pinch or wheel to zoom
+/// in, a tap anywhere closes it.
+Future<void> showCoverLarge(
+  BuildContext context, {
+  required String title,
+  required int hue,
+  String? coverPath,
+}) => showDialog<void>(
+  context: context,
+  barrierColor: Colors.black.withValues(alpha: 0.88),
+  builder: (context) {
+    final size = MediaQuery.sizeOf(context);
+    final path = coverPath;
+    final byWidth = size.width * 0.86, byHeight = size.height * 0.86 / 1.4;
+    final width = byWidth < byHeight ? byWidth : byHeight;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.pop(context),
+      child: InteractiveViewer(
+        maxScale: 5,
+        child: Center(
+          child: path != null && File(path).existsSync()
+              ? Image.file(
+                  File(path),
+                  width: width,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder: (_, _, _) =>
+                      TextCover(title: title, hue: hue, width: width),
+                )
+              : TextCover(title: title, hue: hue, width: width),
+        ),
+      ),
+    );
+  },
+);
+
 class TextCover extends StatelessWidget {
   final String title;
   final int hue;

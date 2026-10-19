@@ -26,10 +26,37 @@ void main() {
       expect(restored.uniformInterfaceWeight, false);
       restored.setFontFamily('');
       expect(restored.resolvedReadingFont, 'Microsoft YaHei');
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(restored.resolvedReadingFont, 'PingFang SC');
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       expect(restored.resolvedReadingFont, isNull);
     },
   );
+
+  test('night switch, first-run defaults and the larger type', () async {
+    SharedPreferences.setMockInitialValues({'themeIndex': 2});
+    final settings = await ReadingSettings.load();
+    expect(settings.pageMode, PageMode.paged);
+    expect(settings.openBookToDetail, isTrue);
+    settings.toggleNight();
+    expect(settings.theme.name, '夜读');
+    settings.toggleNight();
+    expect(settings.themeIndex, 2);
+    settings.setTheme(readingThemes.indexWhere((t) => t.name == '纯黑'));
+    settings.toggleNight();
+    expect(settings.themeIndex, 2);
+    settings.setFontSize(60);
+    expect(settings.fontSize, 48);
+    settings.setOpenBookToDetail(false);
+    final restored = await ReadingSettings.load();
+    expect(restored.openBookToDetail, isFalse);
+    expect(restored.dayThemeIndex, 2);
+  });
+
+  test('a saved scroll mode survives the paged default', () async {
+    SharedPreferences.setMockInitialValues({'pageMode': PageMode.scroll.index});
+    expect((await ReadingSettings.load()).pageMode, PageMode.scroll);
+  });
 
   testWidgets('uniform UI weight leaves explicit book font weight intact', (
     tester,

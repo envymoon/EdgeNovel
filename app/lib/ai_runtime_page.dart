@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
 import 'ai_runtime.dart';
 import 'reader_state.dart';
+import 'platform_services.dart';
 import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
 import 'theme.dart';
@@ -22,14 +24,17 @@ class AiRuntimePage extends StatefulWidget {
 class _AiRuntimePageState extends State<AiRuntimePage> {
   final runtime = AiRuntimeSettings.instance;
   AiDeviceState? _device;
+  AppMemory? _memory;
+  DeviceLoad? _load;
   Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    // Often enough to watch the phone warm up under a model.
     _refreshTimer = Timer.periodic(
-      const Duration(seconds: 10),
+      const Duration(seconds: 3),
       (_) => _refresh(),
     );
   }
@@ -43,7 +48,15 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
   Future<void> _refresh() async {
     try {
       final state = await runtime.readDeviceState();
-      if (mounted) setState(() => _device = state);
+      final memory = await AppMemory.read();
+      final load = await DeviceLoad.read();
+      if (mounted) {
+        setState(() {
+          _device = state;
+          _memory = memory;
+          _load = load;
+        });
+      }
     } catch (_) {}
   }
 
@@ -75,14 +88,39 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             _panel(
               t,
               children: [
-                SwitchListTile(
-                  value: runtime.backgroundEnabled,
-                  onChanged: runtime.setBackgroundEnabled,
-                  title: Text(
-                    '允许后台生成',
-                    style: TextStyle(color: t.text, fontSize: 14),
+                // On iOS the queue runs whenever the app is open; one switch
+                // is for the reader's page, the other for the locked phone,
+                // where only the CPU windows the system grants are left.
+                if (defaultTargetPlatform == TargetPlatform.iOS) ...[
+                  SwitchListTile(
+                    value: runtime.lockedEnabled,
+                    onChanged: runtime.setLockedEnabled,
+                    title: Text(
+                      '锁屏/后台运行',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                    subtitle: Text(
+                      '会降速',
+                      style: TextStyle(color: t.muted, fontSize: 12),
+                    ),
                   ),
-                ),
+                  SwitchListTile(
+                    value: runtime.backgroundEnabled,
+                    onChanged: runtime.setBackgroundEnabled,
+                    title: Text(
+                      '允许阅读时后台处理',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                  ),
+                ] else
+                  SwitchListTile(
+                    value: runtime.backgroundEnabled,
+                    onChanged: runtime.setBackgroundEnabled,
+                    title: Text(
+                      '允许后台生成',
+                      style: TextStyle(color: t.text, fontSize: 14),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 20),
@@ -129,36 +167,8 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
               ],
             ),
             const SizedBox(height: 20),
-            _section(t, '设备与模型'),
+            _section(t, '设备'),
             _deviceCard(t),
-            const SizedBox(height: 8),
-            _panel(
-              t,
-              children: [
-                ListTile(
-                  leading: Icon(Icons.memory_outlined, color: t.muted),
-                  title: Text(
-                    '标准模型 · Qwen3 0.6B Q8',
-                    style: TextStyle(color: t.text, fontSize: 14),
-                  ),
-                  trailing: const Icon(
-                    Icons.check_circle,
-                    color: Color(0xFF4E7956),
-                    size: 20,
-                  ),
-                ),
-                ListTile(
-                  enabled: false,
-                  leading: const Icon(Icons.upgrade_outlined),
-                  title: const Text('增强模型', style: TextStyle(fontSize: 14)),
-                  subtitle: const Text(
-                    '待兼容性验证',
-                    style: TextStyle(fontSize: 11.5),
-                  ),
-                  trailing: const Text('待验证', style: TextStyle(fontSize: 11)),
-                ),
-              ],
-            ),
             const SizedBox(height: 20),
             _section(t, '高级设置'),
             _advanced(t),
@@ -365,8 +375,52 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             icon: const Icon(Icons.refresh, size: 19),
           ),
         ),
+        if (_memory case final m?)
+          ListTile(
+            leading: Icon(Icons.memory_outlined, color: t.muted),
+            title: Text(
+              '应用内存',
+              style: TextStyle(color: t.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              '当前 ${m.now} MB · 最高 ${m.peak} MB · 上限 ${m.limit} MB',
+              style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
+            ),
+          ),
+        if (_loadLine(d) case final line?)
+          ListTile(
+            leading: Icon(Icons.thermostat_outlined, color: t.muted),
+            title: Text('负载', style: TextStyle(color: t.text, fontSize: 14)),
+            subtitle: Text(
+              line,
+              style: TextStyle(color: t.muted, fontSize: 11.5, height: 1.4),
+            ),
+          ),
       ],
     );
+  }
+
+  /// CPU, GPU and heat on one line; what the phone does not tell is left out.
+  /// iOS gives an app no temperature, only how warm it judges itself to be.
+  String? _loadLine(AiDeviceState? d) {
+    final l = _load;
+    if (l == null) return null;
+    final heat = switch (d?.thermalState) {
+      'nominal' => '正常',
+      'fair' => '偏热',
+      'serious' => '很热',
+      'critical' => '过热',
+      _ => null,
+    };
+    final parts = [
+      if (l.cpu != null) 'CPU ${l.cpu}%',
+      if (l.gpu != null) 'GPU ${l.gpu}%',
+      if (heat != null)
+        l.batteryCelsius == null
+            ? '温度 $heat'
+            : '温度 $heat · 电池 ${l.batteryCelsius!.toStringAsFixed(1)} °C',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   String _duration(int seconds) {
@@ -390,7 +444,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
           ListTile(
             title: Text('处理器', style: TextStyle(color: t.text, fontSize: 13)),
             trailing: DropdownButton<AiBackend>(
-              value: AppPlatformSupport.hasBundledAiEngine
+              value: AppPlatformSupport.bundledEngineIsCpuOnly
                   ? AiBackend.cpu
                   : runtime.backend,
               underline: const SizedBox.shrink(),
@@ -399,7 +453,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                 DropdownMenuItem(value: AiBackend.cpu, child: Text('仅 CPU')),
                 DropdownMenuItem(value: AiBackend.gpu, child: Text('优先 GPU')),
               ],
-              onChanged: AppPlatformSupport.hasBundledAiEngine
+              onChanged: AppPlatformSupport.bundledEngineIsCpuOnly
                   ? null
                   : (value) {
                       if (value != null) runtime.setBackend(value);

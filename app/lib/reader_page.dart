@@ -7,12 +7,14 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'annotation_page.dart';
 import 'app_localizations.dart';
+import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'bloom.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
+import 'night_toggle.dart';
 import 'pace_page.dart';
 import 'paged_reader.dart';
 import 'plate_view.dart';
@@ -23,9 +25,12 @@ import 'reader_state.dart';
 import 'search_page.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
+import 'src/rust/api/stats.dart' as stats;
 import 'theme.dart';
 import 'toc_drawer.dart';
+import 'tts_chapters_page.dart';
 import 'tts_controller.dart';
+import 'tts_panel.dart';
 import 'tts_prepare.dart';
 import 'tts_text.dart';
 import 'tts_server_page.dart';
@@ -61,6 +66,14 @@ class _ReaderPageState extends State<ReaderPage> {
   /// only the bottom-bar text rebuilds on every page turn.
   final _pageInfo = ValueNotifier<(int, int)>((1, 1));
 
+  /// The paragraph at the top of the scrolling list, for the footer.
+  final _scrollTop = ValueNotifier<int>(0);
+
+  /// This reader's own pace in characters a minute, as 阅读数据 measures it;
+  /// null until there is enough reading to say. Kept across books, and asked
+  /// for again each time one opens.
+  static double? _cpm;
+
   late final TtsController _tts;
 
   bool get _isPaged => widget.settings.pageMode == PageMode.paged;
@@ -68,6 +81,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadPace());
     _positions.itemPositions.addListener(_onScroll);
     _tts = TtsController(
       widget.reader,
@@ -78,17 +92,35 @@ class _ReaderPageState extends State<ReaderPage> {
     _tts.addListener(_onTtsTick);
     TtsPrepare.instance.addListener(_onPrepareTick);
     widget.reader.addListener(_onChapter);
+    spokenChapterWanted.addListener(_onSpokenWanted);
+    // Opened for a chapter tapped in 已合成.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onSpokenWanted());
   }
 
   @override
   void dispose() {
+    spokenChapterWanted.removeListener(_onSpokenWanted);
     widget.reader.removeListener(_onChapter);
     _positions.itemPositions.removeListener(_onScroll);
     _tts.removeListener(_onTtsTick);
     TtsPrepare.instance.removeListener(_onPrepareTick);
     _tts.dispose();
     _pageInfo.dispose();
+    _scrollTop.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPace() async {
+    try {
+      final insights = await stats.readingInsights(
+        tzSecs: DateTime.now().timeZoneOffset.inSeconds,
+      );
+      if (mounted && insights.speed != _cpm) {
+        setState(() => _cpm = insights.speed);
+      }
+    } catch (_) {
+      // No pace, no estimate: the footer leaves it out.
+    }
   }
 
   /// The last paragraph we scrolled to. The controller also notifies as
@@ -107,8 +139,8 @@ class _ReaderPageState extends State<ReaderPage> {
     setState(() => _chromeVisible = !_chromeVisible);
   }
 
-  /// Follow the spoken paragraph: scroll it into view (scroll mode only; the
-  /// paged reader paginates independently).
+  /// Follow the spoken paragraph: scroll it into view (scroll mode; the paged
+  /// reader turns its own pages to it).
   void _onTtsTick() {
     final msg = _tts.notice;
     if (msg != null) {
@@ -118,7 +150,10 @@ class _ReaderPageState extends State<ReaderPage> {
           SnackBar(
             content: Text(msg),
             action: SnackBarAction(
-              label: context.tr('设置'),
+              // On iPhone what is wanted is more spoken, from the panel.
+              label: context.tr(
+                AppPlatformSupport.speaksByChapter ? '合成' : '设置',
+              ),
               onPressed: _openTtsSettings,
             ),
           ),
@@ -138,12 +173,61 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   /// Voice, pace and server all live on one page, because they are one decision:
-  /// where the reading voice comes from.
+  /// where the reading voice comes from. On iPhone 听书 is one panel.
   Future<void> _openTtsSettings() async {
+    if (AppPlatformSupport.speaksByChapter) return _openTtsPanel();
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => TtsServerPage(settings: widget.settings),
+      ),
+    );
+    await _tts.onVoiceOrSpeedChanged();
+  }
+
+  /// A chapter tapped in 已合成: this book's is gone to, with the panel open
+  /// on it; another book's closes this one, and the app opens that one.
+  Future<void> _onSpokenWanted() async {
+    final want = spokenChapterWanted.value;
+    if (want == null || !mounted || _closing) return;
+    final (book, chapter) = want;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    if (widget.reader.info?.id != book) {
+      await _close();
+      return;
+    }
+    spokenChapterWanted.value = null;
+    if (_plate != null) _closePlate();
+    if (widget.reader.chapterIndex != chapter) {
+      if (_tts.playing || _tts.hasQueue) await _tts.stop();
+      await widget.reader.goToChapter(chapter);
+    }
+    if (mounted) await _openTtsPanel();
+  }
+
+  /// iPhone: play what has been spoken, speak more, voice and pace.
+  Future<void> _openTtsPanel() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      isScrollControlled: true,
+      builder: (_) => TtsPanel(
+        reader: widget.reader,
+        settings: widget.settings,
+        tts: _tts,
+        localSpeech: widget.localSpeech,
+        onPlay: _toggleTts,
+        onDownloadVoice: _openVoiceDownload,
+      ),
+    );
+  }
+
+  Future<void> _openVoiceDownload() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AiPage(settings: widget.settings, showVoice: true),
       ),
     );
     await _tts.onVoiceOrSpeedChanged();
@@ -214,14 +298,17 @@ class _ReaderPageState extends State<ReaderPage> {
       await _tts.toggle();
     } catch (e) {
       if (!mounted) return;
-      // Only reachable on the local fallback: with no engine installed and no
-      // server set up, there is no voice at all, and either fix is a page away.
+      // With no voice installed and no server set up there is nothing to
+      // read with; the voice's download is on the AI page, not on the 听书
+      // settings page. On iPhone a chapter not spoken yet is spoken from the
+      // panel.
+      final spoken = AppPlatformSupport.speaksByChapter;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$e'),
           action: SnackBarAction(
-            label: context.tr('去设置'),
-            onPressed: _openTtsSettings,
+            label: context.tr(spoken ? '合成' : '去下载'),
+            onPressed: spoken ? _openTtsPanel : _openVoiceDownload,
           ),
         ),
       );
@@ -240,20 +327,44 @@ class _ReaderPageState extends State<ReaderPage> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 
+  /// The page stays in full view above the panel, undimmed, so each change
+  /// shows on the text it changes.
   void _openAppearance() {
-    final t = widget.settings.theme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: t.raisedSurface,
+      barrierColor: Colors.transparent,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       isScrollControlled: true,
-      builder: (_) => SafeArea(
-        child: FractionallySizedBox(
-          heightFactor: 0.88,
-          child: SettingsSheet(settings: widget.settings),
-        ),
-      ),
+      builder: (_) => SettingsSheet(settings: widget.settings),
     );
   }
+
+  /// Under the left thumb with the bars: the night switch, and beside it the
+  /// way to everything else about how the page looks. Always the same widget,
+  /// hidden rather than removed: see [NightToggle.visible].
+  Widget _thumbButtons(ReadingTheme t, {required bool visible}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      NightToggle(settings: widget.settings, floating: true, visible: visible),
+      if (visible) ...[
+        const SizedBox(width: 12),
+        FloatingActionButton.small(
+          heroTag: null,
+          tooltip: context.tr('阅读外观'),
+          elevation: 1,
+          backgroundColor: t.raisedSurface,
+          foregroundColor: t.text,
+          onPressed: _openAppearance,
+          child: const Text(
+            'Aa',
+            translate: false,
+            style: TextStyle(fontSize: 15),
+          ),
+        ),
+      ],
+    ],
+  );
 
   Future<void> _openAnnotations() async {
     final start = await Navigator.push<bool>(
@@ -322,37 +433,58 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  /// The 章间立绘 on screen, between the chapter just finished and the next.
+  /// The 章间立绘 on screen, between the chapter just finished and the next:
+  /// a page of its own, over the start of the chapter it leads into.
   String? _plate;
   int? _plateBook;
   int _plateChapter = -1;
 
-  /// Reading on from a chapter a plate was drawn after shows it first. Only
-  /// reading on: a jump from the table of contents, or back, does not.
+  /// The plate drawn before the chapter being read, if any.
+  String? _plateBefore;
+
+  /// Reading on from a chapter a plate was drawn after shows it first, and
+  /// paging back off the next chapter's first page shows it again
+  /// ([_plateOnTheWayBack]). A jump from the table of contents does not.
   void _onChapter() {
     final book = widget.reader.info?.id;
     final chapter = widget.reader.chapterIndex;
     if (book == null || (book == _plateBook && chapter == _plateChapter)) {
       return;
     }
-    final from = _plateChapter;
-    final onward = book == _plateBook && chapter == from + 1;
+    final onward = book == _plateBook && chapter == _plateChapter + 1;
     _plateBook = book;
     _plateChapter = chapter;
+    _plateBefore = null;
     if (_plate != null) setState(() => _plate = null);
+    if (chapter == 0) return;
     // Any plate drawn for the chapter shows, whatever spacing drew it.
-    if (!onward) return;
-    platePath(bookId: book, chapter: from).then((path) {
+    platePath(bookId: book, chapter: chapter - 1).then((path) {
       if (path == null || !mounted) return;
       if (widget.reader.info?.id != book ||
-          widget.reader.chapterIndex != from + 1) {
+          widget.reader.chapterIndex != chapter) {
         return;
       }
-      setState(() => _plate = path);
+      _plateBefore = path;
+      if (onward) setState(() => _plate = path);
     });
   }
 
   void _closePlate() => setState(() => _plate = null);
+
+  /// Paging back off a chapter's first page: the plate before it comes first.
+  bool _plateOnTheWayBack() {
+    final path = _plateBefore;
+    if (path == null || _plate != null) return false;
+    setState(() => _plate = path);
+    return true;
+  }
+
+  /// Back from the plate: by pages, into the chapter before it, at its end.
+  /// Scrolling never crosses a chapter's edge, so there it only closes.
+  void _plateBack() {
+    _closePlate();
+    if (_isPaged) _pagedKey.currentState?.turn(-1, pastPlate: true);
+  }
 
   /// From the table of contents: the plate after [chapter], over the start of
   /// the chapter it leads into.
@@ -366,18 +498,26 @@ class _ReaderPageState extends State<ReaderPage> {
     if (!mounted || widget.reader.info?.id != info.id) return;
     _plateBook = info.id;
     _plateChapter = widget.reader.chapterIndex;
+    _plateBefore = next == chapter + 1 ? path : null;
     setState(() => _plate = path);
   }
 
-  Widget _withPlate(ReadingTheme t, Widget page) => Stack(
-    children: [
-      page,
-      if (_plate != null)
-        Positioned.fill(
-          child: PlateView(path: _plate!, theme: t, onDone: _closePlate),
-        ),
-    ],
-  );
+  Widget _withPlate(ReadingTheme t, Widget page, {required bool compact}) =>
+      Stack(
+        children: [
+          page,
+          if (_plate != null)
+            Positioned.fill(
+              child: PlateView(
+                path: _plate!,
+                theme: t,
+                compactTapZones: compact,
+                onForward: _closePlate,
+                onBack: _plateBack,
+              ),
+            ),
+        ],
+      );
 
   /// Chapter navigation by hand invalidates the read-aloud queue, so stop it.
   void _navChapter(void Function() go) {
@@ -417,6 +557,7 @@ class _ReaderPageState extends State<ReaderPage> {
         .where((p) => p.itemTrailingEdge > 0)
         .reduce((a, b) => a.itemLeadingEdge < b.itemLeadingEdge ? a : b);
     widget.reader.onVisibleParagraph(top.index);
+    _scrollTop.value = top.index;
   }
 
   /// Page margins for paragraph [i] of the scrolling list. They belong to the
@@ -425,6 +566,110 @@ class _ReaderPageState extends State<ReaderPage> {
     top: i == 0 ? null : 0,
     bottom: i == widget.reader.paragraphs.length - 1 ? 60 : 0,
   );
+
+  Widget _scrollList(
+    EdgeInsets readerPadding,
+    ReadingTheme t, {
+    required bool compact,
+  }) => ListenableBuilder(
+    listenable: _tts,
+    builder: (context, _) => ScrollablePositionedList.builder(
+      key: ValueKey(widget.reader.chapterIndex),
+      initialScrollIndex: widget.reader.initialParagraph,
+      itemScrollController: _itemScroll,
+      itemPositionsListener: _positions,
+      itemCount: widget.reader.paragraphs.length,
+      itemBuilder: (context, i) => WheelGlide(
+        scale: widget.settings.wheelScale,
+        child: Padding(
+          padding: _itemPadding(readerPadding, i),
+          child: ParagraphView(
+            para: widget.reader.paragraphs[i],
+            settings: widget.settings,
+            theme: t,
+            active: _tts.activeParagraph == i,
+            activeStart: _tts.activeParagraph == i ? _tts.activeStart : -1,
+            onTapSentence: compact || !AppPlatformSupport.hasReadAloud
+                ? null
+                : (start) => _tts.seekToSentence(i, start),
+            annotations: widget.reader.annotationsForParagraph(
+              widget.reader.paragraphs[i],
+            ),
+            onShowAnnotations: (annotations) => showAnnotationComments(
+              context,
+              reader: widget.reader,
+              settings: widget.settings,
+              paragraph: widget.reader.paragraphs[i],
+              annotations: annotations,
+            ),
+            annotationMode: _annotationMode,
+            annotationChapter: widget.reader.chapterIndex,
+            onAnnotationSelection: _setAnnotationDraft,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  /// Where the reader is while the bars are away: the chapter, how long it has
+  /// left at this reader's own pace, and when reading by pages, the page.
+  Widget _footer(BookInfo info, ReadingTheme t) {
+    final style = TextStyle(
+      color: t.muted.withValues(alpha: 0.8),
+      fontSize: 11,
+      height: 1.2,
+    );
+    return ListenableBuilder(
+      listenable: Listenable.merge([_pageInfo, _scrollTop]),
+      builder: (context, _) {
+        final page = _pageInfo.value;
+        final minutes = _minutesLeft(page);
+        return Row(
+          children: [
+            Expanded(
+              child: Text(
+                info.chapters[widget.reader.chapterIndex].title,
+                translate: false,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              ),
+            ),
+            if (minutes != null) ...[
+              const SizedBox(width: 12),
+              Text('剩 $minutes 分钟', style: style),
+            ],
+            if (_isPaged) ...[
+              const SizedBox(width: 12),
+              Text('${page.$1}/${page.$2}', translate: false, style: style),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  /// Minutes to the end of this chapter at the measured pace, or null with no
+  /// pace yet. By pages, the pages left stand in for the text left.
+  int? _minutesLeft((int, int) page) {
+    final cpm = _cpm;
+    final paras = widget.reader.paragraphs;
+    if (cpm == null || cpm <= 0 || paras.isEmpty) return null;
+    var chars = 0;
+    if (_isPaged) {
+      final total = paras.fold<int>(0, (n, p) => n + p.text.length);
+      final (current, count) = page;
+      if (count <= 0) return null;
+      chars = total * (count - current + 1) ~/ count;
+    } else {
+      final from = _scrollTop.value.clamp(0, paras.length - 1);
+      for (var i = from; i < paras.length; i++) {
+        chars += paras[i].text.length;
+      }
+    }
+    final minutes = (chars / cpm).ceil();
+    return minutes < 1 ? 1 : minutes;
+  }
 
   /// Scroll by 90% of a viewport — the 10% overlap keeps one line of context,
   /// which is what lets the eye pick up where it left off. Expressed as an
@@ -462,6 +707,10 @@ class _ReaderPageState extends State<ReaderPage> {
       _exitAnnotationMode();
       return;
     }
+    await _close();
+  }
+
+  Future<void> _close() async {
     if (_closing) return;
     _closing = true;
     final bookBeforeClose = _currentBook;
@@ -479,7 +728,14 @@ class _ReaderPageState extends State<ReaderPage> {
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     if (_plate != null) {
-      _closePlate();
+      final key = e.logicalKey;
+      if (key == LogicalKeyboardKey.pageUp ||
+          key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowUp) {
+        _plateBack();
+      } else {
+        _closePlate();
+      }
       return KeyEventResult.handled;
     }
     final key = e.logicalKey;
@@ -519,33 +775,43 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _ttsMenu(ReadingTheme t, {required bool compact}) => ListenableBuilder(
     listenable: Listenable.merge([_tts, TtsPrepare.instance]),
-    builder: (context, _) => SizedBox(
-      width: compact ? 40 : 48,
-      child: PopupMenuButton<String>(
-        tooltip: context.tr('听书'),
-        padding: EdgeInsets.zero,
-        icon: Icon(
-          _tts.playing
-              ? Icons.headset_off_outlined
-              : Icons.headset_mic_outlined,
-          color: _tts.playing ? t.text : t.muted,
-        ),
-        onSelected: (value) => switch (value) {
-          'play' => _toggleTts(),
-          'prepare' => _prepareTts(),
-          _ => _openTtsSettings(),
-        },
-        itemBuilder: (_) => [
-          PopupMenuItem(
-            value: 'play',
-            child: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
-          ),
-          if (_canPrepare)
-            PopupMenuItem(value: 'prepare', child: Text(_prepareLabel)),
-          const PopupMenuDivider(),
-          const PopupMenuItem(value: 'settings', child: Text('听书设置…')),
-        ],
+    builder: (context, _) => AppPlatformSupport.speaksByChapter
+        ? _readerIconButton(
+            tooltip: context.tr('听书'),
+            icon: Icons.headset_mic_outlined,
+            color: _tts.playing ? t.text : t.muted,
+            onPressed: _openTtsPanel,
+            compact: compact,
+          )
+        : _ttsPopup(t, compact: compact),
+  );
+
+  Widget _ttsPopup(ReadingTheme t, {required bool compact}) => SizedBox(
+    width: compact ? 40 : 48,
+    child: PopupMenuButton<String>(
+      tooltip: context.tr('听书'),
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        _tts.playing
+            ? Icons.headset_off_outlined
+            : Icons.headset_mic_outlined,
+        color: _tts.playing ? t.text : t.muted,
       ),
+      onSelected: (value) => switch (value) {
+        'play' => _toggleTts(),
+        'prepare' => _prepareTts(),
+        _ => _openTtsSettings(),
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'play',
+          child: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
+        ),
+        if (_canPrepare)
+          PopupMenuItem(value: 'prepare', child: Text(_prepareLabel)),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'settings', child: Text('听书设置…')),
+      ],
     ),
   );
 
@@ -563,7 +829,9 @@ class _ReaderPageState extends State<ReaderPage> {
               _openAnnotations();
               return;
             case 'tts':
-              _toggleTts();
+              AppPlatformSupport.speaksByChapter
+                  ? _openTtsPanel()
+                  : _toggleTts();
               return;
             case 'ttsPrepare':
               _prepareTts();
@@ -591,11 +859,17 @@ class _ReaderPageState extends State<ReaderPage> {
                       ? Icons.headset_off_outlined
                       : Icons.headset_mic_outlined,
                 ),
-                title: Text(_tts.playing ? '暂停朗读' : '边听边合成'),
+                title: Text(
+                  AppPlatformSupport.speaksByChapter
+                      ? '听书'
+                      : _tts.playing
+                      ? '暂停朗读'
+                      : '边听边合成',
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
-            if (_canPrepare)
+            if (_canPrepare && !AppPlatformSupport.speaksByChapter)
               PopupMenuItem(
                 value: 'ttsPrepare',
                 child: ListTile(
@@ -604,14 +878,15 @@ class _ReaderPageState extends State<ReaderPage> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-            const PopupMenuItem(
-              value: 'ttsSettings',
-              child: ListTile(
-                leading: Icon(Icons.tune),
-                title: Text('听书设置'),
-                contentPadding: EdgeInsets.zero,
+            if (!AppPlatformSupport.speaksByChapter)
+              const PopupMenuItem(
+                value: 'ttsSettings',
+                child: ListTile(
+                  leading: Icon(Icons.tune),
+                  title: Text('听书设置'),
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
-            ),
           ],
         ],
       ),
@@ -631,6 +906,12 @@ class _ReaderPageState extends State<ReaderPage> {
             AppPlatformSupport.layoutForWidth(width) == AppLayoutClass.compact;
         final narrow = width < 380;
         final showControls = !compact || _chromeVisible || _annotationMode;
+        // With the bars away, a quiet line under the text says where you are.
+        final footer = compact && !showControls;
+        // A tap in the middle shows the bars over the text, paged or
+        // scrolling: making room for them would move every line on screen.
+        final barsOverText = compact;
+        final systemInsets = MediaQuery.paddingOf(context);
         final readerPadding = EdgeInsets.fromLTRB(
           compact ? 20 : 28,
           compact ? 12 : 20,
@@ -647,6 +928,21 @@ class _ReaderPageState extends State<ReaderPage> {
             onKeyEvent: _onKey,
             child: Scaffold(
               key: _scaffoldKey,
+              // The edges belong to turning pages: 目录 and 阅读助手 open
+              // only from their buttons, never from a swipe off the edge.
+              drawerEnableOpenDragGesture: false,
+              endDrawerEnableOpenDragGesture: false,
+              // A keyboard over the page (目录's search, 搜索 over the
+              // reader) leaves the text the size it was: shrunk to fit above
+              // it, the pages were cut again for half a screen and stayed so.
+              resizeToAvoidBottomInset: false,
+              extendBodyBehindAppBar: barsOverText,
+              extendBody: barsOverText,
+              floatingActionButton: compact
+                  ? _thumbButtons(t, visible: showControls && !_annotationMode)
+                  : null,
+              floatingActionButtonLocation:
+                  FloatingActionButtonLocation.startFloat,
               appBar: showControls
                   ? AppBar(
                       backgroundColor: t.topBar,
@@ -726,25 +1022,44 @@ class _ReaderPageState extends State<ReaderPage> {
               ),
               body: _withPlate(
                 t,
-                SafeArea(
-                  top: !showControls,
-                  bottom: !showControls,
+                compact: compact,
+                _textArea(
+                  barsOverText: barsOverText,
+                  showControls: showControls,
+                  systemInsets: systemInsets,
                   child: Center(
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
                         maxWidth: widget.settings.pageWidth,
                       ),
                       child: _isPaged
-                          ? PagedReader(
-                              key: _pagedKey,
-                              reader: widget.reader,
-                              settings: widget.settings,
-                              padding: readerPadding,
-                              pageInfo: _pageInfo,
-                              annotationMode: _annotationMode,
-                              onAnnotationSelection: _setAnnotationDraft,
-                              compactTapZones: compact,
-                              onToggleControls: _toggleChrome,
+                          // The footer sits in the page's bottom margin, so
+                          // showing it moves no line.
+                          ? Stack(
+                              children: [
+                                PagedReader(
+                                  key: _pagedKey,
+                                  reader: widget.reader,
+                                  settings: widget.settings,
+                                  padding: readerPadding,
+                                  pageInfo: _pageInfo,
+                                  annotationMode: _annotationMode,
+                                  onAnnotationSelection: _setAnnotationDraft,
+                                  compactTapZones: compact,
+                                  onToggleControls: _toggleChrome,
+                                  onBackOffStart: _plateOnTheWayBack,
+                                  tts: _tts,
+                                ),
+                                if (footer)
+                                  Positioned(
+                                    left: readerPadding.left,
+                                    right: readerPadding.right,
+                                    bottom: 6,
+                                    child: IgnorePointer(
+                                      child: _footer(info, t),
+                                    ),
+                                  ),
+                              ],
                             )
                           // The list is rebuilt per chapter and opens directly on the
                           // restored paragraph: scrolling to it after building would be
@@ -754,63 +1069,26 @@ class _ReaderPageState extends State<ReaderPage> {
                               onTap: compact && !_annotationMode
                                   ? _toggleChrome
                                   : null,
-                              child: ListenableBuilder(
-                                listenable: _tts,
-                                builder: (context, _) =>
-                                    ScrollablePositionedList.builder(
-                                      key: ValueKey(widget.reader.chapterIndex),
-                                      initialScrollIndex:
-                                          widget.reader.initialParagraph,
-                                      itemScrollController: _itemScroll,
-                                      itemPositionsListener: _positions,
-                                      itemCount:
-                                          widget.reader.paragraphs.length,
-                                      itemBuilder: (context, i) => WheelGlide(
-                                        scale: widget.settings.wheelScale,
-                                        child: Padding(
-                                          padding: _itemPadding(
-                                            readerPadding,
-                                            i,
-                                          ),
-                                          child: ParagraphView(
-                                            para: widget.reader.paragraphs[i],
-                                            settings: widget.settings,
-                                            theme: t,
-                                            active: _tts.activeParagraph == i,
-                                            activeStart:
-                                                _tts.activeParagraph == i
-                                                ? _tts.activeStart
-                                                : -1,
-                                            onTapSentence:
-                                                compact ||
-                                                    !AppPlatformSupport
-                                                        .hasReadAloud
-                                                ? null
-                                                : (start) => _tts
-                                                      .seekToSentence(i, start),
-                                            annotations: widget.reader
-                                                .annotationsForParagraph(
-                                                  widget.reader.paragraphs[i],
-                                                ),
-                                            onShowAnnotations: (annotations) =>
-                                                showAnnotationComments(
-                                                  context,
-                                                  reader: widget.reader,
-                                                  settings: widget.settings,
-                                                  paragraph: widget
-                                                      .reader
-                                                      .paragraphs[i],
-                                                  annotations: annotations,
-                                                ),
-                                            annotationMode: _annotationMode,
-                                            annotationChapter:
-                                                widget.reader.chapterIndex,
-                                            onAnnotationSelection:
-                                                _setAnnotationDraft,
-                                          ),
-                                        ),
-                                      ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: _scrollList(
+                                      readerPadding,
+                                      t,
+                                      compact: compact,
                                     ),
+                                  ),
+                                  if (footer)
+                                    Padding(
+                                      padding: EdgeInsets.fromLTRB(
+                                        readerPadding.left,
+                                        4,
+                                        readerPadding.right,
+                                        6,
+                                      ),
+                                      child: _footer(info, t),
+                                    ),
+                                ],
                               ),
                             ),
                     ),
@@ -846,6 +1124,17 @@ class _ReaderPageState extends State<ReaderPage> {
       },
     );
   }
+
+  /// The text keeps the same box whether the bars are up or not when they lie
+  /// over it; otherwise it gives them room.
+  Widget _textArea({
+    required bool barsOverText,
+    required bool showControls,
+    required EdgeInsets systemInsets,
+    required Widget child,
+  }) => barsOverText
+      ? Padding(padding: systemInsets, child: child)
+      : SafeArea(top: !showControls, bottom: !showControls, child: child);
 
   Widget _annotationBar(ReadingTheme t) {
     final selected = _annotationDraft != null;
@@ -937,7 +1226,12 @@ class _ReaderPageState extends State<ReaderPage> {
                   onPressed: _tts.toggle,
                 ),
           Expanded(
-            child: total > 1
+            child: _tts.buffering && !_tts.heard
+                ? Text(
+                    '启动中…',
+                    style: TextStyle(color: t.muted, fontSize: 13),
+                  )
+                : total > 1
                 ? SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 3,
@@ -1245,7 +1539,7 @@ class _ParagraphViewState extends State<ParagraphView> {
     final text = para.text;
     final spans = <InlineSpan>[];
     if (settings.firstLineIndent) {
-      spans.add(const TextSpan(text: '　　'));
+      spans.add(const TextSpan(text: indentGlyphs, style: indentStyle));
     }
     for (final seg in sentenceSegments(text)) {
       final tap = widget.onTapSentence == null
@@ -1323,6 +1617,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           child: Text(
             para.text,
             translate: false,
+            textAlign: TextAlign.justify,
             style: TextStyle(
               color: theme.muted,
               fontFamily: settings.resolvedReadingFont,
@@ -1368,7 +1663,12 @@ class _ParagraphViewState extends State<ParagraphView> {
                   );
                 },
               )
-            : Text.rich(TextSpan(children: _sentenceSpans()), style: textStyle);
+            : Text.rich(
+                TextSpan(children: _sentenceSpans()),
+                style: textStyle,
+                textAlign: TextAlign.justify,
+                semanticsLabel: para.text,
+              );
         return Padding(
           padding: EdgeInsets.only(bottom: settings.paragraphSpacing),
           child: Column(
@@ -1409,10 +1709,22 @@ class _ParagraphViewState extends State<ParagraphView> {
   }
 }
 
-class SettingsSheet extends StatelessWidget {
+/// 阅读外观: a panel low on the screen, with the page above it in full view so
+/// each change shows on the text as it is made. What is changed most comes
+/// first; spacing and the rest are one tap further in.
+class SettingsSheet extends StatefulWidget {
   final ReadingSettings settings;
 
   const SettingsSheet({super.key, required this.settings});
+
+  @override
+  State<SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<SettingsSheet> {
+  bool _more = false;
+
+  ReadingSettings get settings => widget.settings;
 
   @override
   Widget build(BuildContext context) {
@@ -1420,141 +1732,259 @@ class SettingsSheet extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final t = settings.theme;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('翻页方式', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 8),
-              Row(
+        // Painted here rather than by the sheet, so a new background shows on
+        // the panel too the moment it is picked.
+        return Material(
+          color: t.raisedSurface,
+          elevation: 8,
+          shadowColor: Colors.black45,
+          surfaceTintColor: Colors.transparent,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+              child: _more ? _spacing(context, t) : _main(t),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _main(ReadingTheme t) {
+    final size = settings.fontSize.round();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _Stepper(
+              theme: t,
+              value: '$size',
+              less: const Text('A-', translate: false),
+              more: const Text('A+', translate: false),
+              onLess: size > 12 ? () => settings.setFontSize(size - 1.0) : null,
+              onMore: size < 48 ? () => settings.setFontSize(size + 1.0) : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  style: TextButton.styleFrom(foregroundColor: t.text),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FontPage(settings: settings),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          FontManager.instance.displayNameForFamily(
+                            settings.fontFamily,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, size: 18, color: t.muted),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        ThemeSwatches(settings: settings),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
                 children: [
                   for (final (mode, label) in [
                     (PageMode.scroll, '上下滚动'),
                     (PageMode.paged, '左右翻页'),
                   ])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: ChoiceChip(
-                        label: Text(
-                          label,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        selected: settings.pageMode == mode,
-                        onSelected: (_) => settings.setPageMode(mode),
-                      ),
+                    ChoiceChip(
+                      label: Text(label, style: const TextStyle(fontSize: 13)),
+                      selected: settings.pageMode == mode,
+                      onSelected: (_) => settings.setPageMode(mode),
                     ),
                 ],
               ),
-              const SizedBox(height: 16),
-              Text('背景', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 10),
-              ThemeSwatches(settings: settings),
-              const SizedBox(height: 20),
-              Text('字体', style: TextStyle(color: t.muted, fontSize: 12)),
-              const SizedBox(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                minTileHeight: 46,
-                leading: Icon(Icons.font_download_outlined, color: t.muted),
-                title: Text(
-                  FontManager.instance.displayNameForFamily(
-                    settings.fontFamily,
-                  ),
-                  style: TextStyle(color: t.text, fontSize: 14),
-                ),
-                trailing: Icon(Icons.chevron_right, color: t.muted),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FontPage(settings: settings),
-                  ),
-                ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: t.muted),
+              onPressed: () => setState(() => _more = true),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('更多', style: TextStyle(fontSize: 13)),
+                  Icon(Icons.chevron_right, size: 18, color: t.muted),
+                ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                '字号 ${settings.fontSize.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.fontSize,
-                min: 12,
-                max: 34,
-                divisions: 22,
-                onChanged: settings.setFontSize,
-              ),
-              Text(
-                '行距 ${settings.lineHeight.toStringAsFixed(1)}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.lineHeight,
-                min: 1.2,
-                max: 2.6,
-                divisions: 14,
-                onChanged: settings.setLineHeight,
-              ),
-              Text(
-                '页宽 ${settings.pageWidth.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.pageWidth,
-                min: 520,
-                max: 1080,
-                divisions: 14,
-                onChanged: settings.setPageWidth,
-              ),
-              if (AppPlatformSupport.isDesktop &&
-                  settings.pageMode == PageMode.scroll) ...[
-                Text(
-                  '滚轮幅度 ${(settings.wheelScale * 100).round()}%',
-                  style: TextStyle(color: t.muted, fontSize: 12),
-                ),
-                Slider(
-                  value: settings.wheelScale,
-                  min: 0.2,
-                  max: 1.0,
-                  divisions: 8,
-                  onChanged: settings.setWheelScale,
-                ),
-              ],
-              Text(
-                '段距 ${settings.paragraphSpacing.toInt()}',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-              Slider(
-                value: settings.paragraphSpacing,
-                min: 0,
-                max: 32,
-                divisions: 16,
-                onChanged: settings.setParagraphSpacing,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(
-                  '首行缩进',
-                  style: TextStyle(color: t.muted, fontSize: 13),
-                ),
-                value: settings.firstLineIndent,
-                onChanged: settings.setFirstLineIndent,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(
-                  '底栏显示全书节奏',
-                  style: TextStyle(color: t.muted, fontSize: 13),
-                ),
-                value: settings.paceStrip,
-                onChanged: settings.setPaceStrip,
-              ),
-            ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _spacing(BuildContext context, ReadingTheme t) {
+    final line = (settings.lineHeight * 10).round();
+    final gap = settings.paragraphSpacing.round();
+    // A phone's screen is narrower than the narrowest page, so the page's
+    // width only means something on a wider one.
+    final wide = MediaQuery.sizeOf(context).width > 520;
+    final label = TextStyle(color: t.muted, fontSize: 13);
+    Widget row(String name, Widget control) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(name, style: label)),
+          control,
+        ],
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IconButton(
+          tooltip: context.tr('返回'),
+          icon: const Icon(Icons.arrow_back),
+          color: t.muted,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          onPressed: () => setState(() => _more = false),
+        ),
+        row(
+          '行距',
+          _Stepper(
+            theme: t,
+            value: (line / 10).toStringAsFixed(1),
+            less: const Icon(Icons.remove, size: 18),
+            more: const Icon(Icons.add, size: 18),
+            onLess: line > 12
+                ? () => settings.setLineHeight((line - 1) / 10)
+                : null,
+            onMore: line < 26
+                ? () => settings.setLineHeight((line + 1) / 10)
+                : null,
           ),
-        );
-      },
+        ),
+        row(
+          '段距',
+          _Stepper(
+            theme: t,
+            value: '$gap',
+            less: const Icon(Icons.remove, size: 18),
+            more: const Icon(Icons.add, size: 18),
+            onLess: gap > 0
+                ? () => settings.setParagraphSpacing(gap - 2.0)
+                : null,
+            onMore: gap < 32
+                ? () => settings.setParagraphSpacing(gap + 2.0)
+                : null,
+          ),
+        ),
+        if (wide) ...[
+          const SizedBox(height: 6),
+          Text('页宽 ${settings.pageWidth.toInt()}', style: label),
+          Slider(
+            value: settings.pageWidth,
+            min: 520,
+            max: 1080,
+            divisions: 14,
+            onChanged: settings.setPageWidth,
+          ),
+        ],
+        if (AppPlatformSupport.isDesktop &&
+            settings.pageMode == PageMode.scroll) ...[
+          Text(
+            '滚轮幅度 ${(settings.wheelScale * 100).round()}%',
+            style: label,
+          ),
+          Slider(
+            value: settings.wheelScale,
+            min: 0.2,
+            max: 1.0,
+            divisions: 8,
+            onChanged: settings.setWheelScale,
+          ),
+        ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text('首行缩进', style: label),
+          value: settings.firstLineIndent,
+          onChanged: settings.setFirstLineIndent,
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text('底栏显示全书节奏', style: label),
+          value: settings.paceStrip,
+          onChanged: settings.setPaceStrip,
+        ),
+      ],
+    );
+  }
+}
+
+/// [less] value [more]: one step a tap, exact where a slider leaves the thumb
+/// hunting for the setting.
+class _Stepper extends StatelessWidget {
+  final ReadingTheme theme;
+  final String value;
+  final Widget less;
+  final Widget more;
+  final VoidCallback? onLess;
+  final VoidCallback? onMore;
+
+  const _Stepper({
+    required this.theme,
+    required this.value,
+    required this.less,
+    required this.more,
+    required this.onLess,
+    required this.onMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = OutlinedButton.styleFrom(
+      minimumSize: const Size(52, 36),
+      padding: EdgeInsets.zero,
+      foregroundColor: theme.text,
+      side: BorderSide(color: theme.muted.withValues(alpha: 0.35)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton(style: style, onPressed: onLess, child: less),
+        SizedBox(
+          width: 48,
+          child: Text(
+            value,
+            translate: false,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: theme.text, fontSize: 14),
+          ),
+        ),
+        OutlinedButton(style: style, onPressed: onMore, child: more),
+      ],
     );
   }
 }

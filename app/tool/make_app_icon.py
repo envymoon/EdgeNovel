@@ -47,12 +47,12 @@ def distance(kind, g, px, py):
     return rounded_rect(px, py, *g)
 
 
-def tile(size):
+def tile(size, inset=INSET, corner=CORNER):
     """The icon as a rounded teal tile on a transparent square, RGBA bytes."""
     centres = np.arange(size) + 0.5
     px, py = np.meshgrid(centres, centres)
-    side = size * (1 - 2 * INSET)
-    edge = size * INSET
+    side = size * (1 - 2 * inset)
+    edge = size * inset
     colour = np.zeros((size, size, 3))
     alpha = np.zeros((size, size))
 
@@ -62,7 +62,7 @@ def tile(size):
         colour[:] = colour * (1 - a[..., None]) + rgb(c) * a[..., None]
         return a
 
-    a = paint(rounded_rect(px, py, edge, edge, side, side, side * CORNER), TEAL, 1)
+    a = paint(rounded_rect(px, py, edge, edge, side, side, side * corner), TEAL, 1)
     alpha[:] = a
     # The 1024 artwork maps onto the tile.
     unit = side / 1024
@@ -78,7 +78,7 @@ def tile(size):
 
 
 def png(rgba):
-    h, w, _ = rgba.shape
+    h, w, channels = rgba.shape
     rows = b''.join(b'\0' + rgba[y].tobytes() for y in range(h))
 
     def chunk(kind, data):
@@ -86,7 +86,7 @@ def png(rgba):
         return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body))
 
     return (b'\x89PNG\r\n\x1a\n'
-            + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
+            + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6 if channels == 4 else 2, 0, 0, 0))
             + chunk(b'IDAT', zlib.compress(rows, 9))
             + chunk(b'IEND', b''))
 
@@ -161,6 +161,15 @@ def main():
           '    <background android:drawable="@color/ic_launcher_background" />\n'
           '    <foreground android:drawable="@drawable/ic_launcher_foreground" />\n'
           '</adaptive-icon>\n')
+    # iOS rounds the corners itself and wants one opaque 1024 square.
+    ios = 'ios/Runner/Assets.xcassets/AppIcon.appiconset'
+    write(f'{ios}/Icon-App-1024x1024@1x.png', png(tile(1024, 0, 0)[..., :3]))
+    write(f'{ios}/Contents.json',
+          '{\n  "images" : [\n    {\n'
+          '      "filename" : "Icon-App-1024x1024@1x.png",\n'
+          '      "idiom" : "universal",\n      "platform" : "ios",\n'
+          '      "size" : "1024x1024"\n    }\n  ],\n'
+          '  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n')
     print('icons written')
 
 

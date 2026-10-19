@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'analysis_run_card.dart';
 import 'app_localizations.dart';
 import 'cover_generator.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
@@ -148,7 +149,9 @@ class _PlatePageState extends State<PlatePage> {
                         context,
                         widget.settings,
                         hasModel: coverGeneratorReady,
-                        missing: '需要先下载生图引擎和模型',
+                        missing: AppPlatformSupport.hasBundledImageEngine
+                            ? '需要先下载生图模型'
+                            : '需要先下载生图引擎和模型',
                         start: () => reader.drawPlatesFor(widget.book, every),
                       ),
                       onPause: () => reader.stopPlatesFor(id),

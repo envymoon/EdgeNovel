@@ -2,7 +2,9 @@
 //! over loopback HTTP — deliberately not a compiled-in binding: the engine
 //! updates independently of the app, crashes without taking the reader down,
 //! and is swappable for anything speaking the same API (on Android it will be
-//! the same llama.cpp behind a different launcher).
+//! the same llama.cpp behind a different launcher). iOS allows no child
+//! processes, so there the same server runs on a thread ([`crate::engine_thread`])
+//! and is spoken to the same way.
 //!
 //! The model only ever gets closed tasks: bounded input, bounded output, a
 //! verifiable shape. Free generation is not on the menu.
@@ -11,9 +13,11 @@ use crate::api::book::{self, SearchHit};
 use crate::frb_generated::StreamSink;
 use novel_core::chunk;
 use serde_json::{json, Value};
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+#[cfg(not(in_process_engine))]
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -29,6 +33,12 @@ const EMBED_PORT: u16 = 8738;
 const ENGINE_EXE: &str = "llama-server.exe";
 #[cfg(not(windows))]
 const ENGINE_EXE: &str = "llama-server";
+
+/// A running engine: a child process, or on iOS (and a Mac) a thread of this one.
+#[cfg(not(in_process_engine))]
+type Engine = Child;
+#[cfg(in_process_engine)]
+type Engine = crate::engine_thread::Engine;
 
 static AI_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// One flag per long-running pass. Enrichment and indexing are different
@@ -233,8 +243,8 @@ pub fn ai_device_state() -> AiDeviceState {
     }
 }
 
-fn engine_child() -> &'static Mutex<Option<Child>> {
-    static C: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+fn engine_child() -> &'static Mutex<Option<Engine>> {
+    static C: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
@@ -249,8 +259,8 @@ fn engine_state() -> &'static Mutex<Option<ChatEngineState>> {
     C.get_or_init(Default::default)
 }
 
-fn embed_child() -> &'static Mutex<Option<Child>> {
-    static C: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+fn embed_child() -> &'static Mutex<Option<Engine>> {
+    static C: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
@@ -278,7 +288,10 @@ fn find_engine(dir: &Path) -> Option<PathBuf> {
         let _ = dir;
         return crate::android_engine::executable();
     }
-    #[cfg(not(target_os = "android"))]
+    // Compiled into the app: there is no file to find, only an iOS too old for it.
+    #[cfg(in_process_engine)]
+    return crate::engine_thread::supported().then(|| dir.to_path_buf());
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     {
         fn walk(dir: &Path, depth: u32) -> Option<PathBuf> {
             let entries = std::fs::read_dir(dir).ok()?;
@@ -443,7 +456,9 @@ pub fn delete_model(embed: bool) -> Result<(), String> {
 pub fn delete_engine() -> Result<(), String> {
     #[cfg(target_os = "android")]
     return Err("安卓推理引擎随应用安装，不能单独删除".into());
-    #[cfg(not(target_os = "android"))]
+    #[cfg(in_process_engine)]
+    return Err("推理引擎随应用安装，不能单独删除".into());
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     {
         let dir = ai_dir()?;
         stop_ai();
@@ -461,8 +476,8 @@ pub fn delete_engine() -> Result<(), String> {
 
 fn health(port: u16) -> bool {
     // /health and /v1/models are public in llama.cpp. Use a protected endpoint
-    // on Android so a different llama-server instance cannot be reused.
-    let path = if cfg!(target_os = "android") {
+    // on phones so a different llama-server instance cannot be reused.
+    let path = if cfg!(any(target_os = "android", in_process_engine)) {
         "/props"
     } else {
         "/health"
@@ -481,7 +496,7 @@ fn health(port: u16) -> bool {
 /// a caller that cannot say anything during it looks hung.
 fn ensure(
     port: u16,
-    slot: &'static Mutex<Option<Child>>,
+    slot: &'static Mutex<Option<Engine>>,
     model: PathBuf,
     extra: &[&str],
     #[cfg(target_os = "android")] startup_generation: u64,
@@ -495,7 +510,7 @@ fn ensure(
         return Ok(());
     }
     let dir = ai_dir()?;
-    let exe = find_engine(dir).ok_or("引擎未安装（缺 llama-server）")?;
+    let exe = find_engine(dir).ok_or("引擎未安装")?;
 
     // The model and prompts stay identical between profiles. Only scheduling
     // pressure changes, so quiet mode never buys comfort by degrading results.
@@ -533,12 +548,13 @@ fn ensure(
     };
     let poll = if config.mode == 2 { "50" } else { "0" };
 
-    let mut cmd = Command::new(&exe);
-    cmd.args(["-m"])
-        .arg(&model)
-        .args([
+    let port_arg = port.to_string();
+    let threads_arg = threads.to_string();
+    let mut args: Vec<&OsStr> = vec![OsStr::new("-m"), model.as_os_str()];
+    args.extend(
+        [
             "--port",
-            &port.to_string(),
+            &port_arg,
             "--host",
             "127.0.0.1",
             // Offload every layer when a GPU backend (Vulkan/CUDA) is present;
@@ -546,10 +562,10 @@ fn ensure(
             "-ngl",
             gpu_layers,
             "-t",
-            &threads.to_string(),
+            &threads_arg,
             // Prompt ingestion must obey the same ceiling as generation.
             "-tb",
-            &threads.to_string(),
+            &threads_arg,
             // One background task at a time. Parallel slots increase KV memory
             // and make two "quiet" jobs compete for the same thermal budget.
             "-np",
@@ -565,41 +581,67 @@ fn ensure(
             "--prio",
             priority,
             "--no-webui",
-        ])
-        .args(extra)
-        .current_dir(exe.parent().unwrap_or(dir))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(target_os = "android")]
-    {
-        cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
-            .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
-            .args(["--threads-http", "2"]);
-        // Startup diagnostics only; prompts and model responses are not logged.
-        let cache = extra
-            .windows(2)
-            .find(|pair| pair[0] == "--cache-type-k")
-            .map(|pair| pair[1])
-            .unwrap_or("embed");
-        let log = std::fs::File::create(dir.join(format!(".novel-engine-{port}-{cache}.log")))
-            .map_err(|e| format!("无法创建引擎日志: {e}"))?;
-        cmd.stderr(Stdio::from(log));
+        ]
+        .map(OsStr::new),
+    );
+    args.extend(extra.iter().map(OsStr::new));
+    // -ngl 0 still hands big prompt batches to the GPU; off screen on iOS
+    // even that is refused, so on the CPU the GPU is not used at all.
+    #[cfg(in_process_engine)]
+    if config.backend == 1 {
+        args.extend(["--device", "none"].map(OsStr::new));
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
-        cmd.creation_flags(0x0800_0000 | 0x0000_4000);
-    }
-    let child = cmd.spawn().map_err(|e| format!("启动引擎失败: {e}"))?;
-    // Before anything else can go wrong: an engine that outlives the app holds
-    // gigabytes for nobody. See [`crate::job`].
-    crate::job::adopt(&child);
+
+    #[cfg(not(in_process_engine))]
+    let child = {
+        let mut cmd = Command::new(&exe);
+        cmd.args(&args)
+            .current_dir(exe.parent().unwrap_or(dir))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "android")]
+        {
+            cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
+                .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
+                .args(["--threads-http", "2"]);
+            // Startup diagnostics only; prompts and model responses are not logged.
+            let cache = extra
+                .windows(2)
+                .find(|pair| pair[0] == "--cache-type-k")
+                .map(|pair| pair[1])
+                .unwrap_or("embed");
+            let log = std::fs::File::create(dir.join(format!(".novel-engine-{port}-{cache}.log")))
+                .map_err(|e| format!("无法创建引擎日志: {e}"))?;
+            cmd.stderr(Stdio::from(log));
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            cmd.creation_flags(0x0800_0000 | 0x0000_4000);
+        }
+        let child = cmd.spawn().map_err(|e| format!("启动引擎失败: {e}"))?;
+        // Before anything else can go wrong: an engine that outlives the app holds
+        // gigabytes for nobody. See [`crate::job`].
+        crate::job::adopt(&child);
+        child
+    };
+    #[cfg(in_process_engine)]
+    let child = {
+        let _ = &exe;
+        let key = crate::engine_thread::api_key()?;
+        let args: Vec<&OsStr> = args
+            .into_iter()
+            .chain(["--api-key", key, "--threads-http", "2"].map(OsStr::new))
+            .collect();
+        crate::engine_thread::Engine::start(port, &args)
+            .map_err(|e| format!("启动引擎失败: {e}"))?
+    };
     *slot.lock().unwrap() = Some(child);
 
     // Model load is disk-bound; a large one on a cold disk takes a while.
-    let load_ticks = if cfg!(target_os = "android") {
+    let load_ticks = if cfg!(any(target_os = "android", in_process_engine)) {
         1200
     } else {
         240
@@ -692,10 +734,12 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(in_process_engine)]
+    let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
     const F16_KV: &str = "f16";
-    #[cfg(any(windows, target_os = "android"))]
+    #[cfg(any(windows, target_os = "android", in_process_engine))]
     const PREFERRED_KV: &str = "q8_0";
-    #[cfg(not(any(windows, target_os = "android")))]
+    #[cfg(not(any(windows, target_os = "android", in_process_engine)))]
     const PREFERRED_KV: &str = F16_KV;
 
     if health(PORT)
@@ -735,7 +779,7 @@ fn ensure_engine(context: u32) -> Result<(), String> {
             // F16 cache configuration.
             stop_chat_engine();
             start(F16_KV).map_err(|f16_error| {
-                format!("Q8 KV 启动失败：{q8_error}；F16 KV 回退也失败：{f16_error}")
+                format!("引擎启动失败：{q8_error}；{f16_error}")
             })?;
             F16_KV
         }
@@ -760,6 +804,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
+    #[cfg(in_process_engine)]
+    let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
     ensure(
         EMBED_PORT,
@@ -871,7 +917,12 @@ pub(crate) fn http(
         "Authorization: Bearer {}\r\n",
         crate::android_engine::api_key()?
     );
-    #[cfg(not(target_os = "android"))]
+    #[cfg(in_process_engine)]
+    let authorization = format!(
+        "Authorization: Bearer {}\r\n",
+        crate::engine_thread::api_key()?
+    );
+    #[cfg(not(any(target_os = "android", in_process_engine)))]
     let authorization = "";
     let req = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_s}",
@@ -921,9 +972,9 @@ fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-/// The tuned novel logic above this boundary is platform-independent. Windows
-/// currently talks to a managed llama-server process; iOS will provide an
-/// in-process llama.cpp implementation behind the same four operations.
+/// The tuned novel logic above this boundary is platform-independent. Every
+/// platform talks to the same llama-server: a managed process, or on iOS a
+/// thread of the app.
 #[flutter_rust_bridge::frb(ignore)]
 trait LocalInferenceBackend: Sync {
     #[flutter_rust_bridge::frb(ignore)]
@@ -981,21 +1032,7 @@ fn inference_backend() -> &'static dyn LocalInferenceBackend {
 /// the prompt did not fit, or the answer ran into the window's end — which the
 /// engine reports as an ordinary finish, so it is checked here.
 fn summarize_excerpt(excerpt: &str, context: u32) -> Result<Option<String>, String> {
-    let body = json!({
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是小说章节摘要工具。用一句简体中文陈述句概括这一章发生的主要情节，不超过40个字。只输出这一句话：不要前缀、不要引号、不要解释、不要换行。"
-            },
-            {
-                "role": "user",
-                "content": format!("{excerpt}\n\n用一句话（不超过40字）概括本章情节。/no_think")
-            }
-        ],
-        "temperature": 0.0,
-        "max_tokens": 120,
-    });
-    let (status, resp) = inference_backend().chat_completion(&body, 300)?;
+    let (status, resp) = inference_backend().chat_completion(&summary_request(excerpt), 300)?;
     if status == 400 && String::from_utf8_lossy(&resp).contains("exceed_context_size_error") {
         return Ok(None);
     }
@@ -1010,6 +1047,23 @@ fn summarize_excerpt(excerpt: &str, context: u32) -> Result<Option<String>, Stri
         .as_str()
         .ok_or("引擎响应缺少内容")?;
     Ok(Some(clean_summary(content)))
+}
+
+fn summary_request(excerpt: &str) -> Value {
+    json!({
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是小说章节摘要工具。用一句简体中文陈述句概括这一章发生的主要情节，不超过40个字。只输出这一句话：不要前缀、不要引号、不要解释、不要换行。"
+            },
+            {
+                "role": "user",
+                "content": format!("{excerpt}\n\n用一句话（不超过40字）概括本章情节。/no_think")
+            }
+        ],
+        "temperature": 0.0,
+        "max_tokens": 120,
+    })
 }
 
 /// The model's paperwork, removed: think-block residue, wrapper quotes, label
@@ -1372,210 +1426,6 @@ fn summarize_person(
     Ok(format!("{name}多次出场，模型没能概括出 TA 的为人和经历。"))
 }
 
-/// A background needs this many chapter summaries that name the person before
-/// they are worth more than the person's own sentences. Below it the person is
-/// a walk-on the summaries hardly mention, and the sentences say more.
-const MIN_DIGEST_LINES: usize = 8;
-/// Lines per model call: about 3k tokens of 「概括：……」, which leaves the 8k
-/// window room for thinking.
-const PHASE_LINES: usize = 80;
-/// Beyond this many stages a lead's lines are thinned evenly instead: eight
-/// stages are enough to say how a life went, and each one is another call.
-const MAX_PHASES: usize = 8;
-
-/// A background, and what it was written from (`summaries`, `mixed` or
-/// `sentences`, as stored). None when the run was cancelled part-way.
-///
-/// Uses what is there. With 章节分析 run, the person's story is read from the
-/// chapter summaries that name them — each written with the whole chapter in
-/// view, so they carry the plot the sampled sentences miss, and none of the
-/// one-scene clothes or bystander descriptions that sentences drag in. Chapters
-/// without a summary are filled with the person's own sentences from those
-/// chapters. Without 章节分析, the sentences alone, as before.
-///
-/// The two sources are good at different things, so each is asked for what it
-/// knows, and the answers are kept as two paragraphs: who the person is, from
-/// their own sentences, then what happened to them, from the summaries. The
-/// summaries rarely say where someone started, and a small model reading only
-/// them opens with whatever title the story ends on (陈平安 came back as 大骊国师
-/// who 守泥瓶巷老宅 — true only of the last hundred chapters). Asked to merge the
-/// two paragraphs into one, it copied the first and dropped the story, so they
-/// are not merged.
-///
-/// A long life is read in stages and then put together: a small model given
-/// 900 summaries at once could not hold them, and one given a thinned sample
-/// would be back to reading scattered moments.
-fn write_background(
-    name: &str,
-    aliases: &[String],
-    evidence: &[(usize, String)],
-    digest: &[(usize, String)],
-) -> Result<Option<(String, &'static str)>, String> {
-    let names: Vec<&str> = std::iter::once(name)
-        .chain(aliases.iter().map(String::as_str))
-        .collect();
-    let mut lines: Vec<(usize, String)> = digest
-        .iter()
-        .filter(|(_, t)| names.iter().any(|n| t.contains(n)))
-        .map(|(c, t)| (*c, format!("概括：{t}")))
-        .collect();
-    if lines.len() < MIN_DIGEST_LINES {
-        let text = summarize_person(name, aliases, evidence)?;
-        return Ok(Some((text, "sentences")));
-    }
-    let covered: std::collections::HashSet<usize> = digest.iter().map(|(c, _)| *c).collect();
-    let from_digest = lines.len();
-    lines.extend(
-        evidence
-            .iter()
-            .filter(|(c, _)| !covered.contains(c))
-            .map(|(c, t)| (*c, format!("原文：{t}"))),
-    );
-    let source = if lines.len() == from_digest {
-        "summaries"
-    } else {
-        "mixed"
-    };
-    lines.sort_by_key(|(c, _)| *c);
-
-    let cap = PHASE_LINES * MAX_PHASES;
-    if lines.len() > cap {
-        let n = lines.len();
-        lines = (0..cap).map(|i| lines[i * n / cap].clone()).collect();
-    }
-    let who = summarize_person(name, aliases, evidence)?;
-    if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-        return Ok(None);
-    }
-    let phases = lines.len().div_ceil(PHASE_LINES);
-    let story = if phases == 1 {
-        story_from_lines(name, aliases, &lines)?
-    } else {
-        let size = lines.len().div_ceil(phases);
-        let mut stages = Vec::new();
-        for chunk in lines.chunks(size) {
-            if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-                return Ok(None);
-            }
-            stages.push(stage_from_lines(name, aliases, chunk)?);
-        }
-        if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        story_from_stages(name, aliases, &stages)?
-    };
-    Ok(Some((format!("{who}\n{story}"), source)))
-}
-
-fn also_called(aliases: &[String]) -> String {
-    if aliases.is_empty() {
-        String::new()
-    } else {
-        format!("（书中也称作 {}）", aliases.join("、"))
-    }
-}
-
-/// The ground rules every digest prompt shares, worded for any genre. Two
-/// wordings were tried and dropped on real books: asking outright for the
-/// person's 身份 made the model invent one when the summaries never said it
-/// (宁姚 became a 武术家), and numbering each line made it list chapters back
-/// instead of summarizing them.
-const DIGEST_RULES: &str = "不要逐章罗列，也不要写出章节号，要概括成连贯的几句话；\
-不要用「探索未知」「展现智慧」「经历成长」这类空泛的说法；\
-只写这个人本人的事，同一句里别的人物的身份、外貌和举动不要安到 TA 身上；\
-只依据给出的内容，不要编造、不要推测、不要联想到别的作品；\
-一时的衣着打扮和琐碎动作不用写；不要评价 TA 是主角还是配角、是好人还是坏人。\
-先在心里分析，最后只输出那段文字，不要复述原文、不要分点、不要加引号。";
-
-/// One considered pass, retried once if it comes back empty (all thinking, no
-/// answer) — the same footing as [`summarize_person`].
-fn ask_for_text(system: &str, user: &str, max_chars: usize) -> Result<String, String> {
-    for _ in 0..2 {
-        let raw = chat_once(system, user, 1400, 0.4)?;
-        let text = after_think(&raw, max_chars);
-        if !text.is_empty() {
-            return Ok(text);
-        }
-    }
-    Err("模型没有给出可用的概括".into())
-}
-
-fn joined(lines: &[(usize, String)]) -> String {
-    lines
-        .iter()
-        .map(|(_, t)| t.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// One call: the whole of a short story, straight to what happened. Never who
-/// the person is — that paragraph comes from their own sentences — but a rise
-/// or fall in standing is part of the story (陈平安 becoming 大骊国师 at the end).
-fn story_from_lines(
-    name: &str,
-    aliases: &[String],
-    lines: &[(usize, String)],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按章节顺序给出小说里与【{name}】{also}有关的内容：\
-         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
-         请通读全部内容，用三四句话（不超过 120 字）按时间顺序写出 TA 一路上的经历：\
-         不用介绍 TA 是谁，从最早的事写起，一直写到最后，身份地位的变化也算经历。\
-         要点：{DIGEST_RULES}"
-    );
-    let user = format!(
-        "{}\n\n用三四句话写出【{name}】一路上的经历。",
-        joined(lines)
-    );
-    ask_for_text(&system, &user, 160)
-}
-
-/// One stage of a long story: what happened to the person in these chapters.
-///
-/// The stage is not named by its chapters, here or in [story_from_stages]:
-/// told 「第 83–163 章」 the model wrote the numbers back, the rule against it
-/// notwithstanding — in 2 of 9 backgrounds for a book's three leads, 4 of 9 on
-/// the summaries before, and none of 18 without them.
-fn stage_from_lines(
-    name: &str,
-    aliases: &[String],
-    lines: &[(usize, String)],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按章节顺序给出小说其中一段里与【{name}】{also}有关的内容：\
-         「概括」是那一章情节的一句话概括，「原文」是书中的原句。\
-         请通读，用两三句话（不超过 80 字）写出【{name}】在这一段里的处境和经历，\
-         身份地位的变化也要写。要点：{DIGEST_RULES}"
-    );
-    let user = format!(
-        "{}\n\n用两三句话写出【{name}】在这一段的经历。",
-        joined(lines)
-    );
-    ask_for_text(&system, &user, 120)
-}
-
-/// The stages of a long story, joined into one account of what happened —
-/// the last stage as much as the first, which is where a background read from
-/// scattered moments used to stop.
-fn story_from_stages(
-    name: &str,
-    aliases: &[String],
-    stages: &[String],
-) -> Result<String, String> {
-    let also = also_called(aliases);
-    let system = format!(
-        "你是小说人物档案整理助手。下面按时间顺序给出【{name}】{also}在小说各个阶段的经历。\
-         请把它们按时间顺序连起来，用三四句话（不超过 120 字）写出 TA 一路上的经历：\
-         不用介绍 TA 是谁，从最早的阶段写起，一直写到最后一个阶段，后面的阶段同样重要，\
-         身份地位的变化也算经历。要点：{DIGEST_RULES}"
-    );
-    let body = stages.join("\n");
-    let user = format!("{body}\n\n用三四句话写出【{name}】一路上的经历。");
-    ask_for_text(&system, &user, 160)
-}
-
 #[derive(Debug, Clone)]
 pub struct DescribeProgress {
     /// The character just written up — Dart matches this to its node.
@@ -1592,33 +1442,40 @@ pub fn cancel_describe() {
     CANCEL_DESCRIBE.store(true, Ordering::SeqCst);
 }
 
-/// Write a background for every character in the graph, streaming each as it
+/// Write a background for every character in the graph (its first `top`, as
+/// [`book::cast_graph`] shows them), streaming each as it
 /// lands. Same contract as [`label_relations`]: resumable, cancellable, and
 /// whatever finished is on disk before the reader sees it.
 pub fn describe_people(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<DescribeProgress>,
 ) -> Result<(), String> {
     CANCEL_DESCRIBE.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let residual = book::residual_people(&path, book_id, up_to_chapter)?;
+    let residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
-    let digest = book::chapter_digest(book_id)?;
 
     let mut consecutive_errors = 0;
     for (done, (name, aliases, evidence)) in residual.into_iter().enumerate() {
         if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
             break;
         }
-        let (background, error) = match write_background(&name, &aliases, &evidence, &digest) {
-            Ok(None) => break,
-            Ok(Some((b, source))) => {
+        let _ = sink.add(DescribeProgress {
+            name: name.clone(),
+            background: String::new(),
+            done: done as u32,
+            total,
+            error: None,
+        });
+        let (background, error) = match summarize_person(&name, &aliases, &evidence) {
+            Ok(b) => {
                 consecutive_errors = 0;
-                let _ = book::remember_person(book_id, &name, &b, source, digest.len());
+                let _ = book::remember_person(book_id, &name, &b, "sentences", 0);
                 (b, None)
             }
             Err(e) => {
@@ -1677,13 +1534,14 @@ pub fn label_relations(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<RelabelProgress>,
 ) -> Result<(), String> {
     CANCEL_RELABEL.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let residual = book::residual_relations(&path, book_id, up_to_chapter)?;
+    let residual = book::residual_relations(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
 
     let mut consecutive_errors = 0;
@@ -1691,6 +1549,16 @@ pub fn label_relations(
         if CANCEL_RELABEL.load(Ordering::SeqCst) {
             break;
         }
+        // A pair takes the better part of a minute on a phone: say which one
+        // is under way, or the screen sits on 0 / 0 as if nothing started.
+        let _ = sink.add(RelabelProgress {
+            a: a.clone(),
+            b: b.clone(),
+            label: String::new(),
+            done: done as u32,
+            total,
+            error: None,
+        });
         let (label, error) = match summarize_relation(&a, &b, &evidence) {
             Ok(l) => {
                 consecutive_errors = 0;
@@ -1781,13 +1649,14 @@ pub fn vet_names(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<VetProgress>,
 ) -> Result<(), String> {
     CANCEL_VET.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let pending = book::unjudged_names(&path, book_id, up_to_chapter)?;
+    let pending = book::unjudged_names(&path, book_id, up_to_chapter, top)?;
     let total = pending.len() as u32;
     let mut consecutive_errors = 0;
 
@@ -2027,12 +1896,8 @@ pub fn index_book(
     Ok(())
 }
 
-/// Search the book — but only the part of it the reader has already read.
-///
-/// `up_to_chapter` is the spoiler line, and it is enforced in SQL: chapters
-/// beyond it are never loaded, so no ranking bug can leak one. A reader who
-/// searches for a character they have not met yet gets nothing, which is the
-/// correct answer.
+/// Search the book, through `up_to_chapter`, by meaning and by the words
+/// together ([chunk::rank_hybrid]).
 pub fn semantic_search(
     path: String,
     book_id: i64,
@@ -2060,7 +1925,23 @@ pub fn semantic_search(
     }
 
     let titles = book::chapter_titles(&path)?;
-    let hits = chunk::rank(&q, &rows, k as usize, 2, SCORE_FLOOR);
+    let hits = book::with_text(&path, |text| {
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|(_, s, e, _)| {
+                // Inside char boundaries, as [book::snippet] reads a span.
+                let (mut s, mut e) = (*s as usize, (*e as usize).min(text.len()));
+                while s < e && !text.is_char_boundary(s) {
+                    s += 1;
+                }
+                while e > s && !text.is_char_boundary(e) {
+                    e -= 1;
+                }
+                &text[s..e]
+            })
+            .collect();
+        chunk::rank_hybrid(&q, query, &rows, &texts, k as usize, 2, SCORE_FLOOR)
+    })?;
     Ok(hits
         .into_iter()
         .map(|h| SearchHit {
@@ -2459,6 +2340,169 @@ mod spawn_tests {
         inference_backend().prepare_chat(FULL_CONTEXT).unwrap();
         assert!(summarize_excerpt(&long, FULL_CONTEXT).unwrap().is_some());
         stop_ai();
+    }
+}
+
+/// The engine as iOS runs it — a thread of this process, on the GPU — with the
+/// app's own models, prompts and windows, timed and weighed. CI runs it on a
+/// Mac: the times are the Mac's, the memory is what the process holds, the
+/// figure iOS ends an app by. NOVEL_AI_DIR holds both models, NOVEL_TEST_TEXT
+/// a few chapters of a book. Nothing of the book is printed.
+///
+///   cargo test --lib engine_bench -- --ignored --nocapture
+#[cfg(all(test, in_process_engine))]
+mod engine_bench {
+    use super::*;
+    use novel_core::decode;
+    use std::time::Instant;
+
+    fn memory(phase: &str) {
+        let (now, peak) = crate::engine_thread::footprint();
+        println!("[内存] {phase}：当前 {} MB · 最高 {} MB", now >> 20, peak >> 20);
+    }
+
+    fn start(context: u32) {
+        let t = Instant::now();
+        ensure_engine(context).unwrap();
+        let kv = engine_state().lock().unwrap().as_ref().unwrap().kv_cache;
+        println!(
+            "[启动 {}K] {:.1} 秒 · KV {kv}",
+            context / 1024,
+            t.elapsed().as_secs_f64()
+        );
+    }
+
+    /// One summary as the chapter pass asks for it, with the engine's timings.
+    fn summary(excerpt: &str, context: u32) {
+        let t = Instant::now();
+        let (status, resp) = inference_backend()
+            .chat_completion(&summary_request(excerpt), 300)
+            .unwrap();
+        let wall = t.elapsed().as_secs_f64();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&resp));
+        let v: Value = serde_json::from_slice(&resp).unwrap();
+        assert!(v["usage"]["total_tokens"].as_u64() < Some(context as u64));
+        let text = clean_summary(v["choices"][0]["message"]["content"].as_str().unwrap());
+        assert!(!text.is_empty());
+        let t = &v["timings"];
+        println!(
+            "[摘要 {}K] 读 {} 词元 {:.0}/秒 · 写 {} 词元 {:.1}/秒 · 共 {wall:.1} 秒 · 摘要 {} 字",
+            context / 1024,
+            t["prompt_n"],
+            t["prompt_per_second"].as_f64().unwrap_or(0.0),
+            t["predicted_n"],
+            t["predicted_per_second"].as_f64().unwrap_or(0.0),
+            text.chars().count()
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn engine_bench() {
+        init_ai(std::env::var("NOVEL_AI_DIR").expect("set NOVEL_AI_DIR")).unwrap();
+        // The app's defaults (无感后台) on a 4 GB phone.
+        set_ai_runtime_config(0, 0, 0, 1, 4096);
+        let raw = std::fs::read(std::env::var("NOVEL_TEST_TEXT").expect("set NOVEL_TEST_TEXT"))
+            .unwrap();
+        let d = decode::decode(&raw);
+        // A few chapters are too few for the book's own chapter vote: split on
+        // their 第…章 title lines here.
+        let mut titles = vec![];
+        let mut at = 0;
+        for line in d.text.split_inclusive('\n') {
+            let t = line.trim();
+            if t.starts_with('第') && t.chars().take(12).any(|c| c == '章') {
+                titles.push((at, at + line.len()));
+            }
+            at += line.len();
+        }
+        let bodies: Vec<(usize, usize)> = titles
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, body))| (body, titles.get(i + 1).map_or(d.text.len(), |t| t.0)))
+            .filter(|&(s, e)| d.text[s..e].chars().count() > 1000)
+            .collect();
+        assert!(bodies.len() >= 2, "need at least two chapters");
+        let excerpts: Vec<String> = bodies
+            .iter()
+            .map(|&(s, e)| book::excerpt(&d.text[s..e], 1400, 400))
+            .collect();
+        // What the 8K passes read: most of the window.
+        let long: String = bodies
+            .iter()
+            .flat_map(|&(s, e)| d.text[s..e].chars())
+            .take(6500)
+            .collect();
+        println!("{} 章", bodies.len());
+        memory("开始");
+
+        start(SUMMARY_CONTEXT);
+        memory("载入 2K");
+        for ex in &excerpts {
+            summary(ex, SUMMARY_CONTEXT);
+        }
+        memory("摘要 2K");
+
+        start(FULL_CONTEXT);
+        memory("载入 8K");
+        summary(&excerpts[0], FULL_CONTEXT);
+        summary(&long, FULL_CONTEXT);
+        memory("长文 8K");
+
+        let t = Instant::now();
+        ensure_embedder().unwrap();
+        println!("[启动 嵌入] {:.1} 秒", t.elapsed().as_secs_f64());
+        let chunks: Vec<String> = bodies
+            .iter()
+            .flat_map(|&(s, e)| chunk::chunk_body(&d.text, s, e, chunk::TARGET_CHARS))
+            .map(|c| c.text)
+            .collect();
+        let t = Instant::now();
+        let mut dim = 0;
+        for batch in chunks.chunks(EMBED_BATCH) {
+            dim = embed(batch).unwrap()[0].len();
+        }
+        println!(
+            "[嵌入] {} 段 · {dim} 维 · {:.1} 秒",
+            chunks.len(),
+            t.elapsed().as_secs_f64()
+        );
+        memory("两个模型同时在");
+
+        let t = Instant::now();
+        stop_ai();
+        assert!(!health(PORT) && !health(EMBED_PORT));
+        println!("[停止] {:.1} 秒", t.elapsed().as_secs_f64());
+        memory("停止后");
+
+        start(SUMMARY_CONTEXT);
+        summary(&excerpts[1], SUMMARY_CONTEXT);
+        memory("重启后");
+
+        // The app stops the engine whenever it leaves the screen, often with a
+        // request still running. That stop once never ended, and every AI call
+        // after it waited behind it.
+        start(FULL_CONTEXT);
+        let body = summary_request(&long);
+        let request =
+            std::thread::spawn(move || inference_backend().chat_completion(&body, 300));
+        std::thread::sleep(Duration::from_secs(2));
+        let t = Instant::now();
+        stop_ai();
+        let stopped = t.elapsed().as_secs_f64();
+        let answer = request.join().unwrap();
+        println!(
+            "[请求中停止] {stopped:.1} 秒 · 请求得到 {}",
+            match &answer {
+                Ok((status, _)) => status.to_string(),
+                Err(e) => e.clone(),
+            }
+        );
+        // The request's own timeout is what used to end it.
+        assert!(stopped < 120.0);
+        assert!(!matches!(answer, Ok((200, _))));
+        assert!(!health(PORT));
+        memory("结束");
     }
 }
 

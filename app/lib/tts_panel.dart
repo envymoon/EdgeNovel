@@ -1,0 +1,336 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart' hide Text;
+
+import 'app_localizations.dart';
+import 'background_task_bar.dart';
+import 'bloom.dart';
+import 'platform_services.dart';
+import 'platform_support.dart';
+import 'reader_state.dart';
+import 'theme.dart';
+import 'tts_chapters.dart';
+import 'tts_chapters_page.dart';
+import 'tts_controller.dart';
+import 'tts_prepare.dart';
+import 'tts_text.dart';
+
+/// iPhone 听书, all in one panel from the headphone icon: play what has been
+/// spoken, speak more of the book, and the voice and pace. With no AI voice
+/// installed it is the phone's own voice, read as it goes: play and pace.
+class TtsPanel extends StatefulWidget {
+  const TtsPanel({
+    super.key,
+    required this.reader,
+    required this.settings,
+    required this.tts,
+    required this.onPlay,
+    required this.onDownloadVoice,
+    this.localSpeech,
+  });
+
+  final ReaderState reader;
+  final ReadingSettings settings;
+  final TtsController tts;
+
+  /// The reader page's own play/pause, which says why when it cannot.
+  final Future<void> Function() onPlay;
+  final VoidCallback onDownloadVoice;
+  final LocalSpeechSynthesizer? localSpeech;
+
+  @override
+  State<TtsPanel> createState() => _TtsPanelState();
+}
+
+class _TtsPanelState extends State<TtsPanel> {
+  bool? _voiceReady;
+
+  /// Whether the chapter open in the reader has been spoken.
+  bool _spoken = false;
+  int _bytes = 0;
+  (int?, int) _shown = (null, -1);
+
+  @override
+  void initState() {
+    super.initState();
+    TtsChapters.instance.addListener(_load);
+    TtsPrepare.instance.addListener(_onJob);
+    widget.reader.addListener(_onReader);
+    unawaited(_load());
+    unawaited(_checkVoice());
+  }
+
+  @override
+  void dispose() {
+    TtsChapters.instance.removeListener(_load);
+    TtsPrepare.instance.removeListener(_onJob);
+    widget.reader.removeListener(_onReader);
+    super.dispose();
+  }
+
+  void _onReader() {
+    if (_shown != (widget.reader.info?.id, widget.reader.chapterIndex)) {
+      unawaited(_load());
+    }
+  }
+
+  bool _wasRunning = false;
+
+  /// A job that ended has changed what is spoken and the space it takes.
+  void _onJob() {
+    final running = TtsPrepare.instance.running;
+    if (_wasRunning && !running) unawaited(_load());
+    _wasRunning = running;
+  }
+
+  Future<void> _load() async {
+    final info = widget.reader.info;
+    final chapter = widget.reader.chapterIndex;
+    _shown = (info?.id, chapter);
+    final spoken = info == null
+        ? null
+        : await TtsChapters.instance.chapter(info, chapter);
+    final bytes = await TtsChapters.instance.totalBytes();
+    if (!mounted) return;
+    setState(() {
+      _spoken = spoken != null;
+      _bytes = bytes;
+    });
+  }
+
+  Future<void> _checkVoice() async {
+    final ready = await widget.tts.aiVoiceReady();
+    if (mounted) setState(() => _voiceReady = ready);
+  }
+
+  void _speak(int count) {
+    final info = widget.reader.info;
+    if (info == null) return;
+    unawaited(
+      TtsPrepare.instance.start(
+        book: info,
+        fromChapter: widget.reader.chapterIndex,
+        count: count,
+        voice: widget.settings.ttsLocalVoice,
+        speech: widget.localSpeech,
+        reader: widget.reader,
+        lanes: widget.settings.ttsLanes,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([
+      widget.settings,
+      widget.tts,
+      TtsPrepare.instance,
+    ]),
+    builder: (context, _) {
+      final t = widget.settings.theme;
+      final job = TtsPrepare.instance;
+      final playing = widget.tts.playing;
+      final info = widget.reader.info;
+      final chapter = widget.reader.chapterIndex;
+      final title = info == null || chapter >= info.chapters.length
+          ? ''
+          : info.chapters[chapter].title;
+      final label = TextStyle(color: t.text, fontSize: 15);
+      final system = _voiceReady == false;
+      return Material(
+        color: t.raisedSurface,
+        elevation: 8,
+        shadowColor: Colors.black45,
+        surfaceTintColor: Colors.transparent,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    // In the text's own colour, so it stands out on every
+                    // theme, the dark ones too.
+                    IconButton.filled(
+                      style: IconButton.styleFrom(
+                        backgroundColor: t.text,
+                        foregroundColor: t.background,
+                        disabledBackgroundColor: t.muted.withValues(
+                          alpha: 0.18,
+                        ),
+                        disabledForegroundColor: t.muted,
+                      ),
+                      tooltip: context.tr(playing ? '暂停' : '播放'),
+                      iconSize: 30,
+                      icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                      onPressed: playing || _spoken || system
+                          ? () {
+                              // Back to the text while it plays.
+                              if (!playing) Navigator.pop(context);
+                              unawaited(widget.onPlay());
+                            }
+                          : null,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        title,
+                        translate: false,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: label,
+                      ),
+                    ),
+                    if (!_spoken && !playing && !system)
+                      Text(
+                        '未合成',
+                        style: TextStyle(color: t.muted, fontSize: 13),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (job.activity case final a?)
+                  BloomProgress(
+                    label: describeActivity(a),
+                    value: a.fraction,
+                    color: t.muted,
+                    textColor: t.text,
+                    trailing: TextButton(
+                      onPressed: job.cancel,
+                      child: const Text('停止'),
+                    ),
+                  )
+                // The AI voice, where this iOS runs it.
+                else if (system && AppPlatformSupport.hasAiVoice)
+                  Row(
+                    children: [
+                      Expanded(child: Text('AI 语音', style: label)),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          widget.onDownloadVoice();
+                        },
+                        child: const Text('去下载'),
+                      ),
+                    ],
+                  )
+                else if (!system)
+                  Row(
+                    children: [
+                      Text('合成', style: label),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            for (final (n, name) in const [
+                              (1, '本章'),
+                              (5, '5 章'),
+                              (10, '10 章'),
+                              (20, '20 章'),
+                            ])
+                              ActionChip(
+                                label: Text(
+                                  name,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                                onPressed: _voiceReady == true
+                                    ? () => _speak(n)
+                                    : null,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                if (!system) ...[
+                  const SizedBox(height: 18),
+                  Text('音色', style: label),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final v in localVoices)
+                        ChoiceChip(
+                          label: Text(v.label),
+                          selected: widget.settings.ttsLocalVoice == v.id,
+                          onSelected: (_) =>
+                              widget.settings.setTtsLocalVoice(v.id),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text('同时合成', style: label),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final n in ReadingSettings.ttsLaneChoices)
+                        ChoiceChip(
+                          label: Text('$n 句'),
+                          selected: widget.settings.ttsLanes == n,
+                          // The voice loads for a number at the start of a
+                          // job: changed between jobs, not under one.
+                          onSelected: job.running
+                              ? null
+                              : (_) => widget.settings.setTtsLanes(n),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '句数越多合成越快，内存占用也越高',
+                    style: TextStyle(color: t.muted, fontSize: 12),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Text(
+                  '语速 · ${widget.settings.ttsSpeed.toStringAsFixed(2)}×',
+                  style: label,
+                ),
+                Slider(
+                  value: widget.settings.ttsSpeed.clamp(0.6, 2.0),
+                  min: 0.6,
+                  max: 2.0,
+                  divisions: 14,
+                  label: '${widget.settings.ttsSpeed.toStringAsFixed(2)}×',
+                  onChanged: widget.settings.setTtsSpeed,
+                  onChangeEnd: (_) => widget.tts.onSpeedChanged(),
+                ),
+                if (!system || _bytes > 0)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('已合成', style: label),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          formatSpokenBytes(_bytes),
+                          translate: false,
+                          style: TextStyle(color: t.muted, fontSize: 13),
+                        ),
+                        Icon(Icons.chevron_right, color: t.muted),
+                      ],
+                    ),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TtsChaptersPage(settings: widget.settings),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}

@@ -1,23 +1,80 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:novel/ai_runtime.dart';
 import 'package:novel/platform_support.dart';
 import 'package:novel/platform_services.dart';
+import 'package:novel/src/rust/api/ai.dart';
 
 void main() {
-  test('only Android bundles an engine; mobile stays foreground-only', () {
+  test('phones bundle the engine; mobile stays foreground-only', () {
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
-    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
+    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isTrue);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
-    expect(AppPlatformSupport.usesExternalAiProcess, isFalse);
+    expect(AppPlatformSupport.hasAiEngine, isFalse);
+    expect(AppPlatformSupport.hasReadAloud, isTrue);
+    expect(AppPlatformSupport.hasAiVoice, isFalse);
+    AppPlatformSupport.iosEngineAvailable = true;
+    addTearDown(() => AppPlatformSupport.iosEngineAvailable = false);
+    expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
+    expect(AppPlatformSupport.hasAiVoice, isTrue);
+    expect(AppPlatformSupport.hasBundledTtsEngine, isTrue);
+    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isFalse);
+    expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
-    expect(AppPlatformSupport.usesExternalAiProcess, isTrue);
+    expect(AppPlatformSupport.hasAiEngine, isTrue);
+  });
+  test('a warm phone holds quiet AI, a hot one the rest, 立即完成 only at the worst', () {
+    final ai = AiRuntimeSettings.instance;
+    addTearDown(() => ai.mode = AiRunMode.quiet);
+    AiDeviceState phone(String thermal) => AiDeviceState(
+      platform: 'ios',
+      charging: true,
+      batteryPercent: 80,
+      logicalCores: 6,
+      thermalState: thermal,
+    );
+    expect(ai.waitingReason(phone('nominal'), reading: false), isNull);
+    expect(ai.waitingReason(phone('fair'), reading: false), isNotNull);
+    ai.mode = AiRunMode.balanced;
+    expect(ai.waitingReason(phone('fair'), reading: false), isNull);
+    expect(ai.waitingReason(phone('serious'), reading: false), isNotNull);
+    ai.mode = AiRunMode.fast;
+    expect(ai.waitingReason(phone('serious'), reading: false), isNull);
+    expect(ai.waitingReason(phone('critical'), reading: false), isNotNull);
+  });
+  test('on iOS the switch only holds the queue on the reader page', () {
+    final ai = AiRuntimeSettings.instance;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      ai.backgroundEnabled = true;
+      ai.mode = AiRunMode.quiet;
+    });
+    final cool = AiDeviceState(
+      platform: 'ios',
+      charging: true,
+      batteryPercent: 80,
+      logicalCores: 6,
+      thermalState: 'nominal',
+    );
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    ai.backgroundEnabled = false;
+    ai.mode = AiRunMode.fast;
+    expect(ai.waitingReason(cool, reading: false), isNull);
+    expect(ai.waitingReason(cool, reading: true), '正在阅读，AI 已让路');
+    ai.backgroundEnabled = true;
+    ai.mode = AiRunMode.quiet;
+    expect(ai.waitingReason(cool, reading: true), isNull);
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    ai.backgroundEnabled = false;
+    expect(ai.waitingReason(cool, reading: false), '后台生成已关闭');
   });
   test('mobile and desktop capabilities stay separate', () {
     expect(AppPlatformSupport.isMobilePlatform(TargetPlatform.iOS), isTrue);

@@ -24,10 +24,16 @@
 //!
 //! Pace is not the engine's business — it has none — so the player stretches
 //! playback instead, which also means a pace change needs nothing re-spoken.
+//!
+//! On iOS, where an app may start no process, the engine is compiled into the
+//! app instead and spoken to directly ([`engine`]).
 
+#[cfg(not(in_process_engine))]
 use crate::api::ai::http;
+#[cfg(not(in_process_engine))]
 use serde_json::json;
 use std::path::{Path, PathBuf};
+#[cfg(not(in_process_engine))]
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -46,6 +52,7 @@ const ENGINE_EXE: &str = "tts-server";
 const TALKER: &str = "qwen-talker-";
 const CODEC: &str = "qwen-tokenizer-";
 
+#[cfg_attr(in_process_engine, allow(dead_code))]
 const PORT: u16 = 8739;
 
 /// Talker positions to hold: prompt plus frames. A sentence of 150 characters
@@ -74,6 +81,8 @@ const CACHE_CAP: u64 = 2 << 30;
 pub fn init_tts(dir: String) -> Result<(), String> {
     let p = PathBuf::from(dir);
     std::fs::create_dir_all(&p).map_err(|e| format!("建朗读目录失败: {e}"))?;
+    #[cfg(in_process_engine)]
+    engine::prepare(&p);
     let _ = TTS_DIR.set(p);
     Ok(())
 }
@@ -83,6 +92,12 @@ fn tts_dir() -> Result<&'static Path, String> {
         .get()
         .map(|p| p.as_path())
         .ok_or_else(|| "朗读目录未初始化".into())
+}
+
+/// Whether there is an engine: compiled into the app on iOS, a download
+/// everywhere else.
+fn has_engine(dir: &Path) -> bool {
+    cfg!(in_process_engine) || find_engine(dir).is_some()
 }
 
 /// The engine: `tts-server` at the top of the dir or one folder down (the
@@ -145,7 +160,6 @@ pub struct TtsStatus {
 
 pub fn tts_status() -> Result<TtsStatus, String> {
     let dir = tts_dir()?;
-    let engine = find_engine(dir);
     let talker = find_model(dir, TALKER);
     let codec = find_model(dir, CODEC);
     let voice = match (&talker, &codec) {
@@ -154,9 +168,9 @@ pub fn tts_status() -> Result<TtsStatus, String> {
     };
     Ok(TtsStatus {
         dir: dir.display().to_string(),
-        engine: engine.is_some(),
+        engine: has_engine(dir),
         voice,
-        engine_bytes: engine.as_deref().map(file_bytes).unwrap_or(0),
+        engine_bytes: find_engine(dir).as_deref().map(file_bytes).unwrap_or(0),
         voice_bytes: [talker, codec].iter().flatten().map(|p| file_bytes(p)).sum(),
     })
 }
@@ -165,7 +179,7 @@ pub fn tts_status() -> Result<TtsStatus, String> {
 /// which [`synth`] can succeed.
 pub fn tts_ready() -> Result<bool, String> {
     let dir = tts_dir()?;
-    Ok(find_engine(dir).is_some()
+    Ok(has_engine(dir)
         && find_model(dir, TALKER).is_some()
         && find_model(dir, CODEC).is_some())
 }
@@ -173,6 +187,9 @@ pub fn tts_ready() -> Result<bool, String> {
 /// Delete the engine (its folder, if it came in one), but never the voice —
 /// that is a separate download with a separate button.
 pub fn delete_tts_engine() -> Result<(), String> {
+    if cfg!(in_process_engine) {
+        return Err("朗读引擎内置于应用".into());
+    }
     let dir = tts_dir()?;
     let exe = find_engine(dir).ok_or("朗读引擎未安装")?;
     stop_tts();
@@ -200,6 +217,7 @@ pub fn delete_tts_voice() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(in_process_engine))]
 fn server() -> &'static Mutex<Option<Child>> {
     static S: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(None))
@@ -216,8 +234,14 @@ fn last_used() -> &'static Mutex<Instant> {
     L.get_or_init(|| Mutex::new(Instant::now()))
 }
 
+#[cfg(not(in_process_engine))]
 fn health() -> bool {
     matches!(http(PORT, "GET", "/health", None, 2), Ok((200, _)))
+}
+
+#[cfg(in_process_engine)]
+fn health() -> bool {
+    engine::loaded()
 }
 
 /// Stop the engine now. The next sentence starts it again.
@@ -226,6 +250,7 @@ pub fn stop_tts() {
     kill();
 }
 
+#[cfg(not(in_process_engine))]
 fn kill() {
     if let Some(mut child) = server().lock().unwrap().take() {
         let _ = child.kill();
@@ -233,6 +258,90 @@ fn kill() {
     }
 }
 
+#[cfg(in_process_engine)]
+fn kill() {
+    engine::unload();
+}
+
+/// The most sentences the GPU speaks at once (听书 同时合成).
+#[cfg(in_process_engine)]
+const MOST_LANES: usize = 4;
+
+/// What the GPU runs under: the codec's fusions of its arithmetic left out
+/// (with them, several sentences at once come out wrong) and its data moved
+/// by the faster kernels (the same audio to the bit), both found on the
+/// phone.
+#[cfg(in_process_engine)]
+const GPU_ENV: [(&str, &str); 2] = [("GGML_METAL_FUSION_DISABLE", "1"), ("GGML_METAL_FAST_MOVE", "2")];
+
+/// How many sentences the GPU speaks at once, as the reader chose in the 听书
+/// panel (`lanes` beside the voice, written by TtsPrepare), and the engine
+/// settings that takes; `engine.json` there may set others in their place.
+/// One at a time when nothing says.
+#[cfg(in_process_engine)]
+fn tuned(dir: &Path) -> (usize, Vec<(String, String)>) {
+    let json = std::fs::read_to_string(dir.join("engine.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let lanes = std::fs::read_to_string(dir.join("lanes"))
+        .ok()
+        .and_then(|t| t.trim().parse::<usize>().ok())
+        .or_else(|| json.as_ref()?["lanes"].as_u64().map(|n| n as usize))
+        .unwrap_or(1)
+        .clamp(1, MOST_LANES);
+    let env = match json.as_ref().and_then(|v| v["env"].as_object()) {
+        Some(o) => o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect(),
+        None => GPU_ENV.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+    };
+    (lanes, env)
+}
+
+/// The voice loaded where it can run now; the idle watcher starts with it.
+#[cfg(in_process_engine)]
+fn ensure() -> Result<(), String> {
+    let _g = LIFECYCLE.lock().unwrap();
+    let dir = tts_dir()?;
+    let talker = find_model(dir, TALKER).ok_or("中文语音未安装")?;
+    let codec = find_model(dir, CODEC).ok_or("中文语音未安装（缺编解码器）")?;
+    let first = !engine::loaded();
+    // Set for the load about to happen, not under a voice that is running.
+    if engine::needs_load() {
+        if engine::background() || !engine::gpu() {
+            std::env::remove_var("EDGE_TTS_BATCH");
+        } else {
+            let (lanes, env) = tuned(dir);
+            for (k, v) in env {
+                std::env::set_var(k, v);
+            }
+            std::env::set_var("EDGE_TTS_BATCH", lanes.to_string());
+        }
+    }
+    engine::ensure(&talker, &codec)?;
+    if first {
+        watch_idle();
+    }
+    Ok(())
+}
+
+/// Lets the voice go once nothing has been said for [`IDLE`], or for a few
+/// seconds behind the screen, where iOS ends the apps that hold the most.
+#[cfg(in_process_engine)]
+fn watch_idle() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(5));
+        let _g = LIFECYCLE.lock().unwrap();
+        if !engine::loaded() {
+            return;
+        }
+        let idle = if engine::background() { Duration::from_secs(15) } else { IDLE };
+        if BUSY.load(Ordering::SeqCst) == 0 && last_used().lock().unwrap().elapsed() > idle {
+            engine::unload();
+            return;
+        }
+    });
+}
+
+#[cfg(not(in_process_engine))]
 fn ensure() -> Result<(), String> {
     let _g = LIFECYCLE.lock().unwrap();
     if health() {
@@ -287,6 +396,7 @@ fn ensure() -> Result<(), String> {
 
 /// Stops the engine once nothing has been said for [`IDLE`]. One watcher per
 /// start; it ends with the engine.
+#[cfg(not(in_process_engine))]
 fn watch_idle() {
     std::thread::spawn(|| loop {
         std::thread::sleep(Duration::from_secs(5));
@@ -422,12 +532,54 @@ fn trim_cache(dir: &Path, cap: u64) {
     }
 }
 
+/// A bound on frames (12.5 a second) at a slow reading pace, so a sentence the
+/// model will not finish cannot run on into a minute of noise.
+fn max_frames(line: &str) -> usize {
+    (line.chars().count() * 6 + 40).min(900)
+}
+
+/// How freely the talker draws each sound. The model's own defaults (0.9, 50,
+/// a new seed every time) make each sentence a fresh guess at how it is said:
+/// spoken alone, without the ones around it, the guesses swing from line to
+/// line, and now and then wander into a dialect the voice never had. Lower and
+/// narrower, the voice reads evenly; one seed, and a sentence said again comes
+/// out the same.
+#[derive(Clone, Copy)]
+struct Sampling {
+    temperature: f32,
+    top_k: i32,
+    seed: i64,
+}
+
+const STEADY: Sampling = Sampling { temperature: 0.6, top_k: 30, seed: 1 };
+
+#[cfg(in_process_engine)]
+fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+    speak_with(line, voice, STEADY)
+}
+
+#[cfg(in_process_engine)]
+fn speak_with(line: &str, voice: &str, how: Sampling) -> Result<Vec<u8>, String> {
+    let _busy = InFlight::new();
+    let mut again = true;
+    loop {
+        ensure()?;
+        match engine::speak(line, voice, max_frames(line), how) {
+            Ok(pcm) if pcm.is_empty() => return Err("语音合成为空".into()),
+            Ok(pcm) => return Ok(wav(&pcm)),
+            // Stopped on the GPU because the app went behind the screen:
+            // spoken again, on the CPU.
+            Err(_) if again && engine::misplaced() => again = false,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+#[cfg(not(in_process_engine))]
 fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
     let _busy = InFlight::new();
     ensure()?;
-    // A bound on frames (12.5 a second) at a slow reading pace, so a sentence
-    // the model will not finish cannot run on into a minute of noise.
-    let frames = (line.chars().count() * 6 + 40).min(900);
+    let frames = max_frames(line);
     // Streamed: the codec decodes as the talker goes rather than the whole
     // sentence at the end, which is most of the memory a sentence costs.
     let body = json!({
@@ -436,6 +588,9 @@ fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
         "language": "chinese",
         "response_format": "pcm",
         "max_new_tokens": frames,
+        "temperature": STEADY.temperature,
+        "top_k": STEADY.top_k,
+        "seed": STEADY.seed,
     });
     let (status, pcm) = http(PORT, "POST", "/v1/audio/speech", Some(&body), 300)?;
     if status != 200 {
@@ -469,6 +624,154 @@ fn wav(pcm: &[u8]) -> Vec<u8> {
     w
 }
 
+/// The engine compiled into the app (ios_tts/, built by build.rs). One voice is
+/// loaded at a time: on the GPU while the app is on screen, on the CPU behind
+/// it, where iOS refuses GPU work and listening goes on with the screen locked.
+#[cfg(in_process_engine)]
+mod engine {
+    use super::{CONTEXT, Path};
+    use std::ffi::{c_char, c_int, c_void, CStr, CString};
+    use std::sync::Mutex;
+
+    extern "C" {
+        fn edge_tts_load(talker: *const c_char, codec: *const c_char, gpu: c_int) -> c_int;
+        fn edge_tts_unload();
+        fn edge_tts_background() -> c_int;
+        fn edge_tts_gpu() -> c_int;
+        fn edge_tts_error() -> *const c_char;
+        fn edge_tts_speak(
+            text: *const c_char,
+            speaker: *const c_char,
+            max_frames: c_int,
+            temperature: f32,
+            top_k: c_int,
+            seed: i64,
+            on_pcm: extern "C" fn(*const f32, c_int, *mut c_void),
+            user: *mut c_void,
+        ) -> c_int;
+    }
+
+    /// Where the voice is loaded: on the GPU (true) or the CPU (false).
+    static LOADED: Mutex<Option<bool>> = Mutex::new(None);
+
+    /// The engine's Metal kernels, compiled at build time rather than on the
+    /// device. The engine loads them from a file.
+    const METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tts.metallib"));
+
+    /// Called once at startup, before anything runs: the engine reads its
+    /// settings from the environment, as tts-server does from the one it is
+    /// started with. Never fails the app's start: a library it could not
+    /// write only costs the voice its GPU.
+    pub fn prepare(dir: &Path) {
+        std::env::set_var("QWEN_TTS_CTX", CONTEXT);
+        std::env::set_var("QWEN_TTS_EMBD_MMAP", "1");
+        std::env::set_var("QWEN_TTS_KV", "f16");
+        // Compiled for iOS 16.4: no bfloat kernels, and none of the tensor
+        // ones an A19 would otherwise ask for.
+        std::env::set_var("GGML_METAL_BF16_DISABLE", "1");
+        std::env::set_var("GGML_METAL_TENSOR_DISABLE", "1");
+        let lib = dir.join(env!("EDGE_TTS_METALLIB"));
+        if !lib.is_file() {
+            // An earlier version's goes.
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("tts-") && name.ends_with(".metallib") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+            let part = lib.with_extension("part");
+            let _ = std::fs::write(&part, METALLIB).and_then(|_| std::fs::rename(&part, &lib));
+        }
+        if lib.is_file() {
+            std::env::set_var("GGML_METAL_LIBRARY", &lib);
+        }
+    }
+
+    pub fn loaded() -> bool {
+        LOADED.lock().unwrap().is_some()
+    }
+
+    pub fn background() -> bool {
+        unsafe { edge_tts_background() != 0 }
+    }
+
+    /// Whether this GPU can run the voice (edge_tts.mm).
+    pub fn gpu() -> bool {
+        unsafe { edge_tts_gpu() != 0 }
+    }
+
+    /// Not loaded, or not where it can run now.
+    pub fn needs_load() -> bool {
+        *LOADED.lock().unwrap() != Some(!background() && gpu())
+    }
+
+    /// On the GPU with the app behind the screen: it has to move.
+    pub fn misplaced() -> bool {
+        *LOADED.lock().unwrap() == Some(true) && background()
+    }
+
+    fn error() -> String {
+        unsafe { CStr::from_ptr(edge_tts_error()) }.to_string_lossy().into_owned()
+    }
+
+    pub fn unload() {
+        if LOADED.lock().unwrap().take().is_some() {
+            unsafe { edge_tts_unload() };
+        }
+    }
+
+    /// Loaded on the GPU on screen, on the CPU behind it.
+    pub fn ensure(talker: &Path, codec: &Path) -> Result<(), String> {
+        let gpu = !background() && self::gpu();
+        let mut loaded = LOADED.lock().unwrap();
+        if *loaded == Some(gpu) {
+            return Ok(());
+        }
+        let path = |p: &Path| CString::new(p.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string());
+        let (t, c) = (path(talker)?, path(codec)?);
+        *loaded = None;
+        if unsafe { edge_tts_load(t.as_ptr(), c.as_ptr(), gpu as c_int) } == 0 {
+            return Err(format!("启动朗读引擎失败: {}", error()));
+        }
+        *loaded = Some(gpu);
+        Ok(())
+    }
+
+    /// 16-bit little-endian, the way tts-server sends it: clamped, rounded
+    /// to nearest.
+    extern "C" fn take_pcm(samples: *const f32, n: c_int, user: *mut c_void) {
+        let pcm = unsafe { &mut *(user as *mut Vec<u8>) };
+        let samples = unsafe { std::slice::from_raw_parts(samples, n.max(0) as usize) };
+        for &x in samples {
+            let s = (x.clamp(-1.0, 1.0) * 32767.0).round_ties_even() as i16;
+            pcm.extend_from_slice(&s.to_le_bytes());
+        }
+    }
+
+    /// One sentence as bare 16-bit 24 kHz mono, decoded as the talker goes.
+    pub fn speak(line: &str, voice: &str, frames: usize, how: super::Sampling) -> Result<Vec<u8>, String> {
+        let text = CString::new(line).map_err(|_| "文本无效".to_string())?;
+        let speaker = CString::new(voice).map_err(|_| "音色无效".to_string())?;
+        let mut pcm: Vec<u8> = Vec::new();
+        let rc = unsafe {
+            edge_tts_speak(
+                text.as_ptr(),
+                speaker.as_ptr(),
+                frames as c_int,
+                how.temperature,
+                how.top_k as c_int,
+                how.seed,
+                take_pcm,
+                &mut pcm as *mut Vec<u8> as *mut c_void,
+            )
+        };
+        if rc != 0 {
+            return Err(format!("语音合成失败: {}", error()));
+        }
+        Ok(pcm)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,6 +795,72 @@ mod tests {
         left.sort();
         assert_eq!(left, ["3.wav", "4.wav"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The voice on Apple's GPU and CPU, the way iOS runs it (CI). NOVEL_TTS_DIR
+    /// holds the talker and the codec.
+    #[cfg(in_process_engine)]
+    #[test]
+    #[ignore]
+    fn tts_bench() {
+        extern "C" {
+            fn edge_tts_set_background(on: std::ffi::c_int);
+        }
+        let memory = |phase: &str| {
+            let (now, peak) = crate::engine_thread::footprint();
+            println!("[内存] {phase}：当前 {} MB · 最高 {} MB", now >> 20, peak >> 20);
+        };
+        init_tts(std::env::var("NOVEL_TTS_DIR").expect("set NOVEL_TTS_DIR")).unwrap();
+        assert!(tts_ready().unwrap());
+        memory("开始");
+        let lines = ["今天的风有点大，我们早点回家吧。", "他把书合上，望着窗外的雨，很久都没有说话，直到天色暗了下来。"];
+        let gpu = engine::gpu();
+        if !gpu {
+            println!("[GPU] 这块 GPU 跑不了，只测处理器");
+        }
+        for (device, behind) in [("GPU", 0), ("CPU", 1)] {
+            if behind == 0 && !gpu {
+                continue;
+            }
+            unsafe { edge_tts_set_background(behind) };
+            let t = Instant::now();
+            ensure().unwrap();
+            println!("[{device} 载入] {:.1} 秒", t.elapsed().as_secs_f64());
+            memory(&format!("{device} 载入后"));
+            for line in lines {
+                let t = Instant::now();
+                let wav = speak(line, "uncle_fu").unwrap();
+                let secs = (wav.len() - 44) as f64 / 48000.0;
+                let took = t.elapsed().as_secs_f64();
+                println!("[{device}] {secs:.1} 秒语音用 {took:.1} 秒 · RTF {:.2}", took / secs);
+                assert!(secs > 1.0);
+            }
+            memory(&format!("{device} 说完"));
+        }
+
+        // Behind the screen mid-sentence: said again on the CPU, not lost.
+        if !gpu {
+            stop_tts();
+            return;
+        }
+        unsafe { edge_tts_set_background(0) };
+        ensure().unwrap();
+        let t = Instant::now();
+        let line = std::thread::spawn(|| {
+            speak("这一句说到一半，应用退到了后台，换到处理器上从头再说一遍。", "uncle_fu")
+        });
+        std::thread::sleep(Duration::from_millis(500));
+        unsafe { edge_tts_set_background(1) };
+        let wav = line.join().unwrap().unwrap();
+        println!(
+            "[切到后台] {:.1} 秒语音，共 {:.1} 秒",
+            (wav.len() - 44) as f64 / 48000.0,
+            t.elapsed().as_secs_f64()
+        );
+        assert!(!engine::misplaced());
+        stop_tts();
+        assert!(!health());
+        memory("结束");
     }
 
     /// Needs the engine and the voice in %APPDATA%\com.novel\novel\tts.

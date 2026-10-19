@@ -152,6 +152,6 @@ class TaskLine extends StatelessWidget {
 /// 「《诡秘之主》章节分析 · 120 / 1392 · 约 15 分钟」
 String describeActivity(AiActivity a) => [
   '《${a.title}》${a.label}',
-  if (a.total > 0) '${a.done} / ${a.total}' else '正在启动本机引擎…',
+  if (a.total > 0) '${a.done} / ${a.total}' else '启动中…',
   if (a.remaining != null) formatRemaining(a.remaining!),
 ].join(' · ');

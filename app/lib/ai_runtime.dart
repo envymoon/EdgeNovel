@@ -23,6 +23,12 @@ class AiRuntimeSettings extends ChangeNotifier {
   DeviceStatusReader _deviceStatus = const NativeDeviceStatusReader();
 
   bool backgroundEnabled = true;
+  /// iOS (锁屏/后台运行): once the app is off screen — locked, or another
+  /// app in front — the queue carries on, on the CPU. Off unless asked for.
+  bool lockedEnabled = false;
+
+  /// Running in such a window now: the GPU is not ours to use.
+  bool _cpuOnly = false;
   bool chargingOnly = true;
   AiRunMode mode = AiRunMode.quiet;
   int batteryFloor = 40;
@@ -41,6 +47,7 @@ class AiRuntimeSettings extends ChangeNotifier {
     backgroundEnabled =
         p.getBool('${_prefix}backgroundEnabled') ?? backgroundEnabled;
     chargingOnly = p.getBool('${_prefix}chargingOnly') ?? chargingOnly;
+    lockedEnabled = p.getBool('${_prefix}lockedEnabled') ?? lockedEnabled;
     mode =
         AiRunMode.values[(p.getInt('${_prefix}mode') ?? mode.index).clamp(
           0,
@@ -93,16 +100,26 @@ class AiRuntimeSettings extends ChangeNotifier {
     bool forceNow = false,
   }) {
     if (forceNow) return null;
-    if (!backgroundEnabled) return '后台生成已关闭';
+    // On iOS the switch is 允许阅读时后台处理: off, the queue makes way on
+    // the reader's page and runs everywhere else in the app.
+    final ios = defaultTargetPlatform == TargetPlatform.iOS;
+    if (!backgroundEnabled && !ios) return '后台生成已关闭';
     if (chargingOnly && state.charging == false) return '等待接通电源';
     final battery = state.batteryPercent;
     if (state.charging != true && battery != null && battery < batteryFloor) {
       return '电量低于 $batteryFloor%';
     }
-    if (state.thermalState == 'serious' || state.thermalState == 'critical') {
+    // A phone the hand already feels warm is not 无感 any more; 立即完成
+    // goes on through the heat the system still runs at full and stops only
+    // where it has to.
+    if (state.thermalState == 'critical' ||
+        (mode != AiRunMode.fast && state.thermalState == 'serious') ||
+        (mode == AiRunMode.quiet && state.thermalState == 'fair')) {
       return '设备温度较高，等待冷却';
     }
-    if (mode != AiRunMode.fast && reading) return '正在阅读，AI 已让路';
+    if (reading && (ios ? !backgroundEnabled : mode != AiRunMode.fast)) {
+      return '正在阅读，AI 已让路';
+    }
     if (mode == AiRunMode.quiet) {
       final idle = state.idleSeconds;
       if (idle != null && idle < idleMinutes * 60) {
@@ -133,8 +150,8 @@ class AiRuntimeSettings extends ChangeNotifier {
     final memory = detectedMemoryMb;
     if (memory == null) return '等待检测';
     if (memory < 4096) return '仅建议阅读与语义搜索';
-    if (memory < 5120) return '固定 8K 生成不建议';
-    if (memory < 7168) return '固定 8K · 前台试运行';
+    if (memory < 5120) return '不建议 AI 生成';
+    if (memory < 7168) return '前台试运行';
     if (memory < 10240) return '标准 AI';
     return '高性能 AI';
   }
@@ -148,6 +165,21 @@ class AiRuntimeSettings extends ChangeNotifier {
   Future<void> setBackgroundEnabled(bool value) async {
     backgroundEnabled = value;
     await _changed();
+  }
+
+  Future<void> setLockedEnabled(bool value) async {
+    lockedEnabled = value;
+    await _changed();
+  }
+
+  /// Entering or leaving a background window. The engine restarts on the new
+  /// backend, like any other change to how it runs.
+  Future<void> setCpuOnly(bool value) async {
+    if (_cpuOnly == value) return;
+    _cpuOnly = value;
+    engineRevision++;
+    await _applyEngineConfig();
+    notifyListeners();
   }
 
   Future<void> setChargingOnly(bool value) async {
@@ -200,6 +232,7 @@ class AiRuntimeSettings extends ChangeNotifier {
       await Future.wait([
         p.setBool('${_prefix}backgroundEnabled', backgroundEnabled),
         p.setBool('${_prefix}chargingOnly', chargingOnly),
+        p.setBool('${_prefix}lockedEnabled', lockedEnabled),
         p.setInt('${_prefix}mode', mode.index),
         p.setInt('${_prefix}batteryFloor', batteryFloor),
         p.setInt('${_prefix}idleMinutes', idleMinutes),
@@ -214,7 +247,7 @@ class AiRuntimeSettings extends ChangeNotifier {
 
   Future<void> _applyEngineConfig() => setAiRuntimeConfig(
     mode: mode.index,
-    backend: backend.index,
+    backend: _cpuOnly ? AiBackend.cpu.index : backend.index,
     threadLimit: threadLimit,
     thermalBias: thermalBias.index,
     totalMemoryMb: BigInt.from(detectedMemoryMb ?? 0),

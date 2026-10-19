@@ -198,8 +198,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         _relationshipCard(t, info),
                         const SizedBox(height: 12),
                         _reportEntries(t, info),
-                        const SizedBox(height: 12),
-                        _backgroundEntry(t),
+                        if (AppPlatformSupport.hasAiEngine) ...[
+                          const SizedBox(height: 12),
+                          _backgroundEntry(t),
+                        ],
                       ],
                     ),
                   ),
@@ -241,11 +243,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextCover(
-          title: widget.book.title,
-          hue: widget.book.coverHue,
-          coverPath: widget.book.coverPath,
-          width: compact ? 72 : 82,
+        GestureDetector(
+          onTap: () => showCoverLarge(
+            context,
+            title: widget.book.title,
+            hue: widget.book.coverHue,
+            coverPath: widget.book.coverPath,
+          ),
+          child: TextCover(
+            title: widget.book.title,
+            hue: widget.book.coverHue,
+            coverPath: widget.book.coverPath,
+            width: compact ? 72 : 82,
+          ),
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -580,8 +590,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
       ),
       child: Column(
         children: [
-          // The image engine runs on desktop only.
-          if (AppPlatformSupport.isDesktop) ...[
+          // The image engine: desktop, and iOS from 16.4.
+          if (AppPlatformSupport.hasImageGen) ...[
             _entry(
               t,
               icon: Icons.photo_outlined,
@@ -596,27 +606,31 @@ class _BookDetailPageState extends State<BookDetailPage> {
             ),
             _line(t),
           ],
-          _entry(
-            t,
-            icon: Icons.notes_outlined,
-            title: '章节概览',
-            subtitle: summaryCount == 0 ? '未分析' : '$summaryCount / $total 章',
-            onTap: () => _open(
-              _ChapterSummaryPage(
-                book: widget.book,
-                reader: widget.reader,
-                info: info,
-                settings: widget.settings,
-                lastChapter: widget.book.lastOpenedAt == null
-                    ? null
-                    : info.lastChapter,
-                annotations: _annotations,
-                completedChapters: _completedChapters,
-                onOpenChapter: _read,
+          if (AppPlatformSupport.hasAiEngine) ...[
+            _entry(
+              t,
+              icon: Icons.notes_outlined,
+              title: '章节概览',
+              subtitle: summaryCount == 0
+                  ? '未分析'
+                  : '$summaryCount / $total 章',
+              onTap: () => _open(
+                _ChapterSummaryPage(
+                  book: widget.book,
+                  reader: widget.reader,
+                  info: info,
+                  settings: widget.settings,
+                  lastChapter: widget.book.lastOpenedAt == null
+                      ? null
+                      : info.lastChapter,
+                  annotations: _annotations,
+                  completedChapters: _completedChapters,
+                  onOpenChapter: _read,
+                ),
               ),
             ),
-          ),
-          _line(t),
+            _line(t),
+          ],
           _entry(
             t,
             icon: Icons.account_tree_outlined,
@@ -629,7 +643,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
               ),
             ),
           ),
-          if (landmineEntryVisible) ...[
+          if (AppPlatformSupport.hasAiEngine && landmineEntryVisible) ...[
             _line(t),
             _entry(
               t,
@@ -662,20 +676,22 @@ class _BookDetailPageState extends State<BookDetailPage> {
               ),
             ),
           ),
-          _line(t),
-          _entry(
-            t,
-            icon: Icons.manage_search,
-            title: '语义检索',
-            subtitle: indexed == 0 ? '未建立' : '$indexed / $total 章',
-            onTap: () => _open(
-              SearchIndexPage(
-                book: widget.book,
-                reader: widget.reader,
-                settings: widget.settings,
+          if (AppPlatformSupport.hasAiEngine) ...[
+            _line(t),
+            _entry(
+              t,
+              icon: Icons.manage_search,
+              title: '语义检索',
+              subtitle: indexed == 0 ? '未建立' : '$indexed / $total 章',
+              onTap: () => _open(
+                SearchIndexPage(
+                  book: widget.book,
+                  reader: widget.reader,
+                  settings: widget.settings,
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );

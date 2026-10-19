@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
@@ -17,6 +18,7 @@ class AppearancePage extends StatelessWidget {
       final custom =
           settings.interfaceFontFamily.isNotEmpty &&
           !settings.interfaceFontFamily.startsWith('system:');
+      final windows = defaultTargetPlatform == TargetPlatform.windows;
       return Scaffold(
         backgroundColor: t.background,
         appBar: AppBar(
@@ -39,19 +41,25 @@ class AppearancePage extends StatelessWidget {
                       : settings.interfaceFontFamily,
                   isExpanded: true,
                   items: [
-                    const DropdownMenuItem(value: '', child: Text('微软雅黑（默认）')),
-                    const DropdownMenuItem(
-                      value: 'system:SimSun',
-                      child: Text('宋体'),
+                    DropdownMenuItem(
+                      value: '',
+                      child: Text(windows ? '微软雅黑（默认）' : '苹方（默认）'),
                     ),
-                    const DropdownMenuItem(
-                      value: 'system:KaiTi',
-                      child: Text('楷体'),
-                    ),
-                    const DropdownMenuItem(
-                      value: 'system:Segoe UI',
-                      child: Text('Segoe UI'),
-                    ),
+                    // Fonts every Windows install carries.
+                    if (windows) ...const [
+                      DropdownMenuItem(
+                        value: 'system:SimSun',
+                        child: Text('宋体'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'system:KaiTi',
+                        child: Text('楷体'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'system:Segoe UI',
+                        child: Text('Segoe UI'),
+                      ),
+                    ],
                     if (custom)
                       DropdownMenuItem(
                         value: 'custom',

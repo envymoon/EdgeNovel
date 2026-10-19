@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' hide Text;
 
 import 'ai_page.dart';
 import 'app_localizations.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -129,7 +130,7 @@ class SearchIndexCard extends StatelessWidget {
         settings,
         hasModel: () async =>
             (await indexStatus(path: book.path, bookId: book.id)).hasModel,
-        missing: '需要先下载嵌入模型',
+        missing: '需要先下载检索模型',
         start: () => reader.startIndex(book.id, book.path, title: book.title),
       ),
       onPause: () => reader.stopIndexFor(book.id),
@@ -185,6 +186,7 @@ class AnalysisRunCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!AppPlatformSupport.hasAiEngine) return const SizedBox.shrink();
     final t = settings.theme;
     final activity = state == AiTaskState.running ? reader.aiActivity : null;
     return Container(
@@ -257,7 +259,7 @@ class AnalysisRunCard extends StatelessWidget {
           const SizedBox(height: 8),
           row(
             a == null || a.total == 0
-                ? '正在启动本机引擎…'
+                ? '启动中…'
                 : [
                     '${a.done} / ${a.total}',
                     if (a.remaining != null) formatRemaining(a.remaining!),

@@ -16,6 +16,7 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/tts.dart';
 import 'theme.dart';
+import 'tts_chapters_page.dart';
 import 'tts_server_page.dart';
 
 // Keep the desktop engine on the same llama.cpp revision as the Android build
@@ -37,7 +38,10 @@ const _llamaEngineUrls = [
 class AiPage extends StatefulWidget {
   final ReadingSettings settings;
 
-  const AiPage({super.key, required this.settings});
+  /// Opened for the reading voice (听书 found none): scroll to its download.
+  final bool showVoice;
+
+  const AiPage({super.key, required this.settings, this.showVoice = false});
 
   @override
   State<AiPage> createState() => _AiPageState();
@@ -78,6 +82,8 @@ class _AiPageState extends State<AiPage> {
   var _imgCancelled = false;
 
   Timer? _poll;
+  final _voiceRow = GlobalKey();
+  bool _shownVoice = false;
 
   @override
   void initState() {
@@ -100,7 +106,7 @@ class _AiPageState extends State<AiPage> {
 
   Future<void> _refresh() async {
     final s = await aiStatus();
-    final ts = AppPlatformSupport.hasReadAloud ? await ttsStatus() : null;
+    final ts = AppPlatformSupport.hasAiVoice ? await ttsStatus() : null;
     final img = await imageStatus();
     final imgPending = await pendingDownloadBytes(img.dir, imageModelFiles);
     final voicePending = ts == null
@@ -126,6 +132,19 @@ class _AiPageState extends State<AiPage> {
         _chatPendingBytes = pending[0];
         _embedPendingBytes = pending[1];
       });
+      if (widget.showVoice && !_shownVoice) {
+        _shownVoice = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final row = _voiceRow.currentContext;
+          if (row != null && row.mounted) {
+            Scrollable.ensureVisible(
+              row,
+              alignment: 0.3,
+              duration: const Duration(milliseconds: 300),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -188,7 +207,7 @@ class _AiPageState extends State<AiPage> {
             file.name.replaceAll('\\', '/').split('/').last.toLowerCase() ==
                 'llama-server.exe',
       );
-      if (!hasServer) throw '引擎压缩包不完整（缺少 llama-server.exe）';
+      if (!hasServer) throw '引擎压缩包不完整';
 
       await stopAi();
       for (final f in archive) {
@@ -470,12 +489,11 @@ class _AiPageState extends State<AiPage> {
     if (state?.installed != true && detectedName == null) {
       return package.role == ManagedModelRole.chat ? '约 640 MB' : '约 48 MB';
     }
-    final version = state?.activeVersion ?? '现有版本';
     final verified = state?.isVerifiedCurrent(package) == true
         ? '已校验'
         : '未记录校验';
     final rollback = state?.canRollback == true ? ' · 可恢复旧版' : '';
-    return '$version · $verified · ${_size(bytes)}$rollback';
+    return '$verified · ${_size(bytes)}$rollback';
   }
 
   Future<void> _rollbackModel(ManagedModelPackage package, String label) async {
@@ -574,18 +592,16 @@ class _AiPageState extends State<AiPage> {
                                 : Icons.error_outline,
                             color: t.muted,
                           ),
-                          title: const Text('推理引擎 · llama.cpp'),
+                          title: const Text('AI 引擎'),
                           subtitle: Text(
-                            s.engine
-                                ? '应用内置 · CPU · 默认 Q8 KV / 8K'
-                                : '内置引擎缺失，请重新安装应用',
+                            !s.engine ? '内置引擎缺失，请重新安装应用' : '应用内置',
                           ),
                         ),
                       if (AppPlatformSupport.canDownloadAiEngine)
                         _item(
                           t,
                           ok: s.engine,
-                          title: '推理引擎 · llama.cpp',
+                          title: 'AI 引擎',
                           subtitle: s.engine
                               ? '已安装 · ${_size(s.engineBytes)}'
                               : '约 30–90 MB',
@@ -593,13 +609,13 @@ class _AiPageState extends State<AiPage> {
                           error: _engineError,
                           onDownload: _downloadEngine,
                           onDelete: s.engine
-                              ? () => _delete('推理引擎', deleteEngine)
+                              ? () => _delete('AI 引擎', deleteEngine)
                               : null,
                         ),
                       _item(
                         t,
                         ok: chatInstalled,
-                        title: '模型 · Qwen3 0.6B (Q8)',
+                        title: '分析模型',
                         subtitle: _withPending(
                           _modelSubtitle(
                             chatModelPackage,
@@ -624,11 +640,11 @@ class _AiPageState extends State<AiPage> {
                         ),
                         onReinstall: chatInstalled ? _downloadModel : null,
                         onRollback: _chatModel?.canRollback == true
-                            ? () => _rollbackModel(chatModelPackage, '摘要模型')
+                            ? () => _rollbackModel(chatModelPackage, '分析模型')
                             : null,
                         onDelete: chatInstalled
                             ? () => _delete(
-                                '摘要模型',
+                                '分析模型',
                                 () => _models.deleteInstalled(
                                   directory: s.dir,
                                   package: chatModelPackage,
@@ -640,7 +656,7 @@ class _AiPageState extends State<AiPage> {
                       _item(
                         t,
                         ok: embeddingInstalled,
-                        title: '嵌入模型 · BGE small 中文',
+                        title: '检索模型',
                         subtitle: _withPending(
                           _modelSubtitle(
                             embeddingModelPackage,
@@ -667,11 +683,11 @@ class _AiPageState extends State<AiPage> {
                         onReinstall: embeddingInstalled ? _downloadEmbed : null,
                         onRollback: _embeddingModel?.canRollback == true
                             ? () =>
-                                  _rollbackModel(embeddingModelPackage, '嵌入模型')
+                                  _rollbackModel(embeddingModelPackage, '检索模型')
                             : null,
                         onDelete: embeddingInstalled
                             ? () => _delete(
-                                '嵌入模型',
+                                '检索模型',
                                 () => _models.deleteInstalled(
                                   directory: s.dir,
                                   package: embeddingModelPackage,
@@ -680,26 +696,28 @@ class _AiPageState extends State<AiPage> {
                               )
                             : null,
                       ),
-                      // Pictures: covers and 章间立绘. Desktop only.
-                      if (AppPlatformSupport.isDesktop) ...[
-                        _item(
-                          t,
-                          ok: _img?.engine ?? false,
-                          title: '生图引擎 · stable-diffusion.cpp',
-                          subtitle: (_img?.engine ?? false)
-                              ? '已安装 · ${_size(_img!.engineBytes)}'
-                              : '约 29 MB',
-                          progress: _imgEngineProgress,
-                          error: _imgEngineError,
-                          onDownload: _downloadImageEngine,
-                          onDelete: (_img?.engine ?? false)
-                              ? () => _delete('生图引擎', deleteImageEngine)
-                              : null,
-                        ),
+                      // Pictures: covers and 章间立绘. On iOS the engine is in
+                      // the app and only the model is a download.
+                      if (AppPlatformSupport.hasImageGen) ...[
+                        if (!AppPlatformSupport.hasBundledImageEngine)
+                          _item(
+                            t,
+                            ok: _img?.engine ?? false,
+                            title: '生图引擎',
+                            subtitle: (_img?.engine ?? false)
+                                ? '已安装 · ${_size(_img!.engineBytes)}'
+                                : '约 29 MB',
+                            progress: _imgEngineProgress,
+                            error: _imgEngineError,
+                            onDownload: _downloadImageEngine,
+                            onDelete: (_img?.engine ?? false)
+                                ? () => _delete('生图引擎', deleteImageEngine)
+                                : null,
+                          ),
                         _item(
                           t,
                           ok: _img?.model != null && _img!.decoder,
-                          title: '生图模型 · 动漫风 SD1.5',
+                          title: '生图模型',
                           subtitle: _withPending(
                             _img?.model != null && _img!.decoder
                                 ? '已安装 · ${_size(_img!.modelBytes)}'
@@ -742,8 +760,7 @@ class _AiPageState extends State<AiPage> {
                           ),
                         ),
                       ),
-                      if (AppPlatformSupport.isDesktop &&
-                          AppPlatformSupport.hasReadAloud) ...[
+                      if (AppPlatformSupport.hasAiVoice) ...[
                         const Divider(height: 32),
                         // Voice, pace and a server elsewhere are one page away; the
                         // engine and the voice it runs are the two rows below.
@@ -754,38 +771,45 @@ class _AiPageState extends State<AiPage> {
                             size: 20,
                             color: t.muted,
                           ),
+                          // On iPhone voice and pace are in the reader's
+                          // 听书 panel; what was spoken is kept here.
                           title: Text(
-                            '听书服务',
+                            AppPlatformSupport.speaksByChapter
+                                ? '已合成'
+                                : '听书服务',
                             style: TextStyle(color: t.text, fontSize: 14),
                           ),
                           trailing: Icon(Icons.chevron_right, color: t.muted),
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  TtsServerPage(settings: widget.settings),
+                              builder: (_) => AppPlatformSupport.speaksByChapter
+                                  ? TtsChaptersPage(settings: widget.settings)
+                                  : TtsServerPage(settings: widget.settings),
                             ),
                           ),
                         ),
                         const SizedBox(height: 12),
+                        if (!AppPlatformSupport.hasBundledTtsEngine)
+                          _item(
+                            t,
+                            ok: _ts?.engine ?? false,
+                            title: '朗读引擎',
+                            subtitle: (_ts?.engine ?? false)
+                                ? '已安装 · ${_size(_ts!.engineBytes)}'
+                                : '约 15 MB',
+                            progress: _ttsEngineProgress,
+                            error: _ttsEngineError,
+                            onDownload: _downloadTtsEngine,
+                            onDelete: (_ts?.engine ?? false)
+                                ? () => _delete('朗读引擎', deleteTtsEngine)
+                                : null,
+                          ),
                         _item(
                           t,
-                          ok: _ts?.engine ?? false,
-                          title: '朗读引擎 · qwentts.cpp',
-                          subtitle: (_ts?.engine ?? false)
-                              ? '已安装 · ${_size(_ts!.engineBytes)}'
-                              : '约 15 MB',
-                          progress: _ttsEngineProgress,
-                          error: _ttsEngineError,
-                          onDownload: _downloadTtsEngine,
-                          onDelete: (_ts?.engine ?? false)
-                              ? () => _delete('朗读引擎', deleteTtsEngine)
-                              : null,
-                        ),
-                        _item(
-                          t,
+                          key: _voiceRow,
                           ok: _ts?.voice != null,
-                          title: '中文语音 · Qwen3-TTS',
+                          title: '中文语音',
                           subtitle: _withPending(
                             _ts?.voice == null
                                 ? '约 1.17 GB'
@@ -907,6 +931,7 @@ class _AiPageState extends State<AiPage> {
 
   Widget _item(
     ReadingTheme t, {
+    Key? key,
     required bool ok,
     required String title,
     required String subtitle,
@@ -933,6 +958,7 @@ class _AiPageState extends State<AiPage> {
                   ? null
                   : '${(progress * 100).round()}%');
     return Padding(
+      key: key,
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

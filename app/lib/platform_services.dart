@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -35,12 +37,38 @@ class AppStoragePaths {
 class AppFileAccess {
   const AppFileAccess();
 
-  Future<List<String>> pickBooks() => _pick(
-    title: '导入 TXT 小说',
-    type: FileType.custom,
-    extensions: const ['txt'],
-    multiple: true,
-  );
+  Future<List<String>> pickBooks() async {
+    final picked = await _pick(
+      title: '导入 TXT 小说',
+      type: FileType.custom,
+      extensions: const ['txt'],
+      multiple: true,
+    );
+    if (!AppPlatformSupport.isMobile) return picked;
+    // A phone hands over a copy in the temporary folder, which the system may
+    // empty at any time: the shelf keeps its own.
+    final books = (await AppStoragePaths.discover()).supportChild('books');
+    await books.create(recursive: true);
+    final kept = <String>[];
+    for (final p in picked) {
+      final source = File(p);
+      final name = p.split(Platform.pathSeparator).last;
+      final dot = name.lastIndexOf('.');
+      final stem = dot > 0 ? name.substring(0, dot) : name;
+      final ext = dot > 0 ? name.substring(dot) : '';
+      final length = await source.length();
+      var target = File('${books.path}${Platform.pathSeparator}$name');
+      // The same file picked again is the same book; another file by the same
+      // name gets a name of its own.
+      for (var n = 2; await target.exists(); n++) {
+        if (await target.length() == length) break;
+        target = File('${books.path}${Platform.pathSeparator}$stem ($n)$ext');
+      }
+      await source.copy(target.path);
+      kept.add(target.path);
+    }
+    return kept;
+  }
 
   Future<String?> pickCoverImage() async {
     final paths = await _pick(title: '选择封面图片', type: FileType.image);
@@ -83,17 +111,98 @@ class AppFileAccess {
   }
 }
 
+/// What iOS counts against the app when it decides to end it, in MB: now, the
+/// most since launch, and the most it would allow. Read from the app's own
+/// accounting (AppDelegate.swift); null on other platforms.
+class AppMemory {
+  const AppMemory(this.now, this.peak, this.limit);
+
+  final int now;
+  final int peak;
+  final int limit;
+
+  static Future<AppMemory?> read() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    try {
+      final m = await const MethodChannel(
+        'novel/memory',
+      ).invokeMapMethod<String, int>('read');
+      final now = m?['now'];
+      if (now == null) return null;
+      int mb(int bytes) => bytes ~/ (1 << 20);
+      return AppMemory(
+        mb(now),
+        mb(m!['peak'] ?? now),
+        mb(now + (m['left'] ?? 0)),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// What the phone is doing right now (AppDelegate.swift): the CPU's busy
+/// share across all cores, and, where iOS shows them to an app, the GPU's and
+/// the battery's temperature. Null on other platforms.
+class DeviceLoad {
+  const DeviceLoad({this.cpu, this.gpu, this.batteryCelsius});
+
+  final int? cpu;
+  final int? gpu;
+  final double? batteryCelsius;
+
+  static Future<DeviceLoad?> read() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    try {
+      final m = await const MethodChannel(
+        'novel/device',
+      ).invokeMapMethod<String, int>('load');
+      if (m == null) return null;
+      final tenths = m['batteryTenths'];
+      return DeviceLoad(
+        cpu: m['cpu'],
+        gpu: m['gpu'],
+        batteryCelsius: tenths == null ? null : tenths / 10,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 abstract interface class DeviceStatusReader {
   Future<AiDeviceState> read();
 }
 
-/// The current native bridge supplies Windows facts. Android and iOS adapters
-/// can later implement the same contract without changing queue policy.
+/// The Rust bridge supplies Windows facts; on iOS the app adds the phone's own
+/// heat, power and memory, without which the queue cannot cool down or wait
+/// for a charger. Android can add the same later.
 class NativeDeviceStatusReader implements DeviceStatusReader {
   const NativeDeviceStatusReader();
 
   @override
-  Future<AiDeviceState> read() => aiDeviceState();
+  Future<AiDeviceState> read() async {
+    final base = await aiDeviceState();
+    if (defaultTargetPlatform != TargetPlatform.iOS) return base;
+    try {
+      final d = await const MethodChannel(
+        'novel/device',
+      ).invokeMapMethod<String, Object>('read');
+      if (d == null) return base;
+      final memory = d['memoryMb'] as int?;
+      return AiDeviceState(
+        platform: base.platform,
+        charging: d['charging'] as bool? ?? base.charging,
+        batteryPercent: d['battery'] as int? ?? base.batteryPercent,
+        idleSeconds: base.idleSeconds,
+        logicalCores: base.logicalCores,
+        totalMemoryMb: memory == null ? base.totalMemoryMb : BigInt.from(memory),
+        thermalState: d['thermal'] as String? ?? base.thermalState,
+      );
+    } catch (_) {
+      return base;
+    }
+  }
 }
 
 abstract interface class LocalSpeechSynthesizer {

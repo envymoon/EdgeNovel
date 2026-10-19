@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:novel/paged_reader.dart';
 import 'package:novel/platform_services.dart';
 import 'package:novel/reader_page.dart';
 import 'package:novel/reader_state.dart';
@@ -80,6 +81,40 @@ class _CompactOpenReader extends _CompactReader {
     required bool atStart,
     required bool atEnd,
   }) async {}
+}
+
+class _LongParagraphReader extends _CompactOpenReader {
+  _LongParagraphReader() {
+    paragraphs = List.generate(
+      6,
+      (index) => Paragraph(
+        kind: ParaKind.body,
+        text: '他把灯挑亮了些，又低头看那张旧地图。' * 40,
+        start: index * 1000,
+        end: index * 1000 + 720,
+      ),
+    );
+  }
+}
+
+/// A chapter of one page, between two others; counts the turns across.
+class _ShortChapterReader extends _CompactOpenReader {
+  _ShortChapterReader() {
+    chapterIndex = 1;
+    paragraphs = paragraphs.take(2).toList();
+  }
+
+  int nexts = 0, prevs = 0;
+
+  @override
+  Future<void> next() async {
+    nexts++;
+  }
+
+  @override
+  Future<void> prev() async {
+    prevs++;
+  }
 }
 
 class _SilentSpeech implements LocalSpeechSynthesizer {
@@ -275,6 +310,195 @@ void main() {
     await tester.pumpAndSettle();
     expect(scaffold.isDrawerOpen, isFalse);
     expect(leftReader, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Aa opens the appearance panel and steps the type', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: settings,
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('阅读外观'));
+    await tester.pumpAndSettle();
+    final size = settings.fontSize;
+    await tester.tap(find.text('A+'));
+    await tester.pump();
+    expect(settings.fontSize, size + 1);
+
+    await tester.tap(find.text('更多'));
+    await tester.pump();
+    expect(find.text('行距'), findsOneWidget);
+    expect(find.text('段距'), findsOneWidget);
+    // No page width on a phone: no page is narrower than its screen.
+    expect(find.textContaining('页宽'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('with the bars away the footer says where you are', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: ReadingSettings(),
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final pageCount = find.textContaining(RegExp(r'^\d+/\d+$'));
+    expect(pageCount, findsNothing);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsNothing);
+    expect(find.text('第一章 开始'), findsOneWidget);
+    expect(pageCount, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a keyboard over the reader leaves its pages as they were', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: ReadingSettings(),
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final pages = find.byType(PagedReader);
+    final size = tester.getSize(pages);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 340);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    expect(tester.getSize(pages), size);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(tester.getSize(pages), size);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the bars come and go over scrolling text without moving it', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings()..pageMode = PageMode.scroll;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: settings,
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final third = find.byType(ParagraphView).at(2);
+    final shown = tester.getTopLeft(third);
+    expect(find.byTooltip('目录'), findsOneWidget);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsNothing);
+    expect(tester.getTopLeft(third), shown);
+
+    await tester.tapAt(const Offset(195, 380));
+    await tester.pump();
+    expect(find.byTooltip('目录'), findsOneWidget);
+    expect(tester.getTopLeft(third), shown);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('A+ then A- comes back to the page, not the paragraph start', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final settings = ReadingSettings();
+    final reader = _LongParagraphReader();
+    final pageInfo = ValueNotifier<(int, int)>((1, 1));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListenableBuilder(
+          listenable: settings,
+          builder: (context, _) => PagedReader(
+            reader: reader,
+            settings: settings,
+            padding: const EdgeInsets.all(20),
+            pageInfo: pageInfo,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(pageInfo.value.$2, greaterThan(pageInfo.value.$1 + 3));
+    final pager = tester.state<PagedReaderState>(find.byType(PagedReader));
+    // These paragraphs run to two pages and more, so of three pages in a row
+    // at least one opens in the middle of a paragraph.
+    for (var i = 0; i < 3; i++) {
+      pager.turn(1);
+      await tester.pump();
+      final page = pageInfo.value.$1;
+      settings.setFontSize(settings.fontSize + 1);
+      await tester.pump();
+      await tester.pump();
+      settings.setFontSize(settings.fontSize - 1);
+      await tester.pump();
+      await tester.pump();
+      expect(pageInfo.value.$1, page);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("a swipe off a chapter's edge goes on into the next one", (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final reader = _ShortChapterReader();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: reader,
+          settings: ReadingSettings(),
+          padding: const EdgeInsets.all(20),
+          pageInfo: ValueNotifier((1, 1)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.dragFrom(const Offset(300, 380), const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 0));
+    await tester.dragFrom(const Offset(90, 380), const Offset(200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 1));
     expect(tester.takeException(), isNull);
   });
 

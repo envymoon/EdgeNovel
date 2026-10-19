@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_digest`, `chapter_excerpt`, `chapter_titles`, `data_dir`, `db_path`, `ensure_loaded`, `is_loaded`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `read_quietly`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `snippet`, `source_label`, `store`, `summarized_chapters`, `unjudged_names`
+// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_digest`, `chapter_titles`, `clip`, `data_dir`, `db_path`, `digest`, `ensure_loaded`, `excerpt`, `is_loaded`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summarized_chapters`, `summary_excerpt`, `unjudged_names`, `with_text`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -210,12 +210,9 @@ Future<void> setPinOrder({required Int64List ids}) =>
 Future<void> closeBook({required String path}) =>
     RustLib.instance.api.crateApiBookCloseBook(path: path);
 
-/// Literal search: the words, exactly as typed. No model, no index, nothing to
-/// install — it works on a book imported thirty seconds ago.
-///
-/// Bounded by the same spoiler line as the semantic one: text the reader has not
-/// reached is not searched. Finding the murderer's name in chapter 900 by
-/// searching for it in chapter 20 is still a spoiler, however it was found.
+/// Literal search: the words, exactly as typed, through `up_to_chapter`. No
+/// model, no index, nothing to install — it works on a book imported thirty
+/// seconds ago.
 Future<List<SearchHit>> searchText({
   required String path,
   required String query,
@@ -239,15 +236,18 @@ Future<List<double?>> chapterPace({required String path}) =>
 /// Scan the cast and relationships. Pure rules, no engine, no download —
 /// then whatever the model has already ruled on for this book is laid over the
 /// top: candidates it rejected are dropped along with their edges, and labels it
-/// picked fill in the ones the rules left open.
+/// picked fill in the ones the rules left open. `top` is how many the reader
+/// asked to see (3, 5 or 10).
 Future<CastGraph> castGraph({
   required String path,
   required PlatformInt64 bookId,
   required PlatformInt64 upToChapter,
+  required int top,
 }) => RustLib.instance.api.crateApiBookCastGraph(
   path: path,
   bookId: bookId,
   upToChapter: upToChapter,
+  top: top,
 );
 
 /// The pre-reading relationship structure always scans the whole available
@@ -545,12 +545,12 @@ class CastPerson {
   final String? background;
 
   /// What [`Self::background`] was written from, said for the reader
-  /// (章节概览 / 章节概览与原文摘句 / 原文摘句), or None when unknown.
+  /// (原文摘句), or None when unknown.
   final String? backgroundSource;
 
-  /// The background could now be written from better material — more
-  /// chapter summaries than when it was written, or it predates them. The old
-  /// one is still shown until the reader asks for a new one.
+  /// The background predates recorded sources and came from the older
+  /// sentence sample. The old one is still shown until the reader asks for a
+  /// new one.
   final bool backgroundOutdated;
 
   /// The sentences that account rests on — shown to the reader, so a claim

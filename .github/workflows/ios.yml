@@ -1,0 +1,212 @@
+# iOS has no Mac of its own here: every push to the ios branch builds the app
+# on a GitHub macOS runner, photographs it running in the simulator, and leaves
+# an unsigned .ipa to sign and sideload from Windows.
+#
+# Logs and artifacts of this public repo are public: only build from what is
+# in the repo. A user's book only ever comes in as a secret, never printed.
+name: iOS
+
+on:
+  push:
+    branches: [ios]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    # The first build of the compiled-in llama.cpp, once per architecture,
+    # takes most of this.
+    timeout-minutes: 150
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.5
+          channel: stable
+          cache: true
+
+      - name: Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      # The engines' Metal kernels are compiled at build time; from Xcode 26
+      # on, the compiler is a download of its own.
+      - name: Metal compiler
+        run: |
+          xcodebuild -version
+          xcrun metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
+      - run: flutter pub get
+
+      # The tests that pin down what each platform shows.
+      - name: Platform tests
+        run: >-
+          flutter test
+          test/platform_support_test.dart
+          test/appearance_test.dart
+          test/app_language_test.dart
+          test/mobile_compact_flow_test.dart
+          test/paged_justify_test.dart
+          test/shelf_summary_test.dart
+          test/model_download_test.dart
+          test/tts_chapters_test.dart
+          test/tts_text_test.dart
+          test/feedback_test.dart
+
+      # The whole Xcode log goes into the artifact; a failure prints its errors.
+      - name: Build for the simulator
+        run: |
+          mkdir -p ../shots
+          flutter build ios --simulator --debug -v > ../shots/build-sim.log 2>&1 || {
+            grep -n -E "error:|error\[|panicked|CMake Error|failed" ../shots/build-sim.log | tail -80
+            tail -150 ../shots/build-sim.log
+            exit 1
+          }
+
+      - name: Screenshot in the simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          print(next(x["udid"] for r in sorted(d, reverse=True) for x in d[r] if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/ios/iphonesimulator/Runner.app
+          xcrun simctl launch "$UDID" com.novel.novel
+          sleep 30
+          xcrun simctl io "$UDID" screenshot ../shots/launch.png
+          xcrun simctl spawn "$UDID" log show --last 2m --predicate 'process == "Runner"' > ../shots/runner.log || true
+
+      - name: Build the unsigned ipa
+        run: |
+          flutter build ios --release --no-codesign
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qry ../Zhiyue-iOS-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-build
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            shots/
+            Zhiyue-iOS-unsigned.ipa
+
+  # The engine with the app's own models on the Mac's GPU, built the way iOS
+  # builds it: load times, speeds and memory. The test chapters come from a
+  # secret and never reach the log.
+  engine:
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: app/rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/models
+          key: models-qwen3-0.6b-q8-bge-small-zh-f16
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/tts
+          key: tts-qwen3-tts-0.6b-customvoice-q8
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/image
+          key: image-anime-cover-q5-taesd
+
+      - name: Models
+        run: |
+          mkdir -p ~/models && cd ~/models
+          get() {
+            [ -f "$1" ] || curl -fsSL --retry 3 -o "$1" "$2"
+            echo "$3  $1" | shasum -a 256 -c
+          }
+          get Qwen3-0.6B-Q8_0.gguf             https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf             9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031
+          get bge-small-zh-v1.5-f16.gguf             https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/bge-small-zh-v1.5-f16.gguf             ab9b81d9cd329c712eee379cf0068eabe6a5e2a01d0def61535eba9384085e2c
+          ls -l
+          # 听书: the voice the app downloads.
+          mkdir -p ~/tts && cd ~/tts
+          get qwen-talker-0.6b-customvoice-Q8_0.gguf https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-talker-0.6b-customvoice-Q8_0.gguf 4eb38675c736ed6ac72012846ac8d6ef80e5af8bc05726870f0b3a6569588519
+          get qwen-tokenizer-12hz-dec-Q8_0.gguf      https://huggingface.co/ianhaimo/edgenovel-qwen-tts/resolve/main/qwen-tokenizer-12hz-dec-Q8_0.gguf      72b05f6436093f4698fc7b2e69d726a26008c78d2cf7007413e39e9f4cd6b556
+          ls -l
+          # AI 封面 and 章间立绘: the model the app downloads.
+          mkdir -p ~/image && cd ~/image
+          get anime-cover-q5_0.gguf https://huggingface.co/ianhaimo/edgenovel-anime-cover/resolve/main/anime-cover-q5_0.gguf cb8c8ce181c2665c022c2a4211e9d593e705026ac07c3d474377921f19c00d38
+          get taesd.safetensors     https://huggingface.co/ianhaimo/edgenovel-anime-cover/resolve/main/taesd.safetensors     db169d69145ec4ff064e49d99c95fa05d3eb04ee453de35824a6d0f325513549
+          ls -l
+
+      - name: Machine
+        run: |
+          sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
+          system_profiler SPDisplaysDataType
+
+      # The engines' Metal kernels are compiled at build time; from Xcode 26
+      # on, the compiler is a download of its own.
+      - name: Metal compiler
+        run: |
+          xcodebuild -version
+          xcrun metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
+      - name: Engine test
+        env:
+          TEST_TEXT: ${{ secrets.ENGINE_TEST_TEXT }}
+        # Under the debugger: the engine shares the test's process, so a crash
+        # in it ends the test, and the backtrace says where.
+        run: |
+          printf '%s' "$TEST_TEXT" > "$RUNNER_TEMP/chapters.txt"
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          sudo DevToolsSecurity -enable || true
+          NOVEL_AI_DIR=~/models NOVEL_TEST_TEXT="$RUNNER_TEMP/chapters.txt"             lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" engine_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/bench.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/bench.log"
+
+      # 听书 the way iOS runs it: on the GPU, on the CPU behind the screen, and
+      # a sentence moved from one to the other halfway.
+      - name: TTS test
+        run: |
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          NOVEL_TTS_DIR=~/tts lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" tts_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/tts.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/tts.log"
+
+      # AI 封面 the way iOS draws it: in the app's process, on the GPU where
+      # this one can and on the CPU. The pictures are kept with the run.
+      - name: Image test
+        if: always()
+        run: |
+          BIN=$(cargo test --locked --lib --no-run --message-format=json |
+            jq -r 'select(.profile.test == true) | .executable')
+          NOVEL_IMAGE_DIR=~/image NOVEL_IMAGE_OUT="$RUNNER_TEMP/image" lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" draws_in_the_app --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/image.log"
+          grep -q "test result: ok" "$RUNNER_TEMP/image.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-test
+          path: ${{ runner.temp }}/image
+
+  # The Rust shared with the Windows app must still compile for Windows.
+  rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app/rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo check --locked
+      - name: Search ranking tests
+        working-directory: core
+        run: "cargo test --locked --lib chunk::"

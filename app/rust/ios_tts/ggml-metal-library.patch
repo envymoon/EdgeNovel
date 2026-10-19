@@ -1,0 +1,538 @@
+diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
+--- a/src/ggml-metal/CMakeLists.txt	2026-10-18 16:17:06.170164700 -0700
++++ b/src/ggml-metal/CMakeLists.txt	2026-10-18 18:05:58.199814400 -0700
+@@ -193,9 +193,13 @@
+     if (GGML_METAL_MACOSX_VERSION_MIN)
+         message(STATUS "Adding  -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN} flag to metal compilation")
+         list   (APPEND XC_FLAGS -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN})
+-    elseif (NOT GGML_METAL_TARGET_OS STREQUAL "macos" AND CMAKE_OSX_DEPLOYMENT_TARGET)
+-        message(STATUS "Adding  -mtargetos=${GGML_METAL_TARGET_OS}${CMAKE_OSX_DEPLOYMENT_TARGET}${METAL_TARGET_SIM} flag to metal compilation")
+-        list   (APPEND XC_FLAGS -mtargetos=${GGML_METAL_TARGET_OS}${CMAKE_OSX_DEPLOYMENT_TARGET}${METAL_TARGET_SIM})
++    elseif (NOT GGML_METAL_TARGET_OS STREQUAL "macos" AND (GGML_METAL_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET))
++        # the kernels' own floor, which may be above the app's
++        if (NOT GGML_METAL_DEPLOYMENT_TARGET)
++            set(GGML_METAL_DEPLOYMENT_TARGET ${CMAKE_OSX_DEPLOYMENT_TARGET})
++        endif()
++        message(STATUS "Adding  -mtargetos=${GGML_METAL_TARGET_OS}${GGML_METAL_DEPLOYMENT_TARGET}${METAL_TARGET_SIM} flag to metal compilation")
++        list   (APPEND XC_FLAGS -mtargetos=${GGML_METAL_TARGET_OS}${GGML_METAL_DEPLOYMENT_TARGET}${METAL_TARGET_SIM})
+     endif()
+ 
+     if (GGML_METAL_STD)
+diff -ruN a/src/ggml-metal/ggml-metal-common.cpp b/src/ggml-metal/ggml-metal-common.cpp
+--- a/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 16:17:06.170164700 -0700
++++ b/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 18:05:58.249333600 -0700
+@@ -115,6 +115,8 @@
+     }
+ }
+ 
++int ggml_metal_fast_move = 0;
++
+ bool ggml_metal_op_mul_mat_use_mma(const struct ggml_tensor * op) {
+     const ggml_tensor * src0 = op->src[0];
+     const ggml_tensor * src1 = op->src[1];
+diff -ruN a/src/ggml-metal/ggml-metal-common.h b/src/ggml-metal/ggml-metal-common.h
+--- a/src/ggml-metal/ggml-metal-common.h	2026-10-18 16:17:06.171202200 -0700
++++ b/src/ggml-metal/ggml-metal-common.h	2026-10-18 18:06:16.864688800 -0700
+@@ -56,6 +56,13 @@
+ bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
+ 
+ bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
++
++// GGML_METAL_FAST_MOVE, read again at every backend init: a 1D IM2COL and a copy out of a
++// transposed view by kernels that keep every thread of a group busy and read and write along rows;
++// the same values, moved faster. At 2 also a copy whose rows stay rows by whole rows a group, and
++// the 1D IM2COL by tiles through threadgroup memory, a tile of positions and channels read once
++// along the rows of the input
++extern int ggml_metal_fast_move;
+ bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op); // graph structure only
+ 
+ // the few-row MMA kernel for a src0 type and rt src1 tiles: per 32-weight block (q4_0, q8_0 with one tile), q5_K, or the generic 64-weight chunk kernel
+diff -ruN a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-context.m
+--- a/src/ggml-metal/ggml-metal-context.m	2026-10-18 16:17:06.172216000 -0700
++++ b/src/ggml-metal/ggml-metal-context.m	2026-10-18 18:05:58.250333400 -0700
+@@ -153,6 +153,9 @@
+         }
+ 
+         res->finfo = ggml_metal_device_get_fusion_info(dev);
++        // the device outlives a backend, and the next one may be asked for other kernels
++        ggml_metal_fusion_info_set_enabled(res->finfo, getenv("GGML_METAL_FUSION_DISABLE") == nil);
++        ggml_metal_fast_move = getenv("GGML_METAL_FAST_MOVE") == nil ? 0 : MAX(1, atoi(getenv("GGML_METAL_FAST_MOVE")));
+         if (ggml_metal_fusion_info_stats(res->finfo)) {
+             ggml_metal_fusion_info_labels_init(res->finfo);
+             res->n_cb = 0;
+diff -ruN a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
+--- a/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 16:17:06.173249100 -0700
++++ b/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 18:05:58.203819000 -0700
+@@ -97,6 +97,36 @@
+     return res;
+ }
+ 
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy_tr(ggml_metal_library_t lib, ggml_type tsrc, ggml_type tdst) {
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_cpy_tr_%s_%s", ggml_type_name(tsrc), ggml_type_name(tdst));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy_rows(ggml_metal_library_t lib, ggml_type tsrc, ggml_type tdst) {
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_cpy_rows_%s_%s", ggml_type_name(tsrc), ggml_type_name(tdst));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d(ggml_metal_library_t lib, const ggml_tensor * op, ggml_op_pool op_pool) {
+     GGML_ASSERT(ggml_is_contiguous(op->src[0]));
+     GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32 && op->src[0]->type == op->type);
+@@ -2348,6 +2378,48 @@
+     snprintf(name, 256, "%s", base);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_1d(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_IM2COL);
++
++    GGML_ASSERT(ggml_is_contiguous(op->src[1]));
++    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
++    GGML_ASSERT(op->type         == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_im2col_1d_%s", ggml_type_name(op->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_1d_tile(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_IM2COL);
++
++    GGML_ASSERT(ggml_is_contiguous(op->src[1]));
++    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
++    GGML_ASSERT(op->type         == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_im2col_1d_tile_%s", ggml_type_name(op->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
+         res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+     }
+diff -ruN a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
+--- a/src/ggml-metal/ggml-metal-device.h	2026-10-18 16:17:06.173249100 -0700
++++ b/src/ggml-metal/ggml-metal-device.h	2026-10-18 18:05:58.202825300 -0700
+@@ -109,6 +109,8 @@
+ 
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base              (ggml_metal_library_t lib, enum ggml_op op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy               (ggml_metal_library_t lib, enum ggml_type tsrc, enum ggml_type tdst);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy_tr            (ggml_metal_library_t lib, enum ggml_type tsrc, enum ggml_type tdst);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy_rows          (ggml_metal_library_t lib, enum ggml_type tsrc, enum ggml_type tdst);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_2d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows          (ggml_metal_library_t lib, enum ggml_type tsrc);
+@@ -162,6 +164,8 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm_scale        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope              (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col            (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_1d         (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_1d_tile    (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_1d (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_2d (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_col2im_1d         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
+--- a/src/ggml-metal/ggml-metal-device.m	2026-10-18 16:17:06.174251100 -0700
++++ b/src/ggml-metal/ggml-metal-device.m	2026-10-18 18:05:58.203819000 -0700
+@@ -507,7 +507,9 @@
+     const int64_t t_start = ggml_time_us();
+ 
+     NSError * error = nil;
+-    NSString * path_lib = ggml_metal_find_metallib(bundle, @"default");
++    // an app keeps the library where it likes, beside another ggml's
++    const char * env_lib = getenv("GGML_METAL_LIBRARY");
++    NSString * path_lib = env_lib ? [NSString stringWithUTF8String:env_lib] : ggml_metal_find_metallib(bundle, @"default");
+ 
+     if (path_lib != nil) {
+         // pre-compiled library found: a single combined default.metallib
+diff -ruN a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
+--- a/src/ggml-metal/ggml-metal-impl.h	2026-10-18 16:17:06.176248600 -0700
++++ b/src/ggml-metal/ggml-metal-impl.h	2026-10-18 18:05:58.202825300 -0700
+@@ -781,6 +781,10 @@
+     int32_t  KH;
+     int32_t  KW;
+     int32_t  KHW; // KH * KW, pre-computed on CPU to save GPU resources
++    int32_t  OW;  // kernel_im2col_1d
++    int32_t  TW;  // kernel_im2col_1d_tile: output positions a tile
++    int32_t  ICB; // kernel_im2col_1d_tile: input channels a tile
++    int32_t  SP;  // kernel_im2col_1d_tile: input positions a tile reads, (TW - 1)*s0 + (KW - 1)*d0 + 1
+ } ggml_metal_kargs_im2col;
+ 
+ typedef struct {
+diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
+--- a/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 16:17:06.177249800 -0700
++++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 18:05:58.251333200 -0700
+@@ -2227,6 +2227,86 @@
+ 
+     GGML_ASSERT(ne00 % ggml_blck_size(op->src[0]->type) == 0);
+ 
++    // out of a transposed view, by tiles
++    const size_t ts0 = ggml_type_size(op->src[0]->type);
++    if (ggml_metal_fast_move &&
++        (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
++        (op->type         == GGML_TYPE_F32 || op->type         == GGML_TYPE_F16) &&
++        nb00 != ts0 && nb01 == ts0 && ne00 >= 8 && ne01 >= 8 &&
++        ggml_are_same_shape(op->src[0], op) && ggml_is_contiguous(op)) {
++        auto tr = ggml_metal_library_get_pipeline_cpy_tr(lib, op->src[0]->type, op->type);
++
++        ggml_metal_kargs_cpy args = {
++            /*.nk0  =*/ ne00,
++            /*.ne00 =*/ ne00,
++            /*.ne01 =*/ ne01,
++            /*.ne02 =*/ ne02,
++            /*.ne03 =*/ ne03,
++            /*.nb00 =*/ nb00,
++            /*.nb01 =*/ nb01,
++            /*.nb02 =*/ nb02,
++            /*.nb03 =*/ nb03,
++            /*.ne0  =*/ ne0,
++            /*.ne1  =*/ ne1,
++            /*.ne2  =*/ ne2,
++            /*.ne3  =*/ ne3,
++            /*.nb0  =*/ nb0,
++            /*.nb1  =*/ nb1,
++            /*.nb2  =*/ nb2,
++            /*.nb3  =*/ nb3,
++        };
++
++        ggml_metal_encoder_set_pipeline(enc, tr);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++        ggml_metal_encoder_set_threadgroup_memory_size(enc, 32*33*ggml_type_size(op->type), 0);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, (ne00 + 31)/32, (ne01 + 31)/32, ne02*ne03, 32, 8, 1);
++
++        return 1;
++    }
++
++    // rows that stay rows, by whole rows: kernel_cpy_t_t works out where each entry goes, one at a time
++    if (ggml_metal_fast_move >= 2 &&
++        (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
++        (op->type         == GGML_TYPE_F32 || op->type         == GGML_TYPE_F16) &&
++        nb00 == ts0 && nb0 == ggml_type_size(op->type) && ggml_are_same_shape(op->src[0], op)) {
++        auto rows = ggml_metal_library_get_pipeline_cpy_rows(lib, op->src[0]->type, op->type);
++
++        ggml_metal_kargs_cpy args = {
++            /*.nk0  =*/ ne00,
++            /*.ne00 =*/ ne00,
++            /*.ne01 =*/ ne01,
++            /*.ne02 =*/ ne02,
++            /*.ne03 =*/ ne03,
++            /*.nb00 =*/ nb00,
++            /*.nb01 =*/ nb01,
++            /*.nb02 =*/ nb02,
++            /*.nb03 =*/ nb03,
++            /*.ne0  =*/ ne0,
++            /*.ne1  =*/ ne1,
++            /*.ne2  =*/ ne2,
++            /*.ne3  =*/ ne3,
++            /*.nb0  =*/ nb0,
++            /*.nb1  =*/ nb1,
++            /*.nb2  =*/ nb2,
++            /*.nb3  =*/ nb3,
++        };
++
++        const int nx = std::min<int>(256, (ne00 + 31)/32*32);
++        const int ny = std::max(1, 256/nx);
++
++        ggml_metal_encoder_set_pipeline(enc, rows);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + ny - 1)/ny, ne02, ne03, nx, ny, 1);
++
++        return 1;
++    }
++
+     int64_t nk0 = ne00;
+     if (ggml_is_quantized(op->src[0]->type)) {
+         nk0 = ne00/16;
+@@ -4664,8 +4744,50 @@
+         /*.KH   =*/ KH,
+         /*.KW   =*/ KW,
+         /*.KHW  =*/ KH * KW,
++        /*.OW   =*/ OW,
++        /*.TW   =*/ 64,
++        /*.ICB  =*/ 0,
++        /*.SP   =*/ (64 - 1)*s0 + (KW - 1)*d0 + 1,
+     };
+ 
++    // by tiles: TW positions and ICB channels a group, the input they read through threadgroup
++    // memory (at most 4096 floats); a group's threads along the KW*ICB entries of an output row
++    args.ICB = std::min(256/KW, 4096/args.SP);
++    if (ggml_metal_fast_move >= 2 && !is_2D && args.ICB >= 1) {
++        auto pipeline = ggml_metal_library_get_pipeline_im2col_1d_tile(lib, op);
++
++        const int row = args.ICB*KW;
++        const int nx  = (row + 31)/32*32;
++        const int ny  = std::max(1, 256/nx);
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++        ggml_metal_encoder_set_threadgroup_memory_size(enc, (args.ICB*args.SP*sizeof(float) + 15)/16*16, 0);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, (OW + args.TW - 1)/args.TW, (IC + args.ICB - 1)/args.ICB, N, nx, ny, 1);
++
++        return 1;
++    }
++
++    if (ggml_metal_fast_move && !is_2D) {
++        auto pipeline = ggml_metal_library_get_pipeline_im2col_1d(lib, op);
++
++        // a group along a row, and over as many rows as fill it
++        const int nx = std::min(256, (CHW + 31)/32*32);
++        const int ny = std::max(1, 256/nx);
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, (CHW + nx - 1)/nx, (OW + ny - 1)/ny, N, nx, ny, 1);
++
++        return 1;
++    }
++
+     auto pipeline = ggml_metal_library_get_pipeline_im2col(lib, op);
+ 
+     if (KH*KW <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
+diff -ruN a/src/ggml-metal/kernels/conv.metal b/src/ggml-metal/kernels/conv.metal
+--- a/src/ggml-metal/kernels/conv.metal	2026-10-18 16:17:06.184267300 -0700
++++ b/src/ggml-metal/kernels/conv.metal	2026-10-18 18:05:58.193473500 -0700
+@@ -118,6 +118,99 @@
+ template [[host_name("kernel_im2col_ext_f32")]] kernel im2col_ext_t kernel_im2col_ext<float>;
+ template [[host_name("kernel_im2col_ext_f16")]] kernel im2col_ext_t kernel_im2col_ext<half>;
+ 
++// 1D: a thread an entry of the output, the threads of a group along its rows (x: ic*KW + ikw,
++// y: output position), so every thread of a group works and the writes go out in rows.
++// kernel_im2col gives a group KW threads, a fifth of a SIMD group at KW = 7 and one thread at
++// KW = 1. The same values as kernel_im2col writes.
++template <typename T>
++kernel void kernel_im2col_1d(
++        constant ggml_metal_kargs_im2col & args,
++        device const float * x,
++        device        char * dst,
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]) {
++    const int64_t i   = (int64_t) tgpig[0]*ntg[0] + tpitg[0];
++    const int64_t iow = (int64_t) tgpig[1]*ntg[1] + tpitg[1];
++
++    if (i >= args.CHW || iow >= args.OW) {
++        return;
++    }
++
++    const int64_t in  = tgpig[2];
++    const int64_t iic = i/args.KW;
++    const int64_t ikw = i - iic*args.KW;
++    const int64_t iiw = iow*args.s0 + ikw*args.d0 - args.p0;
++
++    device T * pdst = (device T *) dst + (in*args.OW + iow)*args.CHW + i;
++
++    if (iiw < 0 || iiw >= args.IW) {
++        *pdst = 0.0f;
++    } else {
++        *pdst = x[in*args.ofs0 + iic*args.ofs1 + iiw];
++    }
++}
++
++typedef decltype(kernel_im2col_1d<float>) im2col_1d_t;
++
++// 1D by tiles: a group TW output positions and ICB input channels. The input those read, SP
++// positions of each channel, goes to threadgroup memory along its rows once, zero outside the
++// input; then the group's threads lie along the ICB*KW entries of an output row (x) and over its
++// positions (y), and write in rows. The same values as kernel_im2col writes.
++template <typename T>
++kernel void kernel_im2col_1d_tile(
++        constant ggml_metal_kargs_im2col & args,
++        device const float * x,
++        device        char * dst,
++        threadgroup  float * shmem [[threadgroup(0)]],
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]) {
++    const int32_t IC  = args.CHW/args.KW;
++    const int32_t ow0 = tgpig[0]*args.TW;
++    const int32_t ic0 = tgpig[1]*args.ICB;
++    const int32_t in  = tgpig[2];
++    const int32_t nic = min(args.ICB, IC - ic0);
++    const int32_t iw0 = ow0*args.s0 - args.p0;
++
++    device const float * xs = x + in*args.ofs0 + ic0*args.ofs1;
++
++    const int32_t nt  = ntg[0]*ntg[1];
++    const int32_t tid = tpitg[1]*ntg[0] + tpitg[0];
++    for (int32_t e = tid; e < nic*args.SP; e += nt) {
++        const int32_t c  = e/args.SP;
++        const int32_t j  = e - c*args.SP;
++        const int32_t iw = iw0 + j;
++        shmem[e] = (iw >= 0 && iw < args.IW) ? xs[c*args.ofs1 + iw] : 0.0f;
++    }
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    const int32_t r = tpitg[0];
++    if (r >= nic*args.KW) {
++        return;
++    }
++
++    const int32_t c   = r/args.KW;
++    const int32_t k   = r - c*args.KW;
++    const int32_t now = min(args.TW, args.OW - ow0);
++
++    threadgroup const float * from = shmem + c*args.SP + k*args.d0;
++    device T * pdst = (device T *) dst + ((int64_t) in*args.OW + ow0)*args.CHW + ic0*args.KW + r;
++
++    for (int32_t o = tpitg[1]; o < now; o += ntg[1]) {
++        pdst[(int64_t) o*args.CHW] = from[o*args.s0];
++    }
++}
++
++typedef decltype(kernel_im2col_1d_tile<float>) im2col_1d_tile_t;
++
++template [[host_name("kernel_im2col_1d_tile_f32")]] kernel im2col_1d_tile_t kernel_im2col_1d_tile<float>;
++template [[host_name("kernel_im2col_1d_tile_f16")]] kernel im2col_1d_tile_t kernel_im2col_1d_tile<half>;
++
++template [[host_name("kernel_im2col_1d_f32")]] kernel im2col_1d_t kernel_im2col_1d<float>;
++template [[host_name("kernel_im2col_1d_f16")]] kernel im2col_1d_t kernel_im2col_1d<half>;
++
+ template <typename T>
+ kernel void kernel_col2im_1d(
+         constant ggml_metal_kargs_col2im_1d & args,
+diff -ruN a/src/ggml-metal/kernels/quantize.metal b/src/ggml-metal/kernels/quantize.metal
+--- a/src/ggml-metal/kernels/quantize.metal	2026-10-18 16:17:06.200689300 -0700
++++ b/src/ggml-metal/kernels/quantize.metal	2026-10-18 18:05:58.195813900 -0700
+@@ -37,6 +37,90 @@
+ 
+ typedef decltype(kernel_cpy_t_t<float, float>) kernel_cpy_t;
+ 
++// A copy out of a view whose dim 1 is the contiguous one (a transpose) into a contiguous tensor of
++// the same shape, by 32x32 tiles through threadgroup memory: read along dim 1 and written along
++// dim 0, both in rows. kernel_cpy_t_t reads such a view a strided element at a time. Groups of
++// 32x8 threads, a tile a group; the same values as kernel_cpy_t_t writes.
++template<typename T0, typename T1>
++kernel void kernel_cpy_tr(
++        constant ggml_metal_kargs_cpy & args,
++        device  const char * src0,
++        device        char * dst,
++        threadgroup   char * shmem [[threadgroup(0)]],
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]]) {
++    threadgroup T1 * tile = (threadgroup T1 *) shmem; // [32][33]
++
++    const int64_t i0b = (int64_t) tgpig[0]*32;
++    const int64_t i1b = (int64_t) tgpig[1]*32;
++    const int64_t i2  = tgpig[2] % args.ne02;
++    const int64_t i3  = tgpig[2] / args.ne02;
++
++    const short tx = tpitg[0];
++
++    device const char * src = src0 + i2*args.nb02 + i3*args.nb03;
++    for (short r = tpitg[1]; r < 32; r += 8) {
++        const int64_t i0 = i0b + r;
++        const int64_t i1 = i1b + tx;
++        if (i0 < args.ne00 && i1 < args.ne01) {
++            tile[r*33 + tx] = (T1) *((device const T0 *) (src + i0*args.nb00 + i1*args.nb01));
++        }
++    }
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    device char * out = dst + i2*args.nb2 + i3*args.nb3;
++    for (short r = tpitg[1]; r < 32; r += 8) {
++        const int64_t i0 = i0b + tx;
++        const int64_t i1 = i1b + r;
++        if (i0 < args.ne00 && i1 < args.ne01) {
++            *((device T1 *) (out + i0*args.nb0 + i1*args.nb1)) = tile[tx*33 + r];
++        }
++    }
++}
++
++typedef decltype(kernel_cpy_tr<float, float>) kernel_cpy_tr_t;
++
++// A copy between tensors of the same shape whose rows are contiguous in both, as out of a view
++// that keeps dim 0 where it is: a row (or ntg[1] short ones) a group, its threads along it.
++// kernel_cpy_t_t works out from the flat index where each entry goes, a thread an entry. The same
++// values as kernel_cpy_t_t writes.
++template<typename T0, typename T1>
++kernel void kernel_cpy_rows(
++        constant ggml_metal_kargs_cpy & args,
++        device  const char * src0,
++        device        char * dst,
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]) {
++    const int32_t i01 = tgpig[0]*ntg[1] + tpitg[1];
++    const int32_t i02 = tgpig[1];
++    const int32_t i03 = tgpig[2];
++
++    if (i01 >= args.ne01) {
++        return;
++    }
++
++    device const T0 * src = (device const T0 *) (src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01);
++    device       T1 * out = (device       T1 *) (dst  + i03*args.nb3  + i02*args.nb2  + i01*args.nb1);
++
++    for (int32_t i00 = tpitg[0]; i00 < args.ne00; i00 += ntg[0]) {
++        out[i00] = (T1) src[i00];
++    }
++}
++
++typedef decltype(kernel_cpy_rows<float, float>) kernel_cpy_rows_t;
++
++template [[host_name("kernel_cpy_rows_f32_f32")]] kernel kernel_cpy_rows_t kernel_cpy_rows<float, float>;
++template [[host_name("kernel_cpy_rows_f32_f16")]] kernel kernel_cpy_rows_t kernel_cpy_rows<float, half>;
++template [[host_name("kernel_cpy_rows_f16_f16")]] kernel kernel_cpy_rows_t kernel_cpy_rows<half,  half>;
++template [[host_name("kernel_cpy_rows_f16_f32")]] kernel kernel_cpy_rows_t kernel_cpy_rows<half,  float>;
++
++template [[host_name("kernel_cpy_tr_f32_f32")]] kernel kernel_cpy_tr_t kernel_cpy_tr<float, float>;
++template [[host_name("kernel_cpy_tr_f32_f16")]] kernel kernel_cpy_tr_t kernel_cpy_tr<float, half>;
++template [[host_name("kernel_cpy_tr_f16_f16")]] kernel kernel_cpy_tr_t kernel_cpy_tr<half,  half>;
++template [[host_name("kernel_cpy_tr_f16_f32")]] kernel kernel_cpy_tr_t kernel_cpy_tr<half,  float>;
++
+ template [[host_name("kernel_cpy_f32_f32")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   float>;
+ template [[host_name("kernel_cpy_f32_f16")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   half>;
+ template [[host_name("kernel_cpy_f32_i32")]]   kernel kernel_cpy_t kernel_cpy_t_t<float,   int32_t>;

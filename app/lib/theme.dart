@@ -51,6 +51,8 @@ const readingThemes = <ReadingTheme>[
   ReadingTheme('雾青', Color(0xFFEDF3F1), Color(0xFF243D38), Color(0xFF667C75)),
   ReadingTheme('暮紫', Color(0xFFF2EFF6), Color(0xFF393146), Color(0xFF797082)),
   ReadingTheme('深海', Color(0xFF17272D), Color(0xFFD0DFE3), Color(0xFF8FA6AF)),
+  // The night switch's: dimmer and warmer than 夜间, for reading in the dark.
+  ReadingTheme('夜读', Color(0xFF12110F), Color(0xFF948B7E), Color(0xFF5C564D)),
 ];
 
 const interfaceAccents = <Color>[
@@ -61,8 +63,17 @@ const interfaceAccents = <Color>[
   Color(0xFF996154),
 ];
 
-/// Only Windows opts into the new appearance until mobile validation.
-bool get windowsAppearance => defaultTargetPlatform == TargetPlatform.windows;
+/// Windows and iOS use the new appearance; Android keeps the old one until it
+/// has been checked on a phone.
+bool get windowsAppearance =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.iOS;
+
+/// The face interface and body text fall back to: 微软雅黑 on Windows, the
+/// system's own 苹方 on iOS.
+String get defaultFontFamily => defaultTargetPlatform == TargetPlatform.iOS
+    ? 'PingFang SC'
+    : 'Microsoft YaHei';
 
 /// The shared, deliberately static visual system. It gives backgrounds, bars,
 /// cards, controls and icons one rhythm while remaining as cheap to render as
@@ -90,7 +101,7 @@ ThemeData buildAppTheme(ReadingSettings settings) {
   return ThemeData(
     useMaterial3: true,
     fontFamily: windowsAppearance ? settings.resolvedInterfaceFont : null,
-    fontFamilyFallback: windowsAppearance
+    fontFamilyFallback: defaultTargetPlatform == TargetPlatform.windows
         ? const ['Microsoft YaHei', 'Segoe UI', 'Segoe UI Emoji']
         : null,
     extensions: [
@@ -201,22 +212,31 @@ enum PageMode { scroll, paged }
 
 class ReadingSettings extends ChangeNotifier {
   AppLanguage language = AppLanguage.simplifiedChinese;
-  int themeIndex = 1;
+  static const defaultThemeIndex = 1;
+
+  int themeIndex = defaultThemeIndex;
   String fontFamily = '';
   String interfaceFontFamily = '';
   bool uniformInterfaceWeight = true;
   bool shelfCoverMode = false;
   int accentIndex = 0;
 
+  /// A book on the shelf opens to its detail page (扫书报告) first. Off, it
+  /// opens straight into the text; the page is still in the reader's drawer.
+  bool openBookToDetail = true;
+
+  /// The light theme the night switch goes back to.
+  int dayThemeIndex = defaultThemeIndex;
+
   String get resolvedInterfaceFont => interfaceFontFamily.isEmpty
-      ? 'Microsoft YaHei'
+      ? defaultFontFamily
       : interfaceFontFamily.replaceFirst('system:', '');
 
   // Explicit body family prevents interface font inheritance and keeps page
   // measurement identical to rendering when the interface font changes.
   String? get resolvedReadingFont => fontFamily.isNotEmpty
       ? fontFamily
-      : (windowsAppearance ? 'Microsoft YaHei' : null);
+      : (windowsAppearance ? defaultFontFamily : null);
   double fontSize = 19;
   double lineHeight = 1.9;
   double paragraphSpacing = 14;
@@ -225,7 +245,7 @@ class ReadingSettings extends ChangeNotifier {
   /// The whole-book 节奏 curve above the reader's bottom bar. On by default;
   /// on desktop that bar never hides, so a reader who finds it busy turns it off.
   bool paceStrip = true;
-  PageMode pageMode = PageMode.scroll;
+  PageMode pageMode = PageMode.paged;
   double pageWidth = 720;
 
   /// Fraction of the platform's per-notch wheel distance the scroll mode
@@ -253,6 +273,23 @@ class ReadingSettings extends ChangeNotifier {
   /// `localVoices`), used when [ttsRemote] is off.
   String ttsLocalVoice = 'uncle_fu';
 
+  /// Sentences the iPhone's GPU speaks at once (听书 同时合成): more is
+  /// faster and holds more memory.
+  int ttsLanes = 4;
+  static const ttsLaneChoices = [1, 4];
+
+  /// People in 人物图谱 and in its analysis: the head of the ten, in their
+  /// order.
+  int castTop = 10;
+  static const castTopChoices = [3, 5, 10];
+
+  /// Read where there is no [ReadingSettings] to hand: the analysis in the
+  /// background queue.
+  static int castTopIn(SharedPreferences p) {
+    final n = p.getInt('castTop');
+    return castTopChoices.contains(n) ? n! : 10;
+  }
+
   TtsServer get ttsServer => TtsServer(
     baseUrl: ttsServerUrl,
     apiKey: ttsServerKey,
@@ -277,6 +314,11 @@ class ReadingSettings extends ChangeNotifier {
     s.interfaceFontFamily = p.getString('interfaceFontFamily') ?? '';
     s.uniformInterfaceWeight = p.getBool('uniformInterfaceWeight') ?? true;
     s.shelfCoverMode = p.getBool('shelfCoverMode') ?? false;
+    s.openBookToDetail = p.getBool('openBookToDetail') ?? s.openBookToDetail;
+    s.dayThemeIndex = (p.getInt('dayThemeIndex') ?? s.dayThemeIndex).clamp(
+      0,
+      readingThemes.length - 1,
+    );
     s.accentIndex = (p.getInt('accentIndex') ?? 0).clamp(
       0,
       interfaceAccents.length - 1,
@@ -286,8 +328,9 @@ class ReadingSettings extends ChangeNotifier {
     s.paragraphSpacing = p.getDouble('paragraphSpacing') ?? s.paragraphSpacing;
     s.firstLineIndent = p.getBool('firstLineIndent') ?? s.firstLineIndent;
     s.paceStrip = p.getBool('paceStrip') ?? s.paceStrip;
+    // A saved choice stays; only a first run gets the new default.
     s.pageMode =
-        PageMode.values[(p.getInt('pageMode') ?? 0).clamp(
+        PageMode.values[(p.getInt('pageMode') ?? s.pageMode.index).clamp(
           0,
           PageMode.values.length - 1,
         )];
@@ -295,6 +338,9 @@ class ReadingSettings extends ChangeNotifier {
     s.wheelScale = p.getDouble('wheelScale') ?? s.wheelScale;
     s.ttsSpeed = p.getDouble('ttsSpeed') ?? s.ttsSpeed;
     s.ttsLocalVoice = p.getString('ttsLocalSpeaker') ?? s.ttsLocalVoice;
+    final lanes = p.getInt('ttsLanes');
+    if (ttsLaneChoices.contains(lanes)) s.ttsLanes = lanes!;
+    s.castTop = castTopIn(p);
     s.ttsServerUrl = p.getString('ttsServerUrl') ?? s.ttsServerUrl;
     s.ttsServerKey = p.getString('ttsServerKey') ?? s.ttsServerKey;
     s.ttsServerModel = p.getString('ttsServerModel') ?? s.ttsServerModel;
@@ -326,12 +372,28 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('wheelScale', wheelScale);
     p.setDouble('ttsSpeed', ttsSpeed);
     p.setString('ttsLocalSpeaker', ttsLocalVoice);
+    p.setInt('ttsLanes', ttsLanes);
+    p.setInt('castTop', castTop);
     p.setBool('ttsRemote', ttsRemote);
     p.setString('ttsServerUrl', ttsServerUrl);
     p.setString('ttsServerKey', ttsServerKey);
     p.setString('ttsServerModel', ttsServerModel);
     p.setString('ttsServerVoice', ttsServerVoice);
     p.setString('appLanguage', language.code);
+  }
+
+  void setCastTop(int n) {
+    if (!castTopChoices.contains(n)) return;
+    castTop = n;
+    notifyListeners();
+    _persist();
+  }
+
+  void setTtsLanes(int n) {
+    if (!ttsLaneChoices.contains(n)) return;
+    ttsLanes = n;
+    notifyListeners();
+    _persist();
   }
 
   void setTtsLocalVoice(String id) {
@@ -344,6 +406,28 @@ class ReadingSettings extends ChangeNotifier {
     shelfCoverMode = value;
     _prefs?.setBool('shelfCoverMode', value);
     notifyListeners();
+  }
+
+  void setOpenBookToDetail(bool value) {
+    openBookToDetail = value;
+    _prefs?.setBool('openBookToDetail', value);
+    notifyListeners();
+  }
+
+  /// One tap to 夜读 from whatever light theme is on, and back to it from
+  /// any dark one.
+  void toggleNight() {
+    if (theme.isDark) {
+      setTheme(
+        readingThemes[dayThemeIndex].isDark
+            ? defaultThemeIndex
+            : dayThemeIndex,
+      );
+    } else {
+      dayThemeIndex = themeIndex;
+      _prefs?.setInt('dayThemeIndex', dayThemeIndex);
+      setTheme(readingThemes.indexWhere((t) => t.name == '夜读'));
+    }
   }
 
   void setTtsRemote(bool on) {
@@ -387,7 +471,7 @@ class ReadingSettings extends ChangeNotifier {
   }
 
   void setFontSize(double v) {
-    fontSize = v.clamp(12, 34);
+    fontSize = v.clamp(12, 48);
     notifyListeners();
     _persist();
   }

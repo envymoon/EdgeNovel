@@ -4,10 +4,12 @@ import 'app_localizations.dart';
 import 'appearance_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
+import 'feedback_page.dart';
 import 'font_page.dart';
 import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
+import 'storage_page.dart';
 import 'theme.dart';
 import 'youshu_login_page.dart';
 
@@ -111,6 +113,27 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    ListenableBuilder(
+                      listenable: settings,
+                      builder: (context, _) => SwitchListTile(
+                        minTileHeight: 62,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 3,
+                        ),
+                        secondary: Icon(
+                          Icons.menu_book_outlined,
+                          size: 20,
+                          color: t.muted,
+                        ),
+                        title: Text(
+                          '打开书时先进扫书页',
+                          style: TextStyle(color: t.text, fontSize: 14),
+                        ),
+                        value: settings.openBookToDetail,
+                        onChanged: settings.setOpenBookToDetail,
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.rate_review_outlined,
@@ -131,17 +154,18 @@ class SettingsPage extends StatelessWidget {
                           : '简体中文',
                       onTap: () => _chooseLanguage(context, t),
                     ),
-                    _entry(
-                      t,
-                      icon: Icons.tune,
-                      title: 'AI 运行与设备',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AiRuntimePage(settings: settings),
+                    if (AppPlatformSupport.hasAiEngine)
+                      _entry(
+                        t,
+                        icon: Icons.tune,
+                        title: 'AI 运行与设备',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AiRuntimePage(settings: settings),
+                          ),
                         ),
                       ),
-                    ),
                     _entry(
                       t,
                       icon: Icons.font_download_outlined,
@@ -166,29 +190,42 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                _sectionLabel(t, 'AI 管理'),
-                _group(
-                  t,
-                  children: [
-                    _entry(
-                      t,
-                      icon: Icons.auto_awesome_outlined,
-                      title: '模型、引擎与生成数据',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AiPage(settings: settings),
+                if (AppPlatformSupport.hasAiEngine) ...[
+                  const SizedBox(height: 24),
+                  _sectionLabel(t, 'AI 管理'),
+                  _group(
+                    t,
+                    children: [
+                      _entry(
+                        t,
+                        icon: Icons.auto_awesome_outlined,
+                        title: '模型、引擎与生成数据',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AiPage(settings: settings),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 24),
                 _sectionLabel(t, '数据与隐私'),
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.storage_outlined,
+                      title: '存储空间',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StoragePage(settings: settings),
+                        ),
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.history_toggle_off,
@@ -204,6 +241,20 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.chat_bubble_outline,
+                      title: '意见反馈',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FeedbackPage(
+                            settings: settings,
+                            version: appVersion,
+                          ),
+                        ),
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.info_outline,

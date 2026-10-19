@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'ai_page.dart';
 import 'app_localizations.dart';
 import 'bloom.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
@@ -18,8 +19,7 @@ import 'theme.dart';
 /// where the reader remembers the scene but not a single word of it. That one
 /// costs a 48 MB model and an indexing pass, so it asks before it takes them.
 ///
-/// Both stop at the chapter being read. Finding a name from chapter 900 while
-/// standing in chapter 20 is a spoiler however it was found.
+/// Both search the whole book.
 enum _Mode { literal, semantic }
 
 class SearchPage extends StatefulWidget {
@@ -39,6 +39,10 @@ class _SearchPageState extends State<SearchPage> {
   List<SearchHit> _hits = const [];
   bool _searching = false;
   bool _searched = false;
+
+  /// A semantic search has come back since the page opened, so the model
+  /// behind it is up; until then a search is first a wait for it to start.
+  bool _warm = false;
   String? _error;
 
   @override
@@ -86,8 +90,7 @@ class _SearchPageState extends State<SearchPage> {
     });
     try {
       final b = widget.reader.info!;
-      // The chapter being read is included: the reader has seen it.
-      final upTo = widget.reader.chapterIndex;
+      final upTo = b.chapters.length - 1;
       final hits = _mode == _Mode.literal
           ? await searchText(path: b.path, query: q, upToChapter: upTo, k: 50)
           : await semanticSearch(
@@ -97,7 +100,12 @@ class _SearchPageState extends State<SearchPage> {
               upToChapter: upTo,
               k: 12,
             );
-      if (mounted) setState(() => _hits = hits);
+      if (mounted) {
+        setState(() {
+          _hits = hits;
+          if (_mode == _Mode.semantic) _warm = true;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
@@ -147,30 +155,32 @@ class _SearchPageState extends State<SearchPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SegmentedButton<_Mode>(
-                    showSelectedIcon: false,
-                    style: ButtonStyle(
-                      textStyle: WidgetStateProperty.all(
-                        const TextStyle(fontSize: 12),
+                  if (AppPlatformSupport.hasAiEngine) ...[
+                    SegmentedButton<_Mode>(
+                      showSelectedIcon: false,
+                      style: ButtonStyle(
+                        textStyle: WidgetStateProperty.all(
+                          const TextStyle(fontSize: 12),
+                        ),
+                        visualDensity: VisualDensity.compact,
                       ),
-                      visualDensity: VisualDensity.compact,
+                      segments: const [
+                        ButtonSegment(
+                          value: _Mode.literal,
+                          label: Text('原文'),
+                          icon: Icon(Icons.search, size: 16),
+                        ),
+                        ButtonSegment(
+                          value: _Mode.semantic,
+                          label: Text('语义'),
+                          icon: Icon(Icons.auto_awesome, size: 16),
+                        ),
+                      ],
+                      selected: {_mode},
+                      onSelectionChanged: (v) => _setMode(v.first),
                     ),
-                    segments: const [
-                      ButtonSegment(
-                        value: _Mode.literal,
-                        label: Text('原文'),
-                        icon: Icon(Icons.search, size: 16),
-                      ),
-                      ButtonSegment(
-                        value: _Mode.semantic,
-                        label: Text('语义'),
-                        icon: Icon(Icons.auto_awesome, size: 16),
-                      ),
-                    ],
-                    selected: {_mode},
-                    onSelectionChanged: (v) => _setMode(v.first),
-                  ),
-                  const SizedBox(height: 14),
+                    const SizedBox(height: 14),
+                  ],
                   _field(t),
                   const SizedBox(height: 10),
                   _hint(t, s),
@@ -212,22 +222,45 @@ class _SearchPageState extends State<SearchPage> {
     ),
   );
 
-  Widget _hint(ReadingTheme t, IndexStatus s) {
-    final read = widget.reader.chapterIndex + 1;
-    final extra = _mode == _Mode.semantic && s.hasModel && s.indexed < s.total
-        ? ' · 已索引 ${s.indexed}/${s.total} 章'
-        : '';
-    return Text(
-      '已读 $read 章$extra',
-      style: TextStyle(color: t.muted, fontSize: 11),
-    );
-  }
+  /// How much of the book 语义 can search yet, while that is not all of it.
+  Widget _hint(ReadingTheme t, IndexStatus s) =>
+      _mode == _Mode.semantic && s.hasModel && s.indexed < s.total
+      ? Text(
+          '已索引 ${s.indexed}/${s.total} 章',
+          style: TextStyle(color: t.muted, fontSize: 11),
+        )
+      : const SizedBox.shrink();
 
   Widget _results(ReadingTheme t, IndexStatus s) {
     if (_mode == _Mode.semantic) {
       if (!s.hasModel) return _needModel(t);
-      if (widget.reader.indexing) return _indexing(t);
+      // Queued counts as under way: the tap is answered at once, not when the
+      // model behind it has finished loading.
+      final state = widget.reader.indexStateFor(widget.reader.info!.id);
+      if (widget.reader.indexing || state == AiTaskState.running) {
+        return _indexing(t);
+      }
+      if (state == AiTaskState.waiting) {
+        final r = widget.reader;
+        return _indexing(
+          t,
+          waiting: r.aiBusy ? '排队中' : r.aiWaitingReason ?? '启动中…',
+        );
+      }
       if (s.indexed == 0) return _needIndex(t, s);
+      if (_searching && !_warm) {
+        return ListView(
+          children: [
+            const SizedBox(height: 8),
+            BloomProgress(
+              label: '启动中…',
+              value: null,
+              color: t.muted,
+              textColor: t.text,
+            ),
+          ],
+        );
+      }
     }
     if (_hits.isEmpty) {
       return Center(
@@ -251,7 +284,7 @@ class _SearchPageState extends State<SearchPage> {
     children: [
       const SizedBox(height: 8),
       Text(
-        '语义搜索需要一个嵌入模型',
+        '语义搜索需要一个检索模型',
         style: TextStyle(
           color: t.text,
           fontSize: 15,
@@ -295,6 +328,8 @@ class _SearchPageState extends State<SearchPage> {
           onPressed: () {
             final b = widget.reader.info!;
             widget.reader.startIndex(b.id, b.path, title: b.title);
+            // Asked for here, by hand: now, not when the device next allows.
+            widget.reader.runIndexNow(b.id);
           },
           child: const Text('建立索引'),
         ),
@@ -302,14 +337,16 @@ class _SearchPageState extends State<SearchPage> {
     ],
   );
 
-  Widget _indexing(ReadingTheme t) {
-    final p = widget.reader.indexProgress;
+  Widget _indexing(ReadingTheme t, {String? waiting}) {
+    final p = waiting == null ? widget.reader.indexProgress : null;
     final value = p == null || p.total == 0 ? null : p.done / p.total;
     return ListView(
       children: [
         const SizedBox(height: 8),
         BloomProgress(
-          label: p == null ? '正在启动本机引擎…' : '正在建立索引 · ${p.done} / ${p.total}',
+          label:
+              waiting ??
+              (p == null ? '启动中…' : '正在建立索引 · ${p.done} / ${p.total}'),
           detail: p?.title,
           value: value,
           color: t.muted,

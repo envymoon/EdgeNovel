@@ -12,6 +12,7 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart';
+import 'theme.dart';
 
 enum _AiTaskKind { enrich, semanticIndex, cast, plates }
 
@@ -200,6 +201,10 @@ class ReaderState extends ChangeNotifier {
   int _navigationRevision = 0;
   int? _pendingChapterIndex;
 
+  /// The chapters either side of the open one, read ahead so that turning past
+  /// a chapter's last page shows the next one in the same frame.
+  final Map<(int, int), List<Paragraph>> _nearby = {};
+
   bool get isOpen => info != null;
   int get currentOffset => _offset;
   Paragraph? get currentParagraph {
@@ -212,15 +217,17 @@ class ReaderState extends ChangeNotifier {
       .where((annotation) => annotation.chapter == chapter)
       .toList(growable: false);
 
-  List<BookAnnotation> annotationsForParagraph(Paragraph paragraph) =>
-      annotations
-          .where(
-            (annotation) =>
-                annotation.chapter == chapterIndex &&
-                annotation.start >= paragraph.start &&
-                annotation.start < paragraph.end,
-          )
-          .toList(growable: false);
+  List<BookAnnotation> annotationsForParagraph(
+    Paragraph paragraph, {
+    int? chapter,
+  }) => annotations
+      .where(
+        (annotation) =>
+            annotation.chapter == (chapter ?? chapterIndex) &&
+            annotation.start >= paragraph.start &&
+            annotation.start < paragraph.end,
+      )
+      .toList(growable: false);
 
   bool isChapterCompleted(int chapter) => completedChapters.contains(chapter);
 
@@ -327,6 +334,25 @@ class ReaderState extends ChangeNotifier {
     _aiExecutionAllowed = value;
     _scheduleAi();
   }
+
+  /// iPhone 听书 合成 (tts_prepare.dart) has the phone's memory for the
+  /// voice: the queue waits, and the model it had loaded goes.
+  bool _speechHold = false;
+  void holdAiForSpeech(bool value) {
+    if (_speechHold == value) return;
+    _speechHold = value;
+    if (value && _activeAiTask == null) {
+      _engineIdleTimer?.cancel();
+      stopAi();
+    }
+    _scheduleAi();
+  }
+
+  /// A task is on the engine right now.
+  bool get aiActive => _activeAiTask != null;
+
+  /// Something in the queue would run if it were allowed to.
+  bool get aiRunnable => _aiQueue.any((task) => !task.paused && !task.failed);
 
   void startEnrich(ShelfItem b) {
     _enqueue(
@@ -470,12 +496,16 @@ class ReaderState extends ChangeNotifier {
     final bookId = task.bookId;
     final upTo = task.upTo;
     try {
+      final top = ReadingSettings.castTopIn(
+        _queuePrefs ?? await SharedPreferences.getInstance(),
+      );
       castProgress = const CastRunProgress(CastStep.vet, 0, 0, '');
       notifyListeners();
       await for (final v in vetNames(
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         // Re-sent on every item: the step clears its cancel flag when it
         // starts, so a pause asked for in that instant would otherwise be lost.
@@ -500,6 +530,7 @@ class ReaderState extends ChangeNotifier {
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         if (_pauseRequested) await cancelRelabel();
         if (p.label.isNotEmpty) castLabels['${p.a} ${p.b}'] = p.label;
@@ -507,7 +538,11 @@ class ReaderState extends ChangeNotifier {
           CastStep.label,
           p.done,
           p.total,
-          p.a.isEmpty ? '' : '${p.a} ↔ ${p.b} → ${p.label}',
+          p.a.isEmpty
+              ? ''
+              : p.label.isEmpty
+              ? '${p.a} ↔ ${p.b}…'
+              : '${p.a} ↔ ${p.b} → ${p.label}',
         );
         _pace('cast-label', p.done, p.total);
         notifyListeners();
@@ -523,6 +558,7 @@ class ReaderState extends ChangeNotifier {
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         if (_pauseRequested) await cancelDescribe();
         if (p.background.isNotEmpty) castBackgrounds[p.name] = p.background;
@@ -532,7 +568,11 @@ class ReaderState extends ChangeNotifier {
           p.total,
           // A background read from chapter summaries is two paragraphs (who,
           // then what happened); the progress line has room for the first.
-          p.name.isEmpty ? '' : '${p.name} → ${p.background.split('\n').first}',
+          p.name.isEmpty
+              ? ''
+              : p.background.isEmpty
+              ? '${p.name}…'
+              : '${p.name} → ${p.background.split('\n').first}',
         );
         _pace('cast-describe', p.done, p.total);
         notifyListeners();
@@ -884,6 +924,17 @@ class ReaderState extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      if (_speechHold) {
+        const reason = '听书合成中';
+        if (_activeAiTask != null && !_pauseRequested) {
+          _restartEngineAfterPause = true;
+          await _requestActivePause(reason);
+        } else if (aiWaitingReason != reason) {
+          aiWaitingReason = reason;
+          notifyListeners();
+        }
+        return;
+      }
       final state = await aiRuntime.readDeviceState();
       aiDevice = state;
 
@@ -1184,6 +1235,8 @@ class ReaderState extends ChangeNotifier {
     notifyListeners();
     try {
       final b = await openBook(path: path);
+      // The same book reopened (in another encoding, say) is new text.
+      _nearby.clear();
       info = b;
       _pendingOffset = b.lastOffset > 0 ? b.lastOffset : null;
       _beginSession(b.lastOffset);
@@ -1228,10 +1281,9 @@ class ReaderState extends ChangeNotifier {
     _pendingOffset = null;
     final revision = ++_navigationRevision;
     _pendingChapterIndex = targetChapter;
-    final loadedParagraphs = await chapterParagraphs(
-      path: b.path,
-      index: targetChapter,
-    );
+    final loadedParagraphs =
+        _nearby[(b.id, targetChapter)] ??
+        await chapterParagraphs(path: b.path, index: targetChapter);
     if (revision != _navigationRevision || info?.id != b.id) return false;
 
     final restoredParagraph = target == null
@@ -1250,7 +1302,32 @@ class ReaderState extends ChangeNotifier {
         : loadedParagraphs[restoredParagraph].start;
     _pendingChapterIndex = null;
     notifyListeners();
+    _readNearby(b, targetChapter);
     return true;
+  }
+
+  /// Paragraphs of [chapter] if it was read ahead; see [_nearby].
+  List<Paragraph>? nearbyParagraphs(int chapter) {
+    final b = info;
+    return b == null ? null : _nearby[(b.id, chapter)];
+  }
+
+  void _readNearby(BookInfo b, int chapter) {
+    _nearby
+      ..removeWhere((k, _) => k.$1 != b.id || (k.$2 - chapter).abs() > 1)
+      ..[(b.id, chapter)] = paragraphs;
+    for (final i in [chapter + 1, chapter - 1]) {
+      if (i < 0 || i >= b.chapters.length || _nearby.containsKey((b.id, i))) {
+        continue;
+      }
+      try {
+        chapterParagraphs(path: b.path, index: i).then((p) {
+          if (info?.id == b.id) _nearby[(b.id, i)] = p;
+        }, onError: (Object _) {});
+      } catch (_) {
+        // No native library (widget tests).
+      }
+    }
   }
 
   Future<void> goToChapter(int i) async {
@@ -1479,6 +1556,7 @@ class ReaderState extends ChangeNotifier {
     if (b != null && b.path != _enrichingPath) await closeBook(path: b.path);
     info = null;
     paragraphs = const [];
+    _nearby.clear();
     annotations = const [];
     completedChapters = const {};
     chapterIndex = 0;
