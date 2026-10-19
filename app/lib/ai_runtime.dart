@@ -23,8 +23,8 @@ class AiRuntimeSettings extends ChangeNotifier {
   DeviceStatusReader _deviceStatus = const NativeDeviceStatusReader();
 
   bool backgroundEnabled = true;
-  /// iOS: once the app is off screen, carry on with the queue on the CPU in
-  /// the windows the system grants. Off unless asked for.
+  /// iOS (锁屏/后台运行): once the app is off screen — locked, or another
+  /// app in front — the queue carries on, on the CPU. Off unless asked for.
   bool lockedEnabled = false;
 
   /// Running in such a window now: the GPU is not ours to use.
@@ -109,9 +109,11 @@ class AiRuntimeSettings extends ChangeNotifier {
     if (state.charging != true && battery != null && battery < batteryFloor) {
       return '电量低于 $batteryFloor%';
     }
-    // A phone the hand already feels warm is not 无感 any more.
-    if (state.thermalState == 'serious' ||
-        state.thermalState == 'critical' ||
+    // A phone the hand already feels warm is not 无感 any more; 立即完成
+    // goes on through the heat the system still runs at full and stops only
+    // where it has to.
+    if (state.thermalState == 'critical' ||
+        (mode != AiRunMode.fast && state.thermalState == 'serious') ||
         (mode == AiRunMode.quiet && state.thermalState == 'fair')) {
       return '设备温度较高，等待冷却';
     }

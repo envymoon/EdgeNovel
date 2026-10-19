@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/widgets.dart';
 
 import 'ai_runtime.dart';
+import 'keep_alive.dart';
 import 'platform_services.dart';
 import 'platform_support.dart';
 import 'reader_state.dart';
@@ -23,7 +23,8 @@ import 'tts_text.dart';
 /// finds them by itself (see `synth` in `app/rust/src/api/tts.rs`); a sentence
 /// not prepared is spoken live as usual. On iPhone each chapter becomes a file
 /// of its own ([TtsChapters]), and only those are played: the GPU speaks while
-/// the app is on screen, and behind it, with 锁屏运行 on, the CPU carries on.
+/// the app is on screen, and behind it, with 锁屏/后台运行 on, the CPU carries
+/// on.
 ///
 /// One job for the whole app, outliving the reader page that started it.
 /// Sentence by sentence, so stopping loses at most the one in flight and
@@ -370,7 +371,7 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
     _wake();
   }
 
-  /// Off screen the job waits, unless 锁屏运行 is on: then the engine moves
+  /// Off screen the job waits, unless 锁屏/后台运行 is on: then the engine moves
   /// to the CPU by itself (tts.rs) and the job goes on.
   Future<void> _mayRun(int gen) async {
     while (gen == _gen &&
@@ -402,51 +403,9 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
     _reader = null;
   }
 
-  AudioPlayer? _silence;
-  bool _silent = false;
+  final _alive = SilentKeepAlive();
 
-  /// iOS keeps an app behind the screen running only while it plays
-  /// something. With 锁屏运行 on, the job plays silence for as long as it
-  /// runs, starting while the app is still on screen: iOS does not let it
-  /// start from behind.
-  Future<void> _keepAlive(bool wanted) async {
-    final on = wanted && running;
-    if (on == _silent) return;
-    _silent = on;
-    try {
-      if (!on) {
-        await _silence?.stop();
-        return;
-      }
-      final player = _silence ??= AudioPlayer();
-      await player.setReleaseMode(ReleaseMode.loop);
-      await player.play(DeviceFileSource(await _silenceFile()));
-    } catch (_) {
-      _silent = false;
-    }
-  }
-
-  /// A second of 24 kHz 16-bit mono, all zeros.
-  static Future<String> _silenceFile() async {
-    final dir = AppServices.instance.storage.temporaryChild('tts_keep');
-    await dir.create(recursive: true);
-    final file = File('${dir.path}${Platform.pathSeparator}silence.wav');
-    if (!await file.exists()) {
-      List<int> le32(int v) => [for (final s in [0, 8, 16, 24]) (v >> s) & 0xff];
-      final wav = BytesBuilder()
-        ..add('RIFF'.codeUnits)
-        ..add(le32(36 + 48000))
-        ..add('WAVEfmt '.codeUnits)
-        ..add(le32(16))
-        ..add([1, 0, 1, 0])
-        ..add(le32(24000))
-        ..add(le32(48000))
-        ..add([2, 0, 16, 0])
-        ..add('data'.codeUnits)
-        ..add(le32(48000))
-        ..add(Uint8List(48000));
-      await file.writeAsBytes(wav.takeBytes(), flush: true);
-    }
-    return file.path;
-  }
+  /// With 锁屏/后台运行 on, the job keeps the app running behind the screen
+  /// for as long as it runs ([SilentKeepAlive]).
+  Future<void> _keepAlive(bool wanted) => _alive.set(wanted && running);
 }

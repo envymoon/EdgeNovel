@@ -30,7 +30,7 @@ void main() {
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);
     expect(AppPlatformSupport.hasAiEngine, isTrue);
   });
-  test('a warm phone holds quiet AI; only a hot one holds the rest', () {
+  test('a warm phone holds quiet AI, a hot one the rest, 立即完成 only at the worst', () {
     final ai = AiRuntimeSettings.instance;
     addTearDown(() => ai.mode = AiRunMode.quiet);
     AiDeviceState phone(String thermal) => AiDeviceState(
@@ -45,6 +45,9 @@ void main() {
     ai.mode = AiRunMode.balanced;
     expect(ai.waitingReason(phone('fair'), reading: false), isNull);
     expect(ai.waitingReason(phone('serious'), reading: false), isNotNull);
+    ai.mode = AiRunMode.fast;
+    expect(ai.waitingReason(phone('serious'), reading: false), isNull);
+    expect(ai.waitingReason(phone('critical'), reading: false), isNotNull);
   });
   test('on iOS the switch only holds the queue on the reader page', () {
     final ai = AiRuntimeSettings.instance;

@@ -511,7 +511,7 @@ const _english = <String, String>{
   '文件大小异常，可能下载不完整': 'Unexpected file size; download may be incomplete',
   '允许后台生成': 'Allow background generation',
   '锁屏后继续': 'Keep going when locked',
-  '锁屏运行': 'Run when locked',
+  '锁屏/后台运行': 'Run when locked or in the background',
   '允许阅读时后台处理': 'Work in the background while reading',
   '会降速': 'Slower',
   '关闭后只手动运行': 'When off, tasks run only when started manually',

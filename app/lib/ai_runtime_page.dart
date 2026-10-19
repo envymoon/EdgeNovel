@@ -96,7 +96,7 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
                     value: runtime.lockedEnabled,
                     onChanged: runtime.setLockedEnabled,
                     title: Text(
-                      '锁屏运行',
+                      '锁屏/后台运行',
                       style: TextStyle(color: t.text, fontSize: 14),
                     ),
                     subtitle: Text(

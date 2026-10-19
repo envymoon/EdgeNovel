@@ -10,6 +10,7 @@ import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'data_guard.dart';
 import 'font_manager.dart';
+import 'keep_alive.dart';
 import 'ai_runtime.dart';
 import 'reader_page.dart';
 import 'reader_state.dart';
@@ -220,20 +221,60 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     reader.setReadingActive(_reading);
     spokenChapterWanted.addListener(_openSpoken);
-    if (_backgroundWindows) _background.setMethodCallHandler(_onBackground);
+    if (_backgroundWindows) {
+      _background.setMethodCallHandler(_onBackground);
+      reader.addListener(_aliveChanged);
+      AiRuntimeSettings.instance.addListener(_aliveChanged);
+      _aliveChanged();
+    }
   }
 
-  // ── 锁屏后继续 ───────────────────────────────────────────────────────────
-  // iOS lends an app off screen a stretch of CPU when it sees fit (a
-  // BGProcessingTask, AppDelegate.swift). The queue runs in it on the CPU —
-  // the GPU belongs to the app on screen — and hands the window back when it
-  // is done, when it is waiting on something a window cannot fix, or when the
-  // system wants it back.
+  // ── 锁屏/后台运行 ─────────────────────────────────────────────────────────
+  // iOS gives the GPU only to the app on screen. With the switch on, the
+  // queue keeps the app running while it has work ([SilentKeepAlive]), and
+  // the moment the app is off screen — locked, or another app in front — it
+  // goes on on the CPU, and back on the GPU when the app is.
+  //
+  // Where the app was not kept running, iOS still lends it a stretch of CPU
+  // when it sees fit (a BGProcessingTask, AppDelegate.swift). The queue runs
+  // in it the same way and hands the window back when it is done, when it is
+  // waiting on something a window cannot fix, or when the system wants it
+  // back.
   static const _background = MethodChannel('novel/background');
   static bool get _backgroundWindows =>
       defaultTargetPlatform == TargetPlatform.iOS;
   bool _inWindow = false;
   Timer? _windowWatch;
+  final _alive = SilentKeepAlive();
+  AppLifecycleState _life =
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+
+  void _aliveChanged() {
+    final want =
+        AiRuntimeSettings.instance.lockedEnabled &&
+        AppPlatformSupport.hasAiEngine &&
+        (reader.aiRunnable || reader.aiActive);
+    // It can start only on screen; behind it, it can only stop.
+    if (want && _life != AppLifecycleState.resumed) return;
+    unawaited(
+      _alive.set(want).then((changed) {
+        if (changed) return _offScreenChanged();
+      }),
+    );
+  }
+
+  /// On screen: the GPU. Off it: the CPU while the app is kept running or in
+  /// a lent window, and nothing otherwise.
+  Future<void> _offScreenChanged() async {
+    final behind = _life != AppLifecycleState.resumed;
+    final going = behind && (_alive.on || _inWindow);
+    if (_backgroundWindows) {
+      await AiRuntimeSettings.instance.setCpuOnly(going);
+    }
+    reader.setAiExecutionAllowed(
+      _executionPolicy.aiAllowedIn(_life) || going,
+    );
+  }
 
   Future<dynamic> _onBackground(MethodCall call) async {
     switch (call.method) {
@@ -251,8 +292,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
       return;
     }
     _inWindow = true;
-    await runtime.setCpuOnly(true);
-    reader.setAiExecutionAllowed(true);
+    await _offScreenChanged();
     _windowWatch?.cancel();
     _windowWatch = Timer.periodic(const Duration(seconds: 15), (_) {
       if (_inWindow && !reader.aiActive) {
@@ -265,14 +305,15 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     if (!_inWindow) return;
     _inWindow = false;
     _windowWatch?.cancel();
-    reader.setAiExecutionAllowed(false);
-    await AiRuntimeSettings.instance.setCpuOnly(false);
+    await _offScreenChanged();
     if (tell) await _background.invokeMethod('done', {'more': more});
   }
 
   @override
   void dispose() {
     spokenChapterWanted.removeListener(_openSpoken);
+    reader.removeListener(_aliveChanged);
+    AiRuntimeSettings.instance.removeListener(_aliveChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -282,16 +323,14 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   /// Android and iOS may never give us an exit.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_inWindow) {
-      reader.setAiExecutionAllowed(_executionPolicy.aiAllowedIn(state));
-    } else if (state == AppLifecycleState.resumed) {
+    _life = state;
+    if (_inWindow && state == AppLifecycleState.resumed) {
       // Back on screen mid-window: off the CPU, back onto the GPU.
-      unawaited(
-        _leaveWindow(
-          more: false,
-        ).then((_) => reader.setAiExecutionAllowed(true)),
-      );
+      unawaited(_leaveWindow(more: false));
+    } else {
+      unawaited(_offScreenChanged());
     }
+    if (_backgroundWindows) _aliveChanged();
     if (_backgroundWindows &&
         state == AppLifecycleState.paused &&
         AiRuntimeSettings.instance.lockedEnabled &&
