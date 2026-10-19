@@ -932,6 +932,10 @@ class _ReaderPageState extends State<ReaderPage> {
               // only from their buttons, never from a swipe off the edge.
               drawerEnableOpenDragGesture: false,
               endDrawerEnableOpenDragGesture: false,
+              // A keyboard over the page (目录's search, 搜索 over the
+              // reader) leaves the text the size it was: shrunk to fit above
+              // it, the pages were cut again for half a screen and stayed so.
+              resizeToAvoidBottomInset: false,
               extendBodyBehindAppBar: barsOverText,
               extendBody: barsOverText,
               floatingActionButton: compact

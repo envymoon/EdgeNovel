@@ -374,6 +374,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a keyboard over the reader leaves its pages as they were', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: ReadingSettings(),
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final pages = find.byType(PagedReader);
+    final size = tester.getSize(pages);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 340);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    expect(tester.getSize(pages), size);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(tester.getSize(pages), size);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the bars come and go over scrolling text without moving it', (
     tester,
   ) async {
