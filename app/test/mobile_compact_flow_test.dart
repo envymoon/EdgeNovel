@@ -97,6 +97,22 @@ class _LongParagraphReader extends _CompactOpenReader {
   }
 }
 
+/// A chapter of one page, between two others; counts the turns across.
+class _ShortChapterReader extends _CompactOpenReader {
+  _ShortChapterReader() {
+    chapterIndex = 1;
+    paragraphs = paragraphs.take(2).toList();
+  }
+
+  int nexts = 0, prevs = 0;
+
+  @override
+  Future<void> next() async => nexts++;
+
+  @override
+  Future<void> prev() async => prevs++;
+}
+
 class _SilentSpeech implements LocalSpeechSynthesizer {
   @override
   Future<bool> ready() async => true;
@@ -424,6 +440,31 @@ void main() {
       await tester.pump();
       expect(pageInfo.value.$1, page);
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a swipe off a chapter's edge goes on into the next one', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final reader = _ShortChapterReader();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: reader,
+          settings: ReadingSettings(),
+          padding: const EdgeInsets.all(20),
+          pageInfo: ValueNotifier((1, 1)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.dragFrom(const Offset(300, 380), const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 0));
+    await tester.dragFrom(const Offset(90, 380), const Offset(200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 1));
     expect(tester.takeException(), isNull);
   });
 

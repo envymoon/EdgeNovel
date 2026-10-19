@@ -326,6 +326,11 @@ class PagedReaderState extends State<PagedReader> {
   /// exactly the tap latency being avoided here.
   Offset _downAt = Offset.zero;
 
+  /// The page the pointer went down on. A swipe on the chapter's first or
+  /// last page has nowhere to go inside the PageView; it goes on into the
+  /// chapter beside it, as a tap there does.
+  int _downPage = 0;
+
   /// The sentence being spoken, as (paragraph, start): the page turns when
   /// it moves on to the next one.
   (int, int) _spoken = (-1, -1);
@@ -533,10 +538,20 @@ class PagedReaderState extends State<PagedReader> {
         return MediaQuery.withNoTextScaling(
           child: Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerDown: (e) => _downAt = e.position,
+            onPointerDown: (e) {
+              _downAt = e.position;
+              _downPage = _page;
+            },
             onPointerUp: (e) {
+              final moved = e.position - _downAt;
               if (!widget.annotationMode &&
-                  (e.position - _downAt).distance < 12) {
+                  moved.dx.abs() > 40 &&
+                  moved.dx.abs() > moved.dy.abs()) {
+                if (moved.dx < 0 && _downPage >= _pages.length - 1) turn(1);
+                if (moved.dx > 0 && _downPage <= 0) turn(-1);
+                return;
+              }
+              if (!widget.annotationMode && moved.distance < 12) {
                 switch (resolveReaderTap(
                   x: e.localPosition.dx,
                   width: constraints.maxWidth,
