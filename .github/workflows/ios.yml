@@ -118,12 +118,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/tts
-          key: tts-qwen3-tts-0.6b-customvoice-q8-q4
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/asr
-          key: asr-paraformer-zh-int8-2025-10-07
+          key: tts-qwen3-tts-0.6b-customvoice-q8
 
       - uses: actions/cache@v4
         with:
@@ -185,35 +180,6 @@ jobs:
             jq -r 'select(.profile.test == true) | .executable')
           NOVEL_TTS_DIR=~/tts lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" tts_bench --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/tts.log"
           grep -q "test result: ok" "$RUNNER_TEMP/tts.log"
-
-      # The 听书 speed experiments, on the CPU (this GPU cannot run the voice):
-      # whether each setting still sounds like the plain one, and runs at all,
-      # before a phone times them on its GPU (experiments/qwen-tts/compare.py).
-      - name: TTS experiments
-        run: |
-          BIN=$(cargo test --locked --lib --no-run --message-format=json |
-            jq -r 'select(.profile.test == true) | .executable')
-          NOVEL_TTS_DIR=~/tts NOVEL_TTS_EXP_OUT="$RUNNER_TEMP/tts-exp" lldb --batch -o run -k "thread backtrace all" -k "quit 1" --             "$BIN" tts_experiments --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/exp.log"
-          grep -q "test result: ok" "$RUNNER_TEMP/exp.log"
-
-      - name: TTS experiments compared
-        if: always()
-        run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          . "$RUNNER_TEMP/venv/bin/activate"
-          pip install -q numpy sherpa-onnx
-          mkdir -p ~/asr && cd ~/asr
-          if [ ! -d paraformer ]; then
-            curl -fsSL --retry 3 -o p.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-int8-2025-10-07.tar.bz2
-            mkdir paraformer && tar xjf p.tar.bz2 -C paraformer && rm p.tar.bz2
-          fi
-          python "$GITHUB_WORKSPACE/experiments/qwen-tts/compare.py" "$RUNNER_TEMP/tts-exp" ~/asr/paraformer
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: tts-experiments
-          path: ${{ runner.temp }}/tts-exp
 
       # AI 封面 the way iOS draws it: in the app's process, on the GPU where
       # this one can and on the CPU. The pictures are kept with the run.

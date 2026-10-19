@@ -1,6 +1,6 @@
 diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
 --- a/src/ggml-metal/CMakeLists.txt	2026-10-18 16:17:06.170164700 -0700
-+++ b/src/ggml-metal/CMakeLists.txt	2026-10-18 16:17:06.342099600 -0700
++++ b/src/ggml-metal/CMakeLists.txt	2026-10-18 18:05:58.199814400 -0700
 @@ -193,9 +193,13 @@
      if (GGML_METAL_MACOSX_VERSION_MIN)
          message(STATUS "Adding  -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN} flag to metal compilation")
@@ -20,102 +20,49 @@ diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
      if (GGML_METAL_STD)
 diff -ruN a/src/ggml-metal/ggml-metal-common.cpp b/src/ggml-metal/ggml-metal-common.cpp
 --- a/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 16:17:06.170164700 -0700
-+++ b/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 16:19:18.746650200 -0700
-@@ -5,6 +5,7 @@
- #include "ggml-impl.h"
- #include "ggml-backend-impl.h"
- 
-+#include <cstring>
- #include <vector>
- 
- // must stay in sync with the kernel_fwht_<type>_<N> templates in misc.metal. Widths up to
-@@ -115,7 +116,39 @@
++++ b/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 18:05:58.249333600 -0700
+@@ -115,6 +115,8 @@
      }
  }
  
-+bool ggml_metal_mma_disabled    = false;
-+bool ggml_metal_mv_ext_disabled = false;
-+int  ggml_metal_fast_move       = 0;
-+unsigned ggml_metal_fusion_skip = 0;
-+
-+void ggml_metal_fusion_skip_parse(const char * list) {
-+    static const struct { const char * name; unsigned bits; } names[] = {
-+        { "mul_mat_add",       1u << GGML_METAL_FUSION_MUL_MAT_ADD },
-+        { "mul_mat_add_batch", GGML_METAL_FUSION_SKIP_ADD_BATCH },
-+        { "mul_mat_add_part",  GGML_METAL_FUSION_SKIP_ADD_PART },
-+        { "snake",             1u << GGML_METAL_FUSION_SNAKE },
-+        { "add_chain",         1u << GGML_METAL_FUSION_ADD_CHAIN },
-+        { "norm",              (1u << GGML_METAL_FUSION_NORM_MUL) | (1u << GGML_METAL_FUSION_NORM_MUL_ADD) |
-+                               (1u << GGML_METAL_FUSION_NORM_SCALE) },
-+    };
-+    ggml_metal_fusion_skip = 0;
-+    for (const char * p = list; p && *p; ) {
-+        const char * e = strchr(p, ',');
-+        const size_t n = e ? (size_t) (e - p) : strlen(p);
-+        for (const auto & k : names) {
-+            if (strlen(k.name) == n && strncmp(k.name, p, n) == 0) {
-+                ggml_metal_fusion_skip |= k.bits;
-+            }
-+        }
-+        p = e ? e + 1 : p + n;
-+    }
-+}
++int ggml_metal_fast_move = 0;
 +
  bool ggml_metal_op_mul_mat_use_mma(const struct ggml_tensor * op) {
-+    if (ggml_metal_mma_disabled) {
-+        return false;
-+    }
-+
      const ggml_tensor * src0 = op->src[0];
      const ggml_tensor * src1 = op->src[1];
- 
 diff -ruN a/src/ggml-metal/ggml-metal-common.h b/src/ggml-metal/ggml-metal-common.h
 --- a/src/ggml-metal/ggml-metal-common.h	2026-10-18 16:17:06.171202200 -0700
-+++ b/src/ggml-metal/ggml-metal-common.h	2026-10-18 16:19:18.746650200 -0700
-@@ -56,6 +56,24 @@
++++ b/src/ggml-metal/ggml-metal-common.h	2026-10-18 18:06:16.864688800 -0700
+@@ -56,6 +56,13 @@
  bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
  
  bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
 +
-+// read again at every backend init, so that a process can load the backend more than once with other
-+// settings: GGML_METAL_MMA_DISABLE leaves the few-row MMA kernels out, GGML_METAL_MV_EXT_DISABLE the
-+// small-batch mat-vec ones, and a mat-mul falls to the next kernel that takes it
-+extern bool ggml_metal_mma_disabled;
-+extern bool ggml_metal_mv_ext_disabled;
-+// GGML_METAL_FAST_MOVE: a 1D IM2COL and a copy out of a transposed view by kernels that keep every
-+// thread of a group busy and read and write along rows; the same values, moved faster. At 2 also a
-+// copy whose rows stay rows by whole rows a group, and the 1D IM2COL by tiles through threadgroup
-+// memory, a tile of positions and channels read once along the rows of the input
++// GGML_METAL_FAST_MOVE, read again at every backend init: a 1D IM2COL and a copy out of a
++// transposed view by kernels that keep every thread of a group busy and read and write along rows;
++// the same values, moved faster. At 2 also a copy whose rows stay rows by whole rows a group, and
++// the 1D IM2COL by tiles through threadgroup memory, a tile of positions and channels read once
++// along the rows of the input
 +extern int ggml_metal_fast_move;
-+// GGML_METAL_FUSION_SKIP, a comma list, leaves single fusions out while the rest stay: mul_mat_add,
-+// snake, add_chain, norm; mul_mat_add_batch and mul_mat_add_part only the MUL_MAT + ADD whose src1
-+// has more than one matrix, or rows that do not fill the MMA tiles. A bit per ggml_metal_fusion_id.
-+extern unsigned ggml_metal_fusion_skip;
-+#define GGML_METAL_FUSION_SKIP_ADD_BATCH (1u << 30)
-+#define GGML_METAL_FUSION_SKIP_ADD_PART  (1u << 29)
-+void ggml_metal_fusion_skip_parse(const char * list);
  bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op); // graph structure only
  
  // the few-row MMA kernel for a src0 type and rt src1 tiles: per 32-weight block (q4_0, q8_0 with one tile), q5_K, or the generic 64-weight chunk kernel
 diff -ruN a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-context.m
 --- a/src/ggml-metal/ggml-metal-context.m	2026-10-18 16:17:06.172216000 -0700
-+++ b/src/ggml-metal/ggml-metal-context.m	2026-10-18 16:19:18.747652100 -0700
-@@ -153,6 +153,12 @@
++++ b/src/ggml-metal/ggml-metal-context.m	2026-10-18 18:05:58.250333400 -0700
+@@ -153,6 +153,9 @@
          }
  
          res->finfo = ggml_metal_device_get_fusion_info(dev);
 +        // the device outlives a backend, and the next one may be asked for other kernels
 +        ggml_metal_fusion_info_set_enabled(res->finfo, getenv("GGML_METAL_FUSION_DISABLE") == nil);
-+        ggml_metal_mma_disabled    = getenv("GGML_METAL_MMA_DISABLE") != nil;
-+        ggml_metal_mv_ext_disabled = getenv("GGML_METAL_MV_EXT_DISABLE") != nil;
-+        ggml_metal_fast_move       = getenv("GGML_METAL_FAST_MOVE") == nil ? 0 : MAX(1, atoi(getenv("GGML_METAL_FAST_MOVE")));
-+        ggml_metal_fusion_skip_parse(getenv("GGML_METAL_FUSION_SKIP"));
++        ggml_metal_fast_move = getenv("GGML_METAL_FAST_MOVE") == nil ? 0 : MAX(1, atoi(getenv("GGML_METAL_FAST_MOVE")));
          if (ggml_metal_fusion_info_stats(res->finfo)) {
              ggml_metal_fusion_info_labels_init(res->finfo);
              res->n_cb = 0;
 diff -ruN a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
 --- a/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 16:17:06.173249100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 16:19:18.772650700 -0700
++++ b/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 18:05:58.203819000 -0700
 @@ -97,6 +97,36 @@
      return res;
  }
@@ -204,7 +151,7 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-dev
      }
 diff -ruN a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
 --- a/src/ggml-metal/ggml-metal-device.h	2026-10-18 16:17:06.173249100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.h	2026-10-18 16:19:18.760650900 -0700
++++ b/src/ggml-metal/ggml-metal-device.h	2026-10-18 18:05:58.202825300 -0700
 @@ -109,6 +109,8 @@
  
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base              (ggml_metal_library_t lib, enum ggml_op op);
@@ -225,7 +172,7 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-devic
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_col2im_1d         (ggml_metal_library_t lib, const struct ggml_tensor * op);
 diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
 --- a/src/ggml-metal/ggml-metal-device.m	2026-10-18 16:17:06.174251100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.m	2026-10-18 16:17:06.419415200 -0700
++++ b/src/ggml-metal/ggml-metal-device.m	2026-10-18 18:05:58.203819000 -0700
 @@ -507,7 +507,9 @@
      const int64_t t_start = ggml_time_us();
  
@@ -237,33 +184,9 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-devic
  
      if (path_lib != nil) {
          // pre-compiled library found: a single combined default.metallib
-diff -ruN a/src/ggml-metal/ggml-metal-fusion.cpp b/src/ggml-metal/ggml-metal-fusion.cpp
---- a/src/ggml-metal/ggml-metal-fusion.cpp	2026-10-18 16:17:06.175249800 -0700
-+++ b/src/ggml-metal/ggml-metal-fusion.cpp	2026-10-18 16:17:06.434398200 -0700
-@@ -702,6 +702,11 @@
-         return false;
-     }
- 
-+    if (((ggml_metal_fusion_skip & GGML_METAL_FUSION_SKIP_ADD_BATCH) && mm->src[1]->ne[2]*mm->src[1]->ne[3] > 1) ||
-+        ((ggml_metal_fusion_skip & GGML_METAL_FUSION_SKIP_ADD_PART) && mm->src[1]->ne[1] % 8 != 0)) {
-+        return false;
-+    }
-+
-     return !ggml_metal_fusion_overlap(add, mm->src[0]) && !ggml_metal_fusion_overlap(add, mm->src[1]) &&
-         (add->data == res->data || !ggml_metal_fusion_overlap(add, res));
- }
-@@ -1086,7 +1091,7 @@
-         const int n_ops = (int) fusion.ops.size();
- 
-         // only look for a longer match than the current best
--        if (n_ops <= best) {
-+        if (n_ops <= best || (ggml_metal_fusion_skip & (1u << fusion.id))) {
-             continue;
-         }
-         if (idx + n_ops > n_idxs) {
 diff -ruN a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
 --- a/src/ggml-metal/ggml-metal-impl.h	2026-10-18 16:17:06.176248600 -0700
-+++ b/src/ggml-metal/ggml-metal-impl.h	2026-10-18 16:19:18.747652100 -0700
++++ b/src/ggml-metal/ggml-metal-impl.h	2026-10-18 18:05:58.202825300 -0700
 @@ -781,6 +781,10 @@
      int32_t  KH;
      int32_t  KW;
@@ -277,7 +200,7 @@ diff -ruN a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
  typedef struct {
 diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
 --- a/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 16:17:06.177249800 -0700
-+++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 16:19:18.782671400 -0700
++++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 18:05:58.251333200 -0700
 @@ -2227,6 +2227,86 @@
  
      GGML_ASSERT(ne00 % ggml_blck_size(op->src[0]->type) == 0);
@@ -365,15 +288,6 @@ diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cp
      int64_t nk0 = ne00;
      if (ggml_is_quantized(op->src[0]->type)) {
          nk0 = ne00/16;
-@@ -2618,7 +2698,7 @@
- 
-     // first try to use small-batch mat-mv kernels
-     // these should be efficient for BS [2, ~8]
--    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
-+    if (!ggml_metal_mv_ext_disabled && op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
-         (
-          (
-           (
 @@ -4664,8 +4744,50 @@
          /*.KH   =*/ KH,
          /*.KW   =*/ KW,
@@ -427,7 +341,7 @@ diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cp
      if (KH*KW <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
 diff -ruN a/src/ggml-metal/kernels/conv.metal b/src/ggml-metal/kernels/conv.metal
 --- a/src/ggml-metal/kernels/conv.metal	2026-10-18 16:17:06.184267300 -0700
-+++ b/src/ggml-metal/kernels/conv.metal	2026-10-18 16:19:18.783675300 -0700
++++ b/src/ggml-metal/kernels/conv.metal	2026-10-18 18:05:58.193473500 -0700
 @@ -118,6 +118,99 @@
  template [[host_name("kernel_im2col_ext_f32")]] kernel im2col_ext_t kernel_im2col_ext<float>;
  template [[host_name("kernel_im2col_ext_f16")]] kernel im2col_ext_t kernel_im2col_ext<half>;
@@ -530,7 +444,7 @@ diff -ruN a/src/ggml-metal/kernels/conv.metal b/src/ggml-metal/kernels/conv.meta
          constant ggml_metal_kargs_col2im_1d & args,
 diff -ruN a/src/ggml-metal/kernels/quantize.metal b/src/ggml-metal/kernels/quantize.metal
 --- a/src/ggml-metal/kernels/quantize.metal	2026-10-18 16:17:06.200689300 -0700
-+++ b/src/ggml-metal/kernels/quantize.metal	2026-10-18 16:19:18.783675300 -0700
++++ b/src/ggml-metal/kernels/quantize.metal	2026-10-18 18:05:58.195813900 -0700
 @@ -37,6 +37,90 @@
  
  typedef decltype(kernel_cpy_t_t<float, float>) kernel_cpy_t;

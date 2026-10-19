@@ -60,16 +60,6 @@ static void watch_app() {
     });
 }
 
-// The screen kept on (1) or let go (0), for the 听书 experiments: a phone that
-// locks moves the voice to the CPU. UIKit by name, as above; nothing on a Mac.
-extern "C" void edge_tts_keep_awake(int on) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        id kind = NSClassFromString(@"UIApplication");
-        id app  = [kind valueForKey:@"sharedApplication"];
-        [app setValue:@(on != 0) forKey:@"idleTimerDisabled"];
-    });
-}
-
 // Whether the GPU can run the voice: ggml's Metal backend has some of the ops
 // it needs (RMS_NORM among them) only with SIMD-group reductions, which is
 // A13 and later (Metal 3) or A14 (Apple 7). The voice runs on one backend with
@@ -110,10 +100,6 @@ extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     if (const char * batch = getenv("EDGE_TTS_BATCH")) {
         p.max_batch = atoi(batch) > 1 ? atoi(batch) : 1;
     }
-    // EDGE_TTS_FA=0: attention as plain arithmetic, for the experiments.
-    if (const char * fa = getenv("EDGE_TTS_FA")) {
-        p.use_fa = atoi(fa) != 0;
-    }
     g_ctx         = qt_init(&p);
     g_gpu         = gpu != 0;
     if (!g_ctx) {
@@ -129,19 +115,6 @@ extern "C" void edge_tts_unload(void) {
         qt_free(g_ctx);
         g_ctx = nullptr;
     }
-}
-
-// The 听书 experiments' checks (qt_diag in qwen.h), with nothing else being
-// spoken: one sentence alone and several at once, frame by frame, and what
-// each part of the voice costs. The report goes to `report`.
-extern "C" int edge_tts_diag(const char * text, const char * speaker, int frames, int greedy, int profile,
-                             const char * report) {
-    std::shared_lock<std::shared_mutex> lock(g_mutex);
-    if (!g_ctx) {
-        g_error = "voice not loaded";
-        return -1;
-    }
-    return qt_diag(g_ctx, text, speaker, frames, greedy, profile, report);
 }
 
 typedef void (*edge_tts_pcm_cb)(const float * samples, int n_samples, void * user);
@@ -170,11 +143,6 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
     p.lang           = "chinese";
     p.speaker        = speaker;
     p.max_new_tokens = max_frames;
-    // A fixed seed for the experiments, so settings can be compared sample
-    // by sample; a fresh one for every sentence otherwise.
-    if (const char * seed = getenv("EDGE_TTS_SEED")) {
-        p.seed = atoll(seed);
-    }
     p.cancel         = [](void *) -> bool { return g_cancel.load(); };
     p.on_chunk       = [](const float * s, int n, void * u) -> bool {
         auto * k = static_cast<pcm_sink *>(u);
