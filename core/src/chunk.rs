@@ -210,6 +210,127 @@ pub fn rank(
     cap_per_chapter(scored, k, per_chapter)
 }
 
+/// The words of a query as the literal half of [rank_hybrid] counts them:
+/// each run of Chinese cut into overlapping pairs (Chinese has no spaces, and
+/// a pair is the shortest piece that still names something — 韩世, 世忠), a
+/// single character on its own, letters and digits as whole words.
+pub fn query_terms(query: &str) -> Vec<String> {
+    fn flush(run: &mut Vec<char>, out: &mut Vec<String>) {
+        let terms: Vec<String> = match run.len() {
+            0 => Vec::new(),
+            _ if run[0].is_ascii() => vec![run.iter().collect::<String>().to_lowercase()],
+            1 => vec![run[0].to_string()],
+            _ => run.windows(2).map(|w| w.iter().collect()).collect(),
+        };
+        for t in terms {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+        run.clear();
+    }
+    let mut out = Vec::new();
+    let mut run: Vec<char> = Vec::new();
+    for c in query.chars() {
+        let word = c.is_alphanumeric();
+        // A run is all Chinese or all letters and digits.
+        if !word || run.last().is_some_and(|l| l.is_ascii() != c.is_ascii()) {
+            flush(&mut run, &mut out);
+        }
+        if word {
+            run.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// Meaning and wording together. The vector finds the scene described in
+/// other words, but a small model blurs names: asked for 官家去救韩世忠, it
+/// hands back any scene of an emperor and a rescue. The words find the
+/// passages that say 韩世忠, and say nothing of a scene told without them.
+/// Each ranks every chunk its own way (the vector by cosine, the words by
+/// BM25 over [query_terms]), and a chunk scores by its place in both lists
+/// (reciprocal rank fusion), so one strong in either comes up and one strong
+/// in both comes first. `texts[i]` is the text of `rows[i]`. A chunk the
+/// words do not touch still has to clear `floor` on meaning alone.
+pub fn rank_hybrid(
+    query: &[f32],
+    query_text: &str,
+    rows: &[(i64, i64, i64, Vec<u8>)],
+    texts: &[&str],
+    k: usize,
+    per_chapter: usize,
+    floor: f32,
+) -> Vec<Hit> {
+    const FUSE: f32 = 60.0;
+    let (k1, b) = (1.2f32, 0.75f32);
+    let terms = query_terms(query_text);
+    let lens: Vec<f32> = texts.iter().map(|t| t.chars().count() as f32).collect();
+    let avg = (lens.iter().sum::<f32>() / lens.len().max(1) as f32).max(1.0);
+    let counts: Vec<Vec<usize>> = texts
+        .iter()
+        .map(|t| {
+            let t = t.to_lowercase();
+            terms.iter().map(|w| t.matches(w.as_str()).count()).collect()
+        })
+        .collect();
+    let n = texts.len() as f32;
+    let idf: Vec<f32> = (0..terms.len())
+        .map(|j| {
+            let df = counts.iter().filter(|c| c[j] > 0).count() as f32;
+            (1.0 + (n - df + 0.5) / (df + 0.5)).ln()
+        })
+        .collect();
+    let lexical: Vec<f32> = counts
+        .iter()
+        .zip(&lens)
+        .map(|(c, len)| {
+            c.iter()
+                .zip(&idf)
+                .map(|(&tf, idf)| {
+                    let tf = tf as f32;
+                    idf * tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * len / avg))
+                })
+                .sum()
+        })
+        .collect();
+    let cosines: Vec<f32> = rows.iter().map(|(_, _, _, v)| cosine(query, v)).collect();
+
+    // Place in each list, from 1; none where the words are absent.
+    let place = |scores: &[f32], present: &dyn Fn(usize) -> bool| {
+        let mut order: Vec<usize> = (0..scores.len()).filter(|&i| present(i)).collect();
+        order.sort_by(|&x, &y| scores[y].total_cmp(&scores[x]));
+        let mut at = vec![None; scores.len()];
+        for (r, i) in order.into_iter().enumerate() {
+            at[i] = Some(r as f32 + 1.0);
+        }
+        at
+    };
+    let by_meaning = place(&cosines, &|_| true);
+    let by_words = place(&lexical, &|i| lexical[i] > 0.0);
+
+    let mut scored: Vec<(f32, Hit)> = (0..rows.len())
+        .filter(|&i| by_words[i].is_some() || cosines[i] >= floor)
+        .map(|i| {
+            let fused = by_meaning[i].map_or(0.0, |r| 1.0 / (FUSE + r))
+                + by_words[i].map_or(0.0, |r| 1.0 / (FUSE + r));
+            let (chapter, start, end, _) = &rows[i];
+            (
+                fused,
+                Hit {
+                    chapter: *chapter,
+                    start: *start,
+                    end: *end,
+                    score: cosines[i],
+                },
+            )
+        })
+        .collect();
+    scored.sort_by(|x, y| y.0.total_cmp(&x.0).then(y.1.score.total_cmp(&x.1.score)));
+    cap_per_chapter(scored.into_iter().map(|(_, h)| h).collect(), k, per_chapter)
+}
+
 fn cap_per_chapter(scored: Vec<Hit>, k: usize, per_chapter: usize) -> Vec<Hit> {
     let mut taken = std::collections::HashMap::new();
     let mut out = Vec::with_capacity(k);
@@ -252,6 +373,37 @@ mod tests {
         let far: Vec<f32> = vec![0.0, 1.0];
         let rows = vec![(3i64, 0i64, 10i64, quantize(&far))];
         assert_eq!(rank_multi(&[q], &rows, 5, 2).len(), 1);
+    }
+
+    #[test]
+    fn a_query_is_cut_into_pairs_and_words() {
+        assert_eq!(
+            query_terms("官家去救韩世忠"),
+            ["官家", "家去", "去救", "救韩", "韩世", "世忠"]
+        );
+        assert_eq!(query_terms("救， AI 船"), ["救", "ai", "船"]);
+        assert_eq!(query_terms("岳飞 岳飞"), ["岳飞"]);
+    }
+
+    /// The vector alone puts the scene of someone else's rescue first; the
+    /// one that names him comes up over it.
+    #[test]
+    fn a_name_the_query_says_lifts_the_passage_that_says_it() {
+        let q: Vec<f32> = vec![1.0, 0.0];
+        let near: Vec<f32> = vec![0.9, 0.436];
+        let less: Vec<f32> = vec![0.6, 0.8];
+        let far: Vec<f32> = vec![0.0, 1.0];
+        let rows = vec![
+            (1i64, 0i64, 10i64, quantize(&near)),
+            (2, 10, 20, quantize(&less)),
+            (3, 20, 30, quantize(&far)),
+        ];
+        let texts = ["陛下亲往营救张俊", "官家下令去救韩世忠", "城外一片大雪"];
+        let hits = rank_hybrid(&q, "官家去救韩世忠", &rows, &texts, 5, 2, 0.35);
+        assert_eq!(hits[0].chapter, 2);
+        assert_eq!(hits[1].chapter, 1);
+        // Neither the words nor the meaning: left out.
+        assert_eq!(hits.len(), 2);
     }
 
     #[test]

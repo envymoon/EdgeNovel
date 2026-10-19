@@ -19,8 +19,7 @@ import 'theme.dart';
 /// where the reader remembers the scene but not a single word of it. That one
 /// costs a 48 MB model and an indexing pass, so it asks before it takes them.
 ///
-/// Both stop at the chapter being read. Finding a name from chapter 900 while
-/// standing in chapter 20 is a spoiler however it was found.
+/// Both search the whole book.
 enum _Mode { literal, semantic }
 
 class SearchPage extends StatefulWidget {
@@ -91,8 +90,7 @@ class _SearchPageState extends State<SearchPage> {
     });
     try {
       final b = widget.reader.info!;
-      // The chapter being read is included: the reader has seen it.
-      final upTo = widget.reader.chapterIndex;
+      final upTo = b.chapters.length - 1;
       final hits = _mode == _Mode.literal
           ? await searchText(path: b.path, query: q, upToChapter: upTo, k: 50)
           : await semanticSearch(
@@ -224,16 +222,14 @@ class _SearchPageState extends State<SearchPage> {
     ),
   );
 
-  Widget _hint(ReadingTheme t, IndexStatus s) {
-    final read = widget.reader.chapterIndex + 1;
-    final extra = _mode == _Mode.semantic && s.hasModel && s.indexed < s.total
-        ? ' · 已索引 ${s.indexed}/${s.total} 章'
-        : '';
-    return Text(
-      '已读 $read 章$extra',
-      style: TextStyle(color: t.muted, fontSize: 11),
-    );
-  }
+  /// How much of the book 语义 can search yet, while that is not all of it.
+  Widget _hint(ReadingTheme t, IndexStatus s) =>
+      _mode == _Mode.semantic && s.hasModel && s.indexed < s.total
+      ? Text(
+          '已索引 ${s.indexed}/${s.total} 章',
+          style: TextStyle(color: t.muted, fontSize: 11),
+        )
+      : const SizedBox.shrink();
 
   Widget _results(ReadingTheme t, IndexStatus s) {
     if (_mode == _Mode.semantic) {

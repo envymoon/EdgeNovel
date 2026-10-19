@@ -1123,10 +1123,7 @@ impl Store {
         Ok(())
     }
 
-    /// Every indexed chunk up to and including `up_to` — the spoiler line.
-    /// The filter is here, in the query, and not in the ranking: text the reader
-    /// has not reached is never a candidate, so it cannot leak through a bug
-    /// in whatever scores the results.
+    /// Every indexed chunk up to and including chapter `up_to`.
     pub fn chunk_vectors(&self, book_id: i64, up_to: i64) -> Result<Vec<(i64, i64, i64, Vec<u8>)>> {
         let mut st = self.conn.prepare(
             "SELECT chapter, start, end, vec FROM chunks

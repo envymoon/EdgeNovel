@@ -207,3 +207,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo check --locked
+      - name: Search ranking tests
+        working-directory: core
+        run: cargo test --locked --lib chunk::

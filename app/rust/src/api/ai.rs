@@ -2098,12 +2098,8 @@ pub fn index_book(
     Ok(())
 }
 
-/// Search the book — but only the part of it the reader has already read.
-///
-/// `up_to_chapter` is the spoiler line, and it is enforced in SQL: chapters
-/// beyond it are never loaded, so no ranking bug can leak one. A reader who
-/// searches for a character they have not met yet gets nothing, which is the
-/// correct answer.
+/// Search the book, through `up_to_chapter`, by meaning and by the words
+/// together ([chunk::rank_hybrid]).
 pub fn semantic_search(
     path: String,
     book_id: i64,
@@ -2131,7 +2127,23 @@ pub fn semantic_search(
     }
 
     let titles = book::chapter_titles(&path)?;
-    let hits = chunk::rank(&q, &rows, k as usize, 2, SCORE_FLOOR);
+    let hits = book::with_text(&path, |text| {
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|(_, s, e, _)| {
+                // Inside char boundaries, as [book::snippet] reads a span.
+                let (mut s, mut e) = (*s as usize, (*e as usize).min(text.len()));
+                while s < e && !text.is_char_boundary(s) {
+                    s += 1;
+                }
+                while e > s && !text.is_char_boundary(e) {
+                    e -= 1;
+                }
+                &text[s..e]
+            })
+            .collect();
+        chunk::rank_hybrid(&q, query, &rows, &texts, k as usize, 2, SCORE_FLOOR)
+    })?;
     Ok(hits
         .into_iter()
         .map(|h| SearchHit {

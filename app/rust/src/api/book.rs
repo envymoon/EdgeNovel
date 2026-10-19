@@ -912,12 +912,9 @@ pub struct SearchHit {
     pub score: f32,
 }
 
-/// Literal search: the words, exactly as typed. No model, no index, nothing to
-/// install — it works on a book imported thirty seconds ago.
-///
-/// Bounded by the same spoiler line as the semantic one: text the reader has not
-/// reached is not searched. Finding the murderer's name in chapter 900 by
-/// searching for it in chapter 20 is still a spoiler, however it was found.
+/// Literal search: the words, exactly as typed, through `up_to_chapter`. No
+/// model, no index, nothing to install — it works on a book imported thirty
+/// seconds ago.
 pub fn search_text(
     path: String,
     query: String,
@@ -998,6 +995,13 @@ pub(crate) fn chapter_titles(path: &str) -> Result<Vec<String>, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
     Ok(l.chapters.iter().map(|c| c.title.clone()).collect())
+}
+
+/// The book's text, lent to `f`: what search reads its chunks' words from.
+pub(crate) fn with_text<R>(path: &str, f: impl FnOnce(&str) -> R) -> Result<R, String> {
+    let guard = cache().read().unwrap();
+    let l = guard.get(path).ok_or("书未打开")?;
+    Ok(f(&l.text))
 }
 
 /// The text behind a byte span, for showing a search hit in its own words.
