@@ -10,6 +10,13 @@ import 'platform_services.dart';
 /// plays silence for as long as it runs, starting while the app is still on
 /// screen: iOS does not let it start from behind.
 class SilentKeepAlive {
+  /// Under other apps' sound rather than in place of it (the AI queue, which
+  /// is not listened to); back to the usual when it stops. iOS has one sound
+  /// setting for the whole app.
+  final bool mix;
+
+  SilentKeepAlive({this.mix = false});
+
   AudioPlayer? _player;
   bool _on = false;
 
@@ -23,7 +30,19 @@ class SilentKeepAlive {
     try {
       if (!wanted) {
         await _player?.stop();
+        if (mix) {
+          await AudioPlayer.global.setAudioContext(
+            AudioContextConfig().build(),
+          );
+        }
         return true;
+      }
+      if (mix) {
+        await AudioPlayer.global.setAudioContext(
+          AudioContextConfig(
+            focus: AudioContextConfigFocus.mixWithOthers,
+          ).build(),
+        );
       }
       final player = _player ??= AudioPlayer();
       await player.setReleaseMode(ReleaseMode.loop);

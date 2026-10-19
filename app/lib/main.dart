@@ -245,7 +245,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
       defaultTargetPlatform == TargetPlatform.iOS;
   bool _inWindow = false;
   Timer? _windowWatch;
-  final _alive = SilentKeepAlive();
+  final _alive = SilentKeepAlive(mix: true);
   AppLifecycleState _life =
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
 
