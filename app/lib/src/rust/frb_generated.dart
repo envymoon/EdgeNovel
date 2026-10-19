@@ -120,6 +120,7 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   });
 
   Future<List<double?>> crateApiBookChapterPace({required String path});
@@ -174,6 +175,7 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   });
 
   Stream<DownloadProgress> crateApiSourceDownloadBook({
@@ -245,6 +247,7 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   });
 
   Future<List<Landmine>> crateApiAiLandmines();
@@ -436,6 +439,7 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   });
 }
 
@@ -884,6 +888,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -892,6 +897,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(path, serializer);
           sse_encode_i_64(bookId, serializer);
           sse_encode_i_64(upToChapter, serializer);
+          sse_encode_u_32(top, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -904,7 +910,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiBookCastGraphConstMeta,
-        argValues: [path, bookId, upToChapter],
+        argValues: [path, bookId, upToChapter, top],
         apiImpl: this,
       ),
     );
@@ -912,7 +918,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiBookCastGraphConstMeta => const TaskConstMeta(
     debugName: "cast_graph",
-    argNames: ["path", "bookId", "upToChapter"],
+    argNames: ["path", "bookId", "upToChapter", "top"],
   );
 
   @override
@@ -1490,6 +1496,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   }) {
     final sink = RustStreamSink<DescribeProgress>();
     unawaited(
@@ -1500,6 +1507,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             sse_encode_String(path, serializer);
             sse_encode_i_64(bookId, serializer);
             sse_encode_i_64(upToChapter, serializer);
+            sse_encode_u_32(top, serializer);
             sse_encode_StreamSink_describe_progress_Sse(sink, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -1513,7 +1521,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_String,
           ),
           constMeta: kCrateApiAiDescribePeopleConstMeta,
-          argValues: [path, bookId, upToChapter, sink],
+          argValues: [path, bookId, upToChapter, top, sink],
           apiImpl: this,
         ),
       ),
@@ -1523,7 +1531,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAiDescribePeopleConstMeta => const TaskConstMeta(
     debugName: "describe_people",
-    argNames: ["path", "bookId", "upToChapter", "sink"],
+    argNames: ["path", "bookId", "upToChapter", "top", "sink"],
   );
 
   @override
@@ -2162,6 +2170,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   }) {
     final sink = RustStreamSink<RelabelProgress>();
     unawaited(
@@ -2172,6 +2181,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             sse_encode_String(path, serializer);
             sse_encode_i_64(bookId, serializer);
             sse_encode_i_64(upToChapter, serializer);
+            sse_encode_u_32(top, serializer);
             sse_encode_StreamSink_relabel_progress_Sse(sink, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -2185,7 +2195,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_String,
           ),
           constMeta: kCrateApiAiLabelRelationsConstMeta,
-          argValues: [path, bookId, upToChapter, sink],
+          argValues: [path, bookId, upToChapter, top, sink],
           apiImpl: this,
         ),
       ),
@@ -2195,7 +2205,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAiLabelRelationsConstMeta => const TaskConstMeta(
     debugName: "label_relations",
-    argNames: ["path", "bookId", "upToChapter", "sink"],
+    argNames: ["path", "bookId", "upToChapter", "top", "sink"],
   );
 
   @override
@@ -3630,6 +3640,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String path,
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
+    required int top,
   }) {
     final sink = RustStreamSink<VetProgress>();
     unawaited(
@@ -3640,6 +3651,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             sse_encode_String(path, serializer);
             sse_encode_i_64(bookId, serializer);
             sse_encode_i_64(upToChapter, serializer);
+            sse_encode_u_32(top, serializer);
             sse_encode_StreamSink_vet_progress_Sse(sink, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -3653,7 +3665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_String,
           ),
           constMeta: kCrateApiAiVetNamesConstMeta,
-          argValues: [path, bookId, upToChapter, sink],
+          argValues: [path, bookId, upToChapter, top, sink],
           apiImpl: this,
         ),
       ),
@@ -3663,7 +3675,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAiVetNamesConstMeta => const TaskConstMeta(
     debugName: "vet_names",
-    argNames: ["path", "bookId", "upToChapter", "sink"],
+    argNames: ["path", "bookId", "upToChapter", "top", "sink"],
   );
 
   @protected

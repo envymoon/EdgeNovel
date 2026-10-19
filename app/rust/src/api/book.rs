@@ -1375,11 +1375,34 @@ pub(crate) fn scan_cached(
     Ok((cast, upto))
 }
 
+/// Who of the scanned cast the reader sees: the first `top` the model has not
+/// thrown out, in the graph's own order, so 3 or 5 is the head of the ten and
+/// a word thrown out leaves its slot empty rather than calling in an eleventh.
+fn shown(cast: &novel_core::cast::Cast, verdicts: &HashMap<String, bool>, top: u32) -> Vec<bool> {
+    let mut seated = 0;
+    cast.people
+        .iter()
+        .map(|p| {
+            let keep = *verdicts.get(&p.name).unwrap_or(&true) && seated < top as usize;
+            if keep {
+                seated += 1;
+            }
+            keep
+        })
+        .collect()
+}
+
 /// Scan the cast and relationships. Pure rules, no engine, no download —
 /// then whatever the model has already ruled on for this book is laid over the
 /// top: candidates it rejected are dropped along with their edges, and labels it
-/// picked fill in the ones the rules left open.
-pub fn cast_graph(path: String, book_id: i64, up_to_chapter: i64) -> Result<CastGraph, String> {
+/// picked fill in the ones the rules left open. `top` is how many the reader
+/// asked to see (3, 5 or 10).
+pub fn cast_graph(
+    path: String,
+    book_id: i64,
+    up_to_chapter: i64,
+    top: u32,
+) -> Result<CastGraph, String> {
     ensure_loaded(&path)?;
     let (cast, upto) = scan_cached(&path, book_id, up_to_chapter)?;
 
@@ -1399,12 +1422,8 @@ pub fn cast_graph(path: String, book_id: i64, up_to_chapter: i64) -> Result<Cast
         .collect();
     let sources = background_sources(book_id, upto)?;
 
-    // Renumber around anyone the model threw out.
-    let keep: Vec<bool> = cast
-        .people
-        .iter()
-        .map(|p| *verdicts.get(&p.name).unwrap_or(&true))
-        .collect();
+    // Renumber around anyone the model threw out, and anyone past `top`.
+    let keep = shown(&cast, &verdicts, top);
     let mut remap = vec![usize::MAX; cast.people.len()];
     let mut people: Vec<CastPerson> = Vec::new();
     for (i, p) in cast.people.iter().enumerate() {
@@ -1564,22 +1583,38 @@ pub fn relationship_structure(
 }
 
 /// Candidates sitting in the density band, with a sentence apiece — what the
-/// model is asked to rule on. Already-judged names are not asked about twice.
+/// model is asked to rule on. Already-judged names are not asked about twice,
+/// and nobody who cannot reach the first `top`: one with `top` people ahead
+/// that are surely kept.
 pub(crate) fn unjudged_names(
     path: &str,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
 ) -> Result<Vec<(String, String)>, String> {
     let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
     let judged: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
         .unwrap_or_default()
         .into_iter()
         .collect();
+    let mut sure_ahead = 0;
+    let reachable: Vec<bool> = cast
+        .people
+        .iter()
+        .map(|p| {
+            let reach = sure_ahead < top as usize;
+            if judged.get(&p.name).copied().unwrap_or(!p.uncertain) {
+                sure_ahead += 1;
+            }
+            reach
+        })
+        .collect();
     Ok(cast
         .people
         .iter()
-        .filter(|p| p.uncertain && !judged.contains_key(&p.name))
-        .map(|p| {
+        .enumerate()
+        .filter(|&(i, p)| reachable[i] && p.uncertain && !judged.contains_key(&p.name))
+        .map(|(_, p)| {
             let sample = cast
                 .edges
                 .iter()
@@ -1604,6 +1639,7 @@ pub(crate) fn residual_relations(
     path: &str,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
 ) -> Result<Vec<(String, String, Vec<(usize, String)>)>, String> {
     let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
     let done: HashMap<(String, String), String> = with_store!(s => s.relation_summaries(book_id))
@@ -1617,7 +1653,8 @@ pub(crate) fn residual_relations(
         .unwrap_or_default()
         .into_iter()
         .collect();
-    let kept = |i: usize| *verdicts.get(&cast.people[i].name).unwrap_or(&true);
+    let seen = shown(&cast, &verdicts, top);
+    let kept = |i: usize| seen[i];
     Ok(cast
         .edges
         .iter()
@@ -1708,6 +1745,7 @@ pub(crate) fn residual_people(
     path: &str,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
 ) -> Result<Vec<(String, Vec<String>, Vec<(usize, String)>)>, String> {
     let (cast, upto) = scan_cached(path, book_id, up_to_chapter)?;
     let sources = background_sources(book_id, upto)?;
@@ -1716,14 +1754,13 @@ pub(crate) fn residual_people(
         .unwrap_or_default()
         .into_iter()
         .collect();
+    let seen = shown(&cast, &verdicts, top);
     Ok(cast
         .people
         .iter()
-        .filter(|p| {
-            sources.get(&p.name).is_none_or(|(_, stale)| *stale)
-                && *verdicts.get(&p.name).unwrap_or(&true)
-        })
-        .map(|p| {
+        .enumerate()
+        .filter(|&(i, p)| seen[i] && sources.get(&p.name).is_none_or(|(_, stale)| *stale))
+        .map(|(_, p)| {
             (
                 p.name.clone(),
                 p.aliases.clone(),

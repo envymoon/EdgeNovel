@@ -1646,20 +1646,22 @@ pub fn cancel_describe() {
     CANCEL_DESCRIBE.store(true, Ordering::SeqCst);
 }
 
-/// Write a background for every character in the graph, streaming each as it
+/// Write a background for every character in the graph (its first `top`, as
+/// [`book::cast_graph`] shows them), streaming each as it
 /// lands. Same contract as [`label_relations`]: resumable, cancellable, and
 /// whatever finished is on disk before the reader sees it.
 pub fn describe_people(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<DescribeProgress>,
 ) -> Result<(), String> {
     CANCEL_DESCRIBE.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let residual = book::residual_people(&path, book_id, up_to_chapter)?;
+    let residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
     let digest = book::chapter_digest(book_id)?;
 
@@ -1738,13 +1740,14 @@ pub fn label_relations(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<RelabelProgress>,
 ) -> Result<(), String> {
     CANCEL_RELABEL.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let residual = book::residual_relations(&path, book_id, up_to_chapter)?;
+    let residual = book::residual_relations(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
 
     let mut consecutive_errors = 0;
@@ -1852,13 +1855,14 @@ pub fn vet_names(
     path: String,
     book_id: i64,
     up_to_chapter: i64,
+    top: u32,
     sink: StreamSink<VetProgress>,
 ) -> Result<(), String> {
     CANCEL_VET.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let pending = book::unjudged_names(&path, book_id, up_to_chapter)?;
+    let pending = book::unjudged_names(&path, book_id, up_to_chapter, top)?;
     let total = pending.len() as u32;
     let mut consecutive_errors = 0;
 

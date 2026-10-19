@@ -12,6 +12,7 @@ import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart';
+import 'theme.dart';
 
 enum _AiTaskKind { enrich, semanticIndex, cast, plates }
 
@@ -495,12 +496,16 @@ class ReaderState extends ChangeNotifier {
     final bookId = task.bookId;
     final upTo = task.upTo;
     try {
+      final top = ReadingSettings.castTopIn(
+        _queuePrefs ?? await SharedPreferences.getInstance(),
+      );
       castProgress = const CastRunProgress(CastStep.vet, 0, 0, '');
       notifyListeners();
       await for (final v in vetNames(
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         // Re-sent on every item: the step clears its cancel flag when it
         // starts, so a pause asked for in that instant would otherwise be lost.
@@ -525,6 +530,7 @@ class ReaderState extends ChangeNotifier {
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         if (_pauseRequested) await cancelRelabel();
         if (p.label.isNotEmpty) castLabels['${p.a} ${p.b}'] = p.label;
@@ -552,6 +558,7 @@ class ReaderState extends ChangeNotifier {
         path: path,
         bookId: bookId,
         upToChapter: upTo,
+        top: top,
       )) {
         if (_pauseRequested) await cancelDescribe();
         if (p.background.isNotEmpty) castBackgrounds[p.name] = p.background;

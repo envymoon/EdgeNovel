@@ -278,6 +278,18 @@ class ReadingSettings extends ChangeNotifier {
   int ttsLanes = 4;
   static const ttsLaneChoices = [1, 4];
 
+  /// People in 人物图谱 and in its analysis: the head of the ten, in their
+  /// order.
+  int castTop = 10;
+  static const castTopChoices = [3, 5, 10];
+
+  /// Read where there is no [ReadingSettings] to hand: the analysis in the
+  /// background queue.
+  static int castTopIn(SharedPreferences p) {
+    final n = p.getInt('castTop');
+    return castTopChoices.contains(n) ? n! : 10;
+  }
+
   TtsServer get ttsServer => TtsServer(
     baseUrl: ttsServerUrl,
     apiKey: ttsServerKey,
@@ -328,6 +340,7 @@ class ReadingSettings extends ChangeNotifier {
     s.ttsLocalVoice = p.getString('ttsLocalSpeaker') ?? s.ttsLocalVoice;
     final lanes = p.getInt('ttsLanes');
     if (ttsLaneChoices.contains(lanes)) s.ttsLanes = lanes!;
+    s.castTop = castTopIn(p);
     s.ttsServerUrl = p.getString('ttsServerUrl') ?? s.ttsServerUrl;
     s.ttsServerKey = p.getString('ttsServerKey') ?? s.ttsServerKey;
     s.ttsServerModel = p.getString('ttsServerModel') ?? s.ttsServerModel;
@@ -360,12 +373,20 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('ttsSpeed', ttsSpeed);
     p.setString('ttsLocalSpeaker', ttsLocalVoice);
     p.setInt('ttsLanes', ttsLanes);
+    p.setInt('castTop', castTop);
     p.setBool('ttsRemote', ttsRemote);
     p.setString('ttsServerUrl', ttsServerUrl);
     p.setString('ttsServerKey', ttsServerKey);
     p.setString('ttsServerModel', ttsServerModel);
     p.setString('ttsServerVoice', ttsServerVoice);
     p.setString('appLanguage', language.code);
+  }
+
+  void setCastTop(int n) {
+    if (!castTopChoices.contains(n)) return;
+    castTop = n;
+    notifyListeners();
+    _persist();
   }
 
   void setTtsLanes(int n) {

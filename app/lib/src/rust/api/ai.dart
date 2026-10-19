@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `also_called`, `ask_for_text`, `background_rest`, `chat_engine_args`, `chat_once`, `classify_mood`, `clean_summary`, `cpu_only`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine`, `ensure`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `health`, `http`, `inference_backend`, `is_a_person`, `is_embed_model`, `is_engine_entry`, `joined`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `normalized_evidence`, `repeats_original`, `runtime_config`, `stage_from_lines`, `stop_chat_engine`, `story_from_lines`, `story_from_stages`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `tail_pick`, `write_background`
+// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `also_called`, `ask_for_text`, `background_rest`, `chat_engine_args`, `chat_once`, `classify_mood`, `clean_summary`, `cpu_only`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine`, `ensure`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `health`, `http`, `inference_backend`, `is_a_person`, `is_embed_model`, `is_engine_entry`, `joined`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `normalized_evidence`, `repeats_original`, `runtime_config`, `stage_from_lines`, `stop_chat_engine`, `story_from_lines`, `story_from_stages`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `summary_request`, `tail_pick`, `write_background`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ChatEngineState`, `LastInputInfo`, `LlamaServerBackend`, `MemoryStatusEx`, `SystemPowerStatus`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `chat_completion`, `chat_completion`, `embeddings`, `embeddings`, `prepare_chat`, `prepare_chat`, `prepare_embeddings`, `prepare_embeddings`
@@ -63,17 +63,20 @@ Stream<EnrichProgress> enrichBook({
 Future<void> cancelDescribe() =>
     RustLib.instance.api.crateApiAiCancelDescribe();
 
-/// Write a background for every character in the graph, streaming each as it
+/// Write a background for every character in the graph (its first `top`, as
+/// [`book::cast_graph`] shows them), streaming each as it
 /// lands. Same contract as [`label_relations`]: resumable, cancellable, and
 /// whatever finished is on disk before the reader sees it.
 Stream<DescribeProgress> describePeople({
   required String path,
   required PlatformInt64 bookId,
   required PlatformInt64 upToChapter,
+  required int top,
 }) => RustLib.instance.api.crateApiAiDescribePeople(
   path: path,
   bookId: bookId,
   upToChapter: upToChapter,
+  top: top,
 );
 
 /// Throw away everything derived for this book's graph — the scan, the model's
@@ -91,10 +94,12 @@ Stream<RelabelProgress> labelRelations({
   required String path,
   required PlatformInt64 bookId,
   required PlatformInt64 upToChapter,
+  required int top,
 }) => RustLib.instance.api.crateApiAiLabelRelations(
   path: path,
   bookId: bookId,
   upToChapter: upToChapter,
+  top: top,
 );
 
 Future<void> cancelVet() => RustLib.instance.api.crateApiAiCancelVet();
@@ -106,10 +111,12 @@ Stream<VetProgress> vetNames({
   required String path,
   required PlatformInt64 bookId,
   required PlatformInt64 upToChapter,
+  required int top,
 }) => RustLib.instance.api.crateApiAiVetNames(
   path: path,
   bookId: bookId,
   upToChapter: upToChapter,
+  top: top,
 );
 
 Future<IndexStatus> indexStatus({
@@ -130,12 +137,8 @@ Stream<IndexProgress> indexBook({
   required PlatformInt64 bookId,
 }) => RustLib.instance.api.crateApiAiIndexBook(path: path, bookId: bookId);
 
-/// Search the book — but only the part of it the reader has already read.
-///
-/// `up_to_chapter` is the spoiler line, and it is enforced in SQL: chapters
-/// beyond it are never loaded, so no ranking bug can leak one. A reader who
-/// searches for a character they have not met yet gets nothing, which is the
-/// correct answer.
+/// Search the book, through `up_to_chapter`, by meaning and by the words
+/// together ([chunk::rank_hybrid]).
 Future<List<SearchHit>> semanticSearch({
   required String path,
   required PlatformInt64 bookId,
