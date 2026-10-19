@@ -282,7 +282,7 @@ const MOST_LANES: usize = 4;
 /// by the faster kernels (the same audio to the bit). The 听书 experiments
 /// found both on the phone.
 #[cfg(in_process_engine)]
-const GPU_ENV: [(&str, &str); 2] = [("GGML_METAL_FUSION_DISABLE", "1"), ("GGML_METAL_FAST_MOVE", "1")];
+const GPU_ENV: [(&str, &str); 2] = [("GGML_METAL_FUSION_DISABLE", "1"), ("GGML_METAL_FAST_MOVE", "2")];
 
 /// How many sentences the GPU speaks at once, as the reader chose in the 听书
 /// panel (`lanes` beside the voice, written by TtsPrepare), and the engine
