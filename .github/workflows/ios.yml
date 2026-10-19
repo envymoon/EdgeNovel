@@ -209,4 +209,4 @@ jobs:
       - run: cargo check --locked
       - name: Search ranking tests
         working-directory: core
-        run: cargo test --locked --lib chunk::
+        run: "cargo test --locked --lib chunk::"
