@@ -653,6 +653,7 @@ const _english = <String, String>{
   '朗读走本机': 'Narration runs on this device',
   '朗读走远程合成': 'Narration uses remote synthesis',
   '朗读语音未安装': 'Narration voice is not installed',
+  'AI 语音': 'AI voice',
   '让它读': 'Read aloud',
   '准备…': 'Preparing…',
   '边听边合成': 'Listen now',

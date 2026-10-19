@@ -106,7 +106,7 @@ class _AiPageState extends State<AiPage> {
 
   Future<void> _refresh() async {
     final s = await aiStatus();
-    final ts = AppPlatformSupport.hasReadAloud ? await ttsStatus() : null;
+    final ts = AppPlatformSupport.hasAiVoice ? await ttsStatus() : null;
     final img = await imageStatus();
     final imgPending = await pendingDownloadBytes(img.dir, imageModelFiles);
     final voicePending = ts == null
@@ -760,7 +760,7 @@ class _AiPageState extends State<AiPage> {
                           ),
                         ),
                       ),
-                      if (AppPlatformSupport.hasReadAloud) ...[
+                      if (AppPlatformSupport.hasAiVoice) ...[
                         const Divider(height: 32),
                         // Voice, pace and a server elsewhere are one page away; the
                         // engine and the voice it runs are the two rows below.

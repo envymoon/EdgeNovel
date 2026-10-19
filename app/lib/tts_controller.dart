@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'reader_state.dart';
 import 'platform_services.dart';
@@ -29,7 +30,9 @@ import 'tts_text.dart';
 ///
 /// On iPhone nothing is spoken as the voice goes: a chapter plays from the
 /// file it is spoken ahead into ([TtsChapters]), as far as it has been
-/// spoken, and the voice follows its index from sentence to sentence.
+/// spoken, and the voice follows its index from sentence to sentence. With
+/// no AI voice installed the phone's own voice reads it instead, as it goes
+/// ([_startSystem]).
 class TtsController extends ChangeNotifier {
   final ReaderState reader;
   final ReadingSettings settings;
@@ -73,6 +76,31 @@ class TtsController extends ChangeNotifier {
 
   /// iPhone: chapters spoken ahead are played, and nothing else.
   static bool get _byChapter => AppPlatformSupport.speaksByChapter;
+
+  /// iPhone without the AI voice: the phone's own reads (AppDelegate.swift).
+  static const _speech = MethodChannel('novel/speech');
+
+  /// The reader the phone's voice is reading for; what it says goes there.
+  static TtsController? _speaking;
+
+  /// Reading in the phone's voice, and paused within a sentence of it.
+  bool _system = false;
+  bool _systemPaused = false;
+
+  /// The chapter its sentences are of: one turned to while paused is read
+  /// from its own start.
+  (int?, int) _systemChapter = (null, -1);
+
+  /// Whether the AI voice is there to play chapters spoken ahead; where not,
+  /// iPhone reads in its own voice.
+  Future<bool> aiVoiceReady() async {
+    if (!AppPlatformSupport.hasAiVoice) return false;
+    try {
+      return await _localSpeech.ready();
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// The chapter playing, while [_byChapter], and the piece of it.
   SpokenChapter? _spoken;
@@ -162,7 +190,10 @@ class TtsController extends ChangeNotifier {
   /// that sentence. Throws a Chinese message the caller can show.
   Future<void> start({int? fromIndex}) async {
     if (playing) return;
-    if (_byChapter) return _startSpoken(fromIndex);
+    if (_byChapter) {
+      if (await aiVoiceReady()) return _startSpoken(fromIndex);
+      return _startSystem(fromIndex);
+    }
     if (!settings.ttsRemote && !await _localSpeech.ready()) {
       throw '朗读语音未安装';
     }
@@ -188,6 +219,12 @@ class TtsController extends ChangeNotifier {
     if (!playing) return;
     playing = false;
     _gen++;
+    if (_system) {
+      _systemPaused = true;
+      notifyListeners();
+      await _speech.invokeMethod('pause');
+      return;
+    }
     if (_byChapter) {
       final at = await _player?.getCurrentPosition();
       _pausedAt = at == null ? null : _pieceStart + at;
@@ -216,6 +253,11 @@ class TtsController extends ChangeNotifier {
     _spoken = null;
     _pausedAt = null;
     TtsChapters.instance.playing = null;
+    if (_system) {
+      _system = false;
+      _systemPaused = false;
+      await _speech.invokeMethod('stop');
+    }
     await _player?.stop();
     notifyListeners();
   }
@@ -227,6 +269,12 @@ class TtsController extends ChangeNotifier {
     _pos = i;
     final u = _utts[i];
     _setActive(u.paragraphIndex, u.start, u.end);
+    if (_system) {
+      _systemPaused = false;
+      if (playing) await _speakFrom(i);
+      notifyListeners();
+      return;
+    }
     final spoken = _spoken;
     if (_byChapter && spoken != null) {
       _pausedAt = null;
@@ -270,6 +318,14 @@ class TtsController extends ChangeNotifier {
   /// stretched instead — so nothing buffered goes stale; a server is asked for
   /// the pace, and what it already made is made at the old one.
   Future<void> onSpeedChanged() async {
+    // The phone's voice takes its pace sentence by sentence: what is queued
+    // is queued again at the new one.
+    if (_system) {
+      _systemPaused = false;
+      if (playing) await _speakFrom(_pos);
+      notifyListeners();
+      return;
+    }
     if (usingRemote) return onVoiceOrSpeedChanged();
     await _player?.setPlaybackRate(speed);
     notifyListeners();
@@ -290,6 +346,117 @@ class TtsController extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+  }
+
+  // ── iPhone: the phone's own voice ───────────────────────────────────────
+
+  Future<void> _startSystem(int? fromIndex) async {
+    // Sentences of a chapter spoken ahead carry no text.
+    final chapter = (reader.info?.id, reader.chapterIndex);
+    if (_utts.isEmpty || !_system || chapter != _systemChapter) {
+      if (chapter != _systemChapter) _pos = 0;
+      _systemChapter = chapter;
+      _spoken = null;
+      _pausedAt = null;
+      _systemPaused = false;
+      _buildUtts();
+    }
+    if (_utts.isEmpty) return;
+    _system = true;
+    _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
+      0,
+      _utts.length - 1,
+    );
+    playing = true;
+    heard = true;
+    buffering = false;
+    notice = null;
+    _gen++;
+    final u = _utts[_pos];
+    _setActive(u.paragraphIndex, u.start, u.end);
+    notifyListeners();
+    _speaking = this;
+    _speech.setMethodCallHandler(_onSystemSpeech);
+    if (fromIndex == null && _systemPaused) {
+      _systemPaused = false;
+      if (await _speech.invokeMethod<bool>('resume') == true) return;
+    }
+    _systemPaused = false;
+    await _speakFrom(_pos);
+  }
+
+  /// The chapter from sentence [from] on, queued in the phone's voice, a
+  /// breath after each sentence as [_gap] gives the AI voice.
+  Future<void> _speakFrom(int from) async {
+    final gaps = <double>[];
+    for (var i = from; i < _utts.length; i++) {
+      final next = i + 1;
+      var ms = 220;
+      if (next < _utts.length &&
+          _utts[next].paragraphIndex != _utts[i].paragraphIndex) {
+        ms += 260;
+      }
+      gaps.add(ms / speed / 1000);
+    }
+    await _speech.invokeMethod('speak', {
+      'texts': [for (var i = from; i < _utts.length; i++) _utts[i].text],
+      'gaps': gaps,
+      'from': from,
+      'rate': systemRate(speed),
+    });
+  }
+
+  /// The pace slider's 0.6–2× as the phone's voice takes it: 0.5 is its own
+  /// pace, 1 the fastest it goes.
+  static double systemRate(double speed) =>
+      (speed <= 1 ? 0.5 * speed : 0.5 + (speed - 1) * 0.25).clamp(0.1, 1.0);
+
+  static Future<void> _onSystemSpeech(MethodCall call) async {
+    final self = _speaking;
+    if (self == null || !self._system) return;
+    switch (call.method) {
+      case 'sentence':
+        final i = call.arguments as int;
+        if (i >= self._utts.length) return;
+        self._pos = i;
+        final u = self._utts[i];
+        self._setActive(u.paragraphIndex, u.start, u.end);
+        self.notifyListeners();
+      case 'end':
+        await self._onSystemEnd();
+    }
+  }
+
+  /// The chapter read to the end: on into the next one, and at the book's
+  /// end the voice stops.
+  Future<void> _onSystemEnd() async {
+    if (!playing) return;
+    final gen = _gen;
+    final info = reader.info;
+    await reader.markCurrentChapterCompleted();
+    if (gen != _gen) return;
+    if (info == null || reader.chapterIndex >= info.chapters.length - 1) {
+      playing = false;
+      _pos = _utts.length;
+      _clearActive();
+      notifyListeners();
+      return;
+    }
+    await reader.next();
+    if (gen != _gen) return;
+    _buildUtts();
+    _systemChapter = (reader.info?.id, reader.chapterIndex);
+    _pos = 0;
+    if (_utts.isEmpty) {
+      playing = false;
+      _clearActive();
+      notifyListeners();
+      return;
+    }
+    final u = _utts[0];
+    _setActive(u.paragraphIndex, u.start, u.end);
+    notifyListeners();
+    await _speakFrom(0);
   }
 
   // ── iPhone: chapters spoken ahead ───────────────────────────────────────
@@ -724,6 +891,10 @@ class TtsController extends ChangeNotifier {
   @override
   void dispose() {
     _gen++;
+    if (_speaking == this) {
+      _speaking = null;
+      if (_system) _speech.invokeMethod('stop').ignore();
+    }
     _release();
     _positionSub?.cancel();
     _completeSub?.cancel();

@@ -122,6 +122,12 @@ import os
           }
         }
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelSpeech") {
+      let channel = FlutterMethodChannel(
+        name: "novel/speech", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in SystemSpeech.shared.handle(call, result) }
+      SystemSpeech.shared.channel = channel
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelTransfer") {
       let channel = FlutterMethodChannel(
         name: "novel/transfer", binaryMessenger: registrar.messenger())
@@ -519,5 +525,79 @@ final class Transfers: NSObject, URLSessionDownloadDelegate {
       self.eventsDone?()
       self.eventsDone = nil
     }
+  }
+}
+
+/// 听书 without the AI voice: the phone's own (tts_controller.dart). A
+/// chapter from a sentence on is queued all at once, so it goes on with the
+/// screen locked with nothing asked of Dart between sentences; Dart hears
+/// which sentence has begun, and when the last has been said.
+final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
+  static let shared = SystemSpeech()
+
+  var channel: FlutterMethodChannel?
+  private let synth = AVSpeechSynthesizer()
+  /// What is queued, in order; the first is sentence [from].
+  private var queued: [AVSpeechUtterance] = []
+  private var from = 0
+
+  override init() {
+    super.init()
+    synth.delegate = self
+  }
+
+  func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    switch call.method {
+    case "speak":
+      let texts = args["texts"] as? [String] ?? []
+      let gaps = args["gaps"] as? [Double] ?? []
+      let rate = Float(args["rate"] as? Double ?? Double(AVSpeechUtteranceDefaultSpeechRate))
+      clear()
+      let session = AVAudioSession.sharedInstance()
+      try? session.setCategory(.playback, mode: .spokenAudio)
+      try? session.setActive(true)
+      let voice = AVSpeechSynthesisVoice(language: "zh-CN")
+      from = args["from"] as? Int ?? 0
+      for (k, text) in texts.enumerated() {
+        let u = AVSpeechUtterance(string: text)
+        u.voice = voice
+        u.rate = min(max(rate, AVSpeechUtteranceMinimumSpeechRate), AVSpeechUtteranceMaximumSpeechRate)
+        if k < gaps.count { u.postUtteranceDelay = gaps[k] }
+        queued.append(u)
+        synth.speak(u)
+      }
+    case "pause":
+      synth.pauseSpeaking(at: .immediate)
+    case "resume":
+      if !synth.continueSpeaking() {
+        result(false)
+        return
+      }
+    case "stop":
+      clear()
+    default:
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    result(true)
+  }
+
+  /// What was queued is let go first, so nothing it says on its way out is
+  /// taken for what follows.
+  private func clear() {
+    queued = []
+    synth.stopSpeaking(at: .immediate)
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+    guard let k = queued.firstIndex(where: { $0 === utterance }) else { return }
+    channel?.invokeMethod("sentence", arguments: from + k)
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    guard let last = queued.last, last === utterance else { return }
+    queued = []
+    channel?.invokeMethod("end", arguments: nil)
   }
 }

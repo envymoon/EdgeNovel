@@ -6,6 +6,7 @@ import 'app_localizations.dart';
 import 'background_task_bar.dart';
 import 'bloom.dart';
 import 'platform_services.dart';
+import 'platform_support.dart';
 import 'reader_state.dart';
 import 'theme.dart';
 import 'tts_chapters.dart';
@@ -15,7 +16,8 @@ import 'tts_prepare.dart';
 import 'tts_text.dart';
 
 /// iPhone 听书, all in one panel from the headphone icon: play what has been
-/// spoken, speak more of the book, and the voice and pace.
+/// spoken, speak more of the book, and the voice and pace. With no AI voice
+/// installed it is the phone's own voice, read as it goes: play and pace.
 class TtsPanel extends StatefulWidget {
   const TtsPanel({
     super.key,
@@ -97,13 +99,7 @@ class _TtsPanelState extends State<TtsPanel> {
   }
 
   Future<void> _checkVoice() async {
-    bool ready;
-    try {
-      ready = await (widget.localSpeech ?? AppServices.instance.localSpeech)
-          .ready();
-    } catch (_) {
-      ready = false;
-    }
+    final ready = await widget.tts.aiVoiceReady();
     if (mounted) setState(() => _voiceReady = ready);
   }
 
@@ -140,6 +136,7 @@ class _TtsPanelState extends State<TtsPanel> {
           ? ''
           : info.chapters[chapter].title;
       final label = TextStyle(color: t.text, fontSize: 15);
+      final system = _voiceReady == false;
       return Material(
         color: t.raisedSurface,
         elevation: 8,
@@ -170,7 +167,7 @@ class _TtsPanelState extends State<TtsPanel> {
                       tooltip: context.tr(playing ? '暂停' : '播放'),
                       iconSize: 30,
                       icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                      onPressed: playing || _spoken
+                      onPressed: playing || _spoken || system
                           ? () {
                               // Back to the text while it plays.
                               if (!playing) Navigator.pop(context);
@@ -188,7 +185,7 @@ class _TtsPanelState extends State<TtsPanel> {
                         style: label,
                       ),
                     ),
-                    if (!_spoken && !playing)
+                    if (!_spoken && !playing && !system)
                       Text(
                         '未合成',
                         style: TextStyle(color: t.muted, fontSize: 13),
@@ -207,15 +204,11 @@ class _TtsPanelState extends State<TtsPanel> {
                       child: const Text('停止'),
                     ),
                   )
-                else if (_voiceReady == false)
+                // The AI voice, where this iOS runs it.
+                else if (system && AppPlatformSupport.hasAiVoice)
                   Row(
                     children: [
-                      Expanded(
-                        child: Text(
-                          '朗读语音未安装',
-                          style: TextStyle(color: t.muted, fontSize: 13),
-                        ),
-                      ),
+                      Expanded(child: Text('AI 语音', style: label)),
                       TextButton(
                         onPressed: () {
                           Navigator.pop(context);
@@ -225,7 +218,7 @@ class _TtsPanelState extends State<TtsPanel> {
                       ),
                     ],
                   )
-                else
+                else if (!system)
                   Row(
                     children: [
                       Text('合成', style: label),
@@ -255,46 +248,48 @@ class _TtsPanelState extends State<TtsPanel> {
                       ),
                     ],
                   ),
-                const SizedBox(height: 18),
-                Text('音色', style: label),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final v in localVoices)
-                      ChoiceChip(
-                        label: Text(v.label),
-                        selected: widget.settings.ttsLocalVoice == v.id,
-                        onSelected: (_) =>
-                            widget.settings.setTtsLocalVoice(v.id),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Text('同时合成', style: label),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final n in ReadingSettings.ttsLaneChoices)
-                      ChoiceChip(
-                        label: Text('$n 句'),
-                        selected: widget.settings.ttsLanes == n,
-                        // The voice loads for a number at the start of a
-                        // job: changed between jobs, not under one.
-                        onSelected: job.running
-                            ? null
-                            : (_) => widget.settings.setTtsLanes(n),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '句数越多合成越快，内存占用也越高',
-                  style: TextStyle(color: t.muted, fontSize: 12),
-                ),
+                if (!system) ...[
+                  const SizedBox(height: 18),
+                  Text('音色', style: label),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final v in localVoices)
+                        ChoiceChip(
+                          label: Text(v.label),
+                          selected: widget.settings.ttsLocalVoice == v.id,
+                          onSelected: (_) =>
+                              widget.settings.setTtsLocalVoice(v.id),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text('同时合成', style: label),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final n in ReadingSettings.ttsLaneChoices)
+                        ChoiceChip(
+                          label: Text('$n 句'),
+                          selected: widget.settings.ttsLanes == n,
+                          // The voice loads for a number at the start of a
+                          // job: changed between jobs, not under one.
+                          onSelected: job.running
+                              ? null
+                              : (_) => widget.settings.setTtsLanes(n),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '句数越多合成越快，内存占用也越高',
+                    style: TextStyle(color: t.muted, fontSize: 12),
+                  ),
+                ],
                 const SizedBox(height: 18),
                 Text(
                   '语速 · ${widget.settings.ttsSpeed.toStringAsFixed(2)}×',
@@ -309,27 +304,28 @@ class _TtsPanelState extends State<TtsPanel> {
                   onChanged: widget.settings.setTtsSpeed,
                   onChangeEnd: (_) => widget.tts.onSpeedChanged(),
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text('已合成', style: label),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        formatSpokenBytes(_bytes),
-                        translate: false,
-                        style: TextStyle(color: t.muted, fontSize: 13),
+                if (!system || _bytes > 0)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('已合成', style: label),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          formatSpokenBytes(_bytes),
+                          translate: false,
+                          style: TextStyle(color: t.muted, fontSize: 13),
+                        ),
+                        Icon(Icons.chevron_right, color: t.muted),
+                      ],
+                    ),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TtsChaptersPage(settings: widget.settings),
                       ),
-                      Icon(Icons.chevron_right, color: t.muted),
-                    ],
-                  ),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => TtsChaptersPage(settings: widget.settings),
                     ),
                   ),
-                ),
               ],
             ),
           ),
