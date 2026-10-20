@@ -14,7 +14,18 @@ import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart';
 import 'theme.dart';
 
-enum _AiTaskKind { enrich, semanticIndex, cast, plates }
+/// [cast] writes the graph's relationships, [people] its backgrounds: two
+/// passes the reader starts apart, since a background reads only the person's
+/// own sentences and never the labels.
+enum _AiTaskKind {
+  enrich,
+  semanticIndex,
+  cast,
+  people,
+  plates;
+
+  bool get isCast => this == cast || this == people;
+}
 
 T? _firstOrNull<T>(Iterable<T> values) {
   for (final value in values) {
@@ -47,14 +58,16 @@ class _AiQueuedTask {
   String get label => switch (kind) {
     _AiTaskKind.enrich => '章节分析',
     _AiTaskKind.semanticIndex => '语义检索',
-    _AiTaskKind.cast => '人物分析',
+    _AiTaskKind.cast => '人物关系',
+    _AiTaskKind.people => '人物背景',
     _AiTaskKind.plates => '章间立绘',
   };
 
   String get doing => switch (kind) {
     _AiTaskKind.enrich => '正在分析章节',
     _AiTaskKind.semanticIndex => '正在建立语义检索',
-    _AiTaskKind.cast => '正在分析人物',
+    _AiTaskKind.cast => '正在总结人物关系',
+    _AiTaskKind.people => '正在归纳人物背景',
     _AiTaskKind.plates => '正在画章间立绘',
   };
 
@@ -77,12 +90,13 @@ class _AiQueuedTask {
     final kind = switch (value['kind']) {
       'semanticIndex' || 'index' => _AiTaskKind.semanticIndex,
       'cast' => _AiTaskKind.cast,
+      'people' => _AiTaskKind.people,
       'plates' => _AiTaskKind.plates,
       _ => _AiTaskKind.enrich,
     };
     final upTo = value['upTo'] is int ? value['upTo'] as int : 0;
     // A cast pass that does not know how far to read would read nothing.
-    if (kind == _AiTaskKind.cast && upTo <= 0) return null;
+    if (kind.isCast && upTo <= 0) return null;
     return _AiQueuedTask(
       kind: kind,
       bookId: bookId,
@@ -98,10 +112,10 @@ class _AiQueuedTask {
 /// Where one book's task of one kind stands in the queue.
 enum AiTaskState { none, waiting, running, paused, failed }
 
-/// The three model passes behind the cast graph, run in this order: names
-/// first (an edge to something that is not a person is not worth a summary),
-/// then relationships, then backgrounds (the longest reads, and the graph is
-/// usable without them).
+/// The model passes behind the cast graph. Names come first in either run (an
+/// edge or a background for something that is not a person is not worth
+/// writing, and a verdict is kept, so the second run skips it); then the
+/// relationships or the backgrounds, whichever the reader asked for.
 enum CastStep { vet, label, describe }
 
 class CastRunProgress {
@@ -429,6 +443,8 @@ class ReaderState extends ChangeNotifier {
   final Map<String, String> castBackgrounds = {};
 
   AiTaskState castStateFor(int bookId) => _stateOf(_AiTaskKind.cast, bookId);
+  AiTaskState peopleStateFor(int bookId) =>
+      _stateOf(_AiTaskKind.people, bookId);
 
   /// The graph was reset, so what this run wrote is gone from the database and
   /// must not be handed back to the page either.
@@ -442,13 +458,16 @@ class ReaderState extends ChangeNotifier {
   /// the queue and runs now instead of waiting for the device to go idle, and
   /// a longer pass that is already running steps aside for it (that pass stays
   /// queued and picks up from its last finished chapter afterwards).
-  void startCast(ShelfItem b) {
+  void startCast(ShelfItem b) => _startCastPass(_AiTaskKind.cast, b);
+  void startPeople(ShelfItem b) => _startCastPass(_AiTaskKind.people, b);
+
+  void _startCastPass(_AiTaskKind kind, ShelfItem b) {
     final task =
         _firstOrNull(
-          _aiQueue.where((t) => t.kind == _AiTaskKind.cast && t.bookId == b.id),
+          _aiQueue.where((t) => t.kind == kind && t.bookId == b.id),
         ) ??
         _AiQueuedTask(
-          kind: _AiTaskKind.cast,
+          kind: kind,
           bookId: b.id,
           path: b.path,
           title: b.title,
@@ -477,6 +496,7 @@ class ReaderState extends ChangeNotifier {
   }
 
   Future<void> stopCast(int bookId) => _pauseFor(_AiTaskKind.cast, bookId);
+  Future<void> stopPeople(int bookId) => _pauseFor(_AiTaskKind.people, bookId);
 
   Future<void> _cancelCastStep() async {
     switch (castProgress?.step) {
@@ -519,68 +539,71 @@ class ReaderState extends ChangeNotifier {
         _pace('cast-vet', v.done, v.total);
         notifyListeners();
       }
-      if (_pauseRequested) {
-        _finishAiTask(task);
-        return;
-      }
-
-      castProgress = const CastRunProgress(CastStep.label, 0, 0, '');
-      notifyListeners();
-      await for (final p in labelRelations(
-        path: path,
-        bookId: bookId,
-        upToChapter: upTo,
-        top: top,
-      )) {
-        if (_pauseRequested) await cancelRelabel();
-        if (p.label.isNotEmpty) castLabels['${p.a} ${p.b}'] = p.label;
-        castProgress = CastRunProgress(
-          CastStep.label,
-          p.done,
-          p.total,
-          p.a.isEmpty
-              ? ''
-              : p.label.isEmpty
-              ? '${p.a} ↔ ${p.b}…'
-              : '${p.a} ↔ ${p.b} → ${p.label}',
-        );
-        _pace('cast-label', p.done, p.total);
-        notifyListeners();
-      }
-      if (_pauseRequested) {
-        _finishAiTask(task);
-        return;
-      }
-
-      castProgress = const CastRunProgress(CastStep.describe, 0, 0, '');
-      notifyListeners();
-      await for (final p in describePeople(
-        path: path,
-        bookId: bookId,
-        upToChapter: upTo,
-        top: top,
-      )) {
-        if (_pauseRequested) await cancelDescribe();
-        if (p.background.isNotEmpty) castBackgrounds[p.name] = p.background;
-        castProgress = CastRunProgress(
-          CastStep.describe,
-          p.done,
-          p.total,
-          // A background read from chapter summaries is two paragraphs (who,
-          // then what happened); the progress line has room for the first.
-          p.name.isEmpty
-              ? ''
-              : p.background.isEmpty
-              ? '${p.name}…'
-              : '${p.name} → ${p.background.split('\n').first}',
-        );
-        _pace('cast-describe', p.done, p.total);
-        notifyListeners();
+      if (!_pauseRequested) {
+        if (task.kind == _AiTaskKind.people) {
+          await _describe(task, top);
+        } else {
+          await _label(task, top);
+        }
       }
       _finishAiTask(task);
     } catch (e) {
       castError = '$e';
       _finishAiTask(task, failed: true);
+    }
+  }
+
+  /// The relationships, after [_runCast] has settled who is a person.
+  Future<void> _label(_AiQueuedTask task, int top) async {
+    castProgress = const CastRunProgress(CastStep.label, 0, 0, '');
+    notifyListeners();
+    await for (final p in labelRelations(
+      path: task.path,
+      bookId: task.bookId,
+      upToChapter: task.upTo,
+      top: top,
+    )) {
+      if (_pauseRequested) await cancelRelabel();
+      if (p.label.isNotEmpty) castLabels['${p.a} ${p.b}'] = p.label;
+      castProgress = CastRunProgress(
+        CastStep.label,
+        p.done,
+        p.total,
+        p.a.isEmpty
+            ? ''
+            : p.label.isEmpty
+            ? '${p.a} ↔ ${p.b}…'
+            : '${p.a} ↔ ${p.b} → ${p.label}',
+      );
+      _pace('cast-label', p.done, p.total);
+      notifyListeners();
+    }
+  }
+
+  /// The backgrounds, likewise.
+  Future<void> _describe(_AiQueuedTask task, int top) async {
+    castProgress = const CastRunProgress(CastStep.describe, 0, 0, '');
+    notifyListeners();
+    await for (final p in describePeople(
+      path: task.path,
+      bookId: task.bookId,
+      upToChapter: task.upTo,
+      top: top,
+    )) {
+      if (_pauseRequested) await cancelDescribe();
+      if (p.background.isNotEmpty) castBackgrounds[p.name] = p.background;
+      castProgress = CastRunProgress(
+        CastStep.describe,
+        p.done,
+        p.total,
+        p.name.isEmpty
+            ? ''
+            : p.background.isEmpty
+            ? '${p.name}…'
+            : '${p.name} → ${p.background.split('\n').first}',
+      );
+      _pace('cast-describe', p.done, p.total);
+      notifyListeners();
     }
   }
 
@@ -732,12 +755,13 @@ class ReaderState extends ChangeNotifier {
           remaining: _remaining,
         );
       case _AiTaskKind.cast:
+      case _AiTaskKind.people:
         final p = castProgress;
         return AiActivity(
           title: task.title,
           label: p == null
               ? task.label
-              : '${task.label} · 第 ${p.step.index + 1}/3 步${p.label}',
+              : '${task.label} · 第 ${p.step == CastStep.vet ? 1 : 2}/2 步${p.label}',
           done: p?.done ?? 0,
           total: p?.total ?? 0,
           detail: p?.detail,
@@ -892,8 +916,7 @@ class ReaderState extends ChangeNotifier {
       plateProgress = null;
       plateError = null;
     }
-    if (removedKinds.contains(_AiTaskKind.cast) &&
-        active?.kind != _AiTaskKind.cast) {
+    if (removedKinds.any((k) => k.isCast) && active?.kind.isCast != true) {
       castProgress = null;
       castError = null;
     }
@@ -1013,7 +1036,7 @@ class ReaderState extends ChangeNotifier {
           onDone: () => _finishAiTask(task),
         );
       }
-    } else if (task.kind == _AiTaskKind.cast) {
+    } else if (task.kind.isCast) {
       if (castBookId != task.bookId) {
         castLabels.clear();
         castBackgrounds.clear();
@@ -1074,6 +1097,7 @@ class ReaderState extends ChangeNotifier {
       case _AiTaskKind.semanticIndex:
         await cancelIndex();
       case _AiTaskKind.cast:
+      case _AiTaskKind.people:
         await _cancelCastStep();
       case _AiTaskKind.plates:
         await cancelPlates();
@@ -1104,7 +1128,7 @@ class ReaderState extends ChangeNotifier {
       // The plan read the whole book into memory; let it go unless it is
       // the one being read.
       if (info?.path != task.path) closeBook(path: task.path);
-    } else if (task.kind == _AiTaskKind.cast) {
+    } else if (task.kind.isCast) {
       castProgress = null;
       if (wasCancelled || wasPaused) castError = null;
     } else if (task.kind == _AiTaskKind.enrich) {
