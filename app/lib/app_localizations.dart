@@ -728,6 +728,17 @@ String translateUi(String source, material.Locale locale) {
         ? '~${(chars / 1e6).toStringAsFixed(1)}M chars'
         : '~${(chars / 1000).round()}k chars';
   }
+  final wordsWan = RegExp(r'^(\d+(?:\.\d+)?) 万字$').firstMatch(source);
+  if (wordsWan != null) {
+    final chars = double.parse(wordsWan.group(1)!) * 10000;
+    return chars >= 1e6
+        ? '${(chars / 1e6).toStringAsFixed(1)}M chars'
+        : '${(chars / 1000).round()}k chars';
+  }
+  final words = RegExp(r'^(\d+) 字$').firstMatch(source);
+  if (words != null) return '${words.group(1)} chars';
+  final addedOn = RegExp(r'^(\d{4}-\d{2}-\d{2}) 加入书架$').firstMatch(source);
+  if (addedOn != null) return 'Added ${addedOn.group(1)}';
   final lowBattery = RegExp(r'^电量低于 (\d+)%$').firstMatch(source);
   if (lowBattery != null) return 'Battery below ${lowBattery.group(1)}%';
   final idle = RegExp(r'^等待设备空闲 (\d+) 分钟$').firstMatch(source);

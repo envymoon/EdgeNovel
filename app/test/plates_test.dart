@@ -14,6 +14,7 @@ const _book = ShelfItem(
   lastChapter: 0,
   lastOffset: 0,
   totalBytes: 1000,
+  addedAt: 0,
   encoding: 'UTF-8',
   coverHue: 0,
   lastChapterTitle: '',

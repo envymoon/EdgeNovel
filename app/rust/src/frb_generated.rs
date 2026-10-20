@@ -3897,6 +3897,7 @@ impl SseDecode for crate::api::book::BookInfo {
         let mut var_encoding = <String>::sse_decode(deserializer);
         let mut var_style = <String>::sse_decode(deserializer);
         let mut var_totalBytes = <i64>::sse_decode(deserializer);
+        let mut var_charCount = <i64>::sse_decode(deserializer);
         let mut var_chapters = <Vec<crate::api::book::ChapterInfo>>::sse_decode(deserializer);
         let mut var_volumes = <Vec<crate::api::book::VolumeInfo>>::sse_decode(deserializer);
         let mut var_interstitialCount = <u32>::sse_decode(deserializer);
@@ -3915,6 +3916,7 @@ impl SseDecode for crate::api::book::BookInfo {
             encoding: var_encoding,
             style: var_style,
             total_bytes: var_totalBytes,
+            char_count: var_charCount,
             chapters: var_chapters,
             volumes: var_volumes,
             interstitial_count: var_interstitialCount,
@@ -5032,6 +5034,7 @@ impl SseDecode for crate::api::book::ShelfItem {
         let mut var_lastOffset = <i64>::sse_decode(deserializer);
         let mut var_totalBytes = <i64>::sse_decode(deserializer);
         let mut var_lastOpenedAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_addedAt = <i64>::sse_decode(deserializer);
         let mut var_encoding = <String>::sse_decode(deserializer);
         let mut var_coverHue = <u32>::sse_decode(deserializer);
         let mut var_lastChapterTitle = <String>::sse_decode(deserializer);
@@ -5049,6 +5052,7 @@ impl SseDecode for crate::api::book::ShelfItem {
             last_offset: var_lastOffset,
             total_bytes: var_totalBytes,
             last_opened_at: var_lastOpenedAt,
+            added_at: var_addedAt,
             encoding: var_encoding,
             cover_hue: var_coverHue,
             last_chapter_title: var_lastChapterTitle,
@@ -5441,6 +5445,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::BookInfo {
             self.encoding.into_into_dart().into_dart(),
             self.style.into_into_dart().into_dart(),
             self.total_bytes.into_into_dart().into_dart(),
+            self.char_count.into_into_dart().into_dart(),
             self.chapters.into_into_dart().into_dart(),
             self.volumes.into_into_dart().into_dart(),
             self.interstitial_count.into_into_dart().into_dart(),
@@ -6272,6 +6277,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::ShelfItem {
             self.last_offset.into_into_dart().into_dart(),
             self.total_bytes.into_into_dart().into_dart(),
             self.last_opened_at.into_into_dart().into_dart(),
+            self.added_at.into_into_dart().into_dart(),
             self.encoding.into_into_dart().into_dart(),
             self.cover_hue.into_into_dart().into_dart(),
             self.last_chapter_title.into_into_dart().into_dart(),
@@ -6609,6 +6615,7 @@ impl SseEncode for crate::api::book::BookInfo {
         <String>::sse_encode(self.encoding, serializer);
         <String>::sse_encode(self.style, serializer);
         <i64>::sse_encode(self.total_bytes, serializer);
+        <i64>::sse_encode(self.char_count, serializer);
         <Vec<crate::api::book::ChapterInfo>>::sse_encode(self.chapters, serializer);
         <Vec<crate::api::book::VolumeInfo>>::sse_encode(self.volumes, serializer);
         <u32>::sse_encode(self.interstitial_count, serializer);
@@ -7422,6 +7429,7 @@ impl SseEncode for crate::api::book::ShelfItem {
         <i64>::sse_encode(self.last_offset, serializer);
         <i64>::sse_encode(self.total_bytes, serializer);
         <Option<i64>>::sse_encode(self.last_opened_at, serializer);
+        <i64>::sse_encode(self.added_at, serializer);
         <String>::sse_encode(self.encoding, serializer);
         <u32>::sse_encode(self.cover_hue, serializer);
         <String>::sse_encode(self.last_chapter_title, serializer);

@@ -23,6 +23,7 @@ void main() {
                   lastChapter: 8,
                   lastOffset: 1200,
                   totalBytes: 500000,
+                  addedAt: 0,
                   lastOpenedAt: opened,
                   encoding: 'UTF-8',
                   coverHue: 120,

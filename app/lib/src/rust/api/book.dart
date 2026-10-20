@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_digest`, `chapter_titles`, `clip`, `data_dir`, `db_path`, `digest`, `ensure_loaded`, `excerpt`, `is_loaded`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summarized_chapters`, `summary_excerpt`, `unjudged_names`, `with_text`
+// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_titles`, `clip`, `data_dir`, `db_path`, `digest`, `ensure_loaded`, `excerpt`, `first_paragraph`, `is_loaded`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summary_excerpt`, `unjudged_names`, `with_text`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -332,6 +332,9 @@ class BookInfo {
   final String encoding;
   final String style;
   final PlatformInt64 totalBytes;
+
+  /// 总字数: every character but whitespace.
+  final PlatformInt64 charCount;
   final List<ChapterInfo> chapters;
   final List<VolumeInfo> volumes;
   final int interstitialCount;
@@ -356,6 +359,7 @@ class BookInfo {
     required this.encoding,
     required this.style,
     required this.totalBytes,
+    required this.charCount,
     required this.chapters,
     required this.volumes,
     required this.interstitialCount,
@@ -377,6 +381,7 @@ class BookInfo {
       encoding.hashCode ^
       style.hashCode ^
       totalBytes.hashCode ^
+      charCount.hashCode ^
       chapters.hashCode ^
       volumes.hashCode ^
       interstitialCount.hashCode ^
@@ -400,6 +405,7 @@ class BookInfo {
           encoding == other.encoding &&
           style == other.style &&
           totalBytes == other.totalBytes &&
+          charCount == other.charCount &&
           chapters == other.chapters &&
           volumes == other.volumes &&
           interstitialCount == other.interstitialCount &&
@@ -939,6 +945,9 @@ class ShelfItem {
   final PlatformInt64 totalBytes;
   final PlatformInt64? lastOpenedAt;
 
+  /// When the book first came onto the shelf, in seconds.
+  final PlatformInt64 addedAt;
+
   /// What the file decoded as, so the user can tell a wrong guess at a glance.
   final String encoding;
 
@@ -972,6 +981,7 @@ class ShelfItem {
     required this.lastOffset,
     required this.totalBytes,
     this.lastOpenedAt,
+    required this.addedAt,
     required this.encoding,
     required this.coverHue,
     required this.lastChapterTitle,
@@ -992,6 +1002,7 @@ class ShelfItem {
       lastOffset.hashCode ^
       totalBytes.hashCode ^
       lastOpenedAt.hashCode ^
+      addedAt.hashCode ^
       encoding.hashCode ^
       coverHue.hashCode ^
       lastChapterTitle.hashCode ^
@@ -1014,6 +1025,7 @@ class ShelfItem {
           lastOffset == other.lastOffset &&
           totalBytes == other.totalBytes &&
           lastOpenedAt == other.lastOpenedAt &&
+          addedAt == other.addedAt &&
           encoding == other.encoding &&
           coverHue == other.coverHue &&
           lastChapterTitle == other.lastChapterTitle &&
