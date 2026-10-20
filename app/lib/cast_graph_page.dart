@@ -58,7 +58,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
   void initState() {
     super.initState();
     widget.reader.addListener(_onReader);
-    _lastState = widget.reader.castStateFor(widget.book.id);
+    _lastState = _running;
     _load();
   }
 
@@ -69,9 +69,18 @@ class _CastGraphPageState extends State<CastGraphPage> {
   }
 
   AiTaskState get _castState => widget.reader.castStateFor(widget.book.id);
+  AiTaskState get _peopleState => widget.reader.peopleStateFor(widget.book.id);
 
-  bool get _castActive =>
-      _castState == AiTaskState.running || _castState == AiTaskState.waiting;
+  bool _active(AiTaskState s) =>
+      s == AiTaskState.running || s == AiTaskState.waiting;
+
+  bool get _castActive => _active(_castState) || _active(_peopleState);
+
+  /// Running if either pass is.
+  AiTaskState get _running =>
+      _castState == AiTaskState.running || _peopleState == AiTaskState.running
+      ? AiTaskState.running
+      : AiTaskState.none;
 
   /// Take each summary as the background pass writes it, and re-read the graph
   /// once the pass stops: a verdict may have removed someone and renumbered
@@ -82,7 +91,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
       _modelLabel.addAll(r.castLabels);
       _modelBackground.addAll(r.castBackgrounds);
     }
-    final state = _castState;
+    final state = _running;
     final stopped =
         _lastState == AiTaskState.running && state != AiTaskState.running;
     _lastState = state;
@@ -140,7 +149,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
     await _load();
   }
 
-  Future<void> _runModel() async {
+  Future<void> _runModel({required bool people}) async {
     if (!_hasModel) {
       await Navigator.push(
         context,
@@ -150,7 +159,9 @@ class _CastGraphPageState extends State<CastGraphPage> {
       if (mounted) setState(() => _hasModel = s.engine && s.model != null);
       return;
     }
-    widget.reader.startCast(widget.book);
+    people
+        ? widget.reader.startPeople(widget.book)
+        : widget.reader.startCast(widget.book);
   }
 
   Future<void> _reset() async {
@@ -339,8 +350,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
     );
   }
 
-  /// What is left for the model, said in one clause. Two counts in one sentence
-  /// ("3 段关系、5 位人物") rather than two lines, because it is one button.
+  /// What is left for one pass, said in one clause.
   String _pending(int relations, int people, [int outdated = 0]) => [
     if (relations > 0) '$relations 段关系没有总结',
     if (people > 0) '$people 位人物还没归纳背景',
@@ -397,7 +407,8 @@ class _CastGraphPageState extends State<CastGraphPage> {
     );
   }
 
-  /// The model pass for this book, as the background queue reports it.
+  /// The two model passes for this book, as the background queue reports them:
+  /// the relationships and the backgrounds, each started on its own.
   List<Widget> _modelStatus(
     ReadingTheme t,
     int residual,
@@ -405,8 +416,35 @@ class _CastGraphPageState extends State<CastGraphPage> {
     int outdated,
   ) {
     if (!AppPlatformSupport.hasAiEngine) return const [];
+    return [
+      ..._passStatus(
+        t,
+        people: false,
+        pending: _pending(residual, 0),
+        start: '总结关系',
+      ),
+      ..._passStatus(
+        t,
+        people: true,
+        pending: _pending(0, unwritten, outdated),
+        start: unwritten == 0 ? '重写背景' : '归纳人物',
+      ),
+    ];
+  }
+
+  List<Widget> _passStatus(
+    ReadingTheme t, {
+    required bool people,
+    required String pending,
+    required String start,
+  }) {
     final r = widget.reader;
-    final state = _castState;
+    final state = people ? _peopleState : _castState;
+    final name = people ? '人物背景' : '人物关系';
+    void stop() => people
+        ? r.stopPeople(widget.book.id)
+        : r.stopCast(widget.book.id);
+    void run() => _runModel(people: people);
     final small = TextStyle(color: t.muted, fontSize: 11, height: 1.5);
     Widget action(String label, VoidCallback onPressed) => FilledButton.tonal(
       onPressed: onPressed,
@@ -428,6 +466,10 @@ class _CastGraphPageState extends State<CastGraphPage> {
         button,
       ],
     );
+    Widget pause() => TextButton(
+      onPressed: stop,
+      child: const Text('暂停', style: TextStyle(fontSize: 12)),
+    );
 
     switch (state) {
       case AiTaskState.running:
@@ -439,7 +481,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
             label: p == null
                 ? '本地模型准备中'
                 : [
-                    '本地模型${p.label}（第 ${p.step.index + 1}/3 步）'
+                    '本地模型${p.label}（第 ${p.step == CastStep.vet ? 1 : 2}/2 步）'
                         ' · ${p.done} / ${p.total}',
                     if (remaining != null) formatRemaining(remaining),
                   ].join(' · '),
@@ -447,29 +489,20 @@ class _CastGraphPageState extends State<CastGraphPage> {
             value: p == null || p.total == 0 ? null : p.done / p.total,
             color: t.muted,
             textColor: t.text,
-            trailing: TextButton(
-              onPressed: () => r.stopCast(widget.book.id),
-              child: const Text('暂停', style: TextStyle(fontSize: 12)),
-            ),
+            trailing: pause(),
           ),
         ];
       case AiTaskState.waiting:
         return [
           const SizedBox(height: 10),
-          row(
-            '排队中，等前面的任务让出本机引擎',
-            TextButton(
-              onPressed: () => r.stopCast(widget.book.id),
-              child: const Text('暂停', style: TextStyle(fontSize: 12)),
-            ),
-          ),
+          row('$name排队中，等前面的任务让出本机引擎', pause()),
         ];
       case AiTaskState.failed:
         return [
           const SizedBox(height: 10),
           row(
-            r.castError == null ? '人物分析失败' : '人物分析失败：${r.castError}',
-            action('重试', _runModel),
+            r.castError == null ? '$name失败' : '$name失败：${r.castError}',
+            action('重试', run),
             color: const Color(0xFFB3574D),
           ),
         ];
@@ -477,30 +510,15 @@ class _CastGraphPageState extends State<CastGraphPage> {
         return [
           const SizedBox(height: 10),
           row(
-            [
-              '已暂停',
-              if (residual > 0 || unwritten > 0 || outdated > 0)
-                _pending(residual, unwritten, outdated),
-            ].join(' · '),
-            action('继续', _runModel),
+            ['$name已暂停', if (pending.isNotEmpty) pending].join(' · '),
+            action('继续', run),
           ),
         ];
       case AiTaskState.none:
-        if (residual == 0 && unwritten == 0 && outdated == 0) return const [];
-        final onlyRewrite = residual == 0 && unwritten == 0;
+        if (pending.isEmpty) return const [];
         return [
           const SizedBox(height: 10),
-          row(
-            _pending(residual, unwritten, outdated),
-            action(
-              !_hasModel
-                  ? '去下载'
-                  : onlyRewrite
-                  ? '重写背景'
-                  : '让它读',
-              _runModel,
-            ),
-          ),
+          row(pending, action(!_hasModel ? '去下载' : start, run)),
         ];
     }
   }
