@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 16;
+pub const SCAN_VERSION: u32 = 17;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -202,8 +202,16 @@ const COMPOUND_SURNAMES: &[&str] = &[
 /// uniqueness guard cannot see a parent who is never named in full.
 const TITLES: &[&str] = &[
     "先生", "公子", "姑娘", "老爷", "少爷", "大人", "前辈", "夫人", "娘子", "道长", "真人", "大师",
-    "掌柜", "师傅", "老板", "老祖", "宗主", "掌门",
+    "掌柜", "师傅", "老板", "老祖", "宗主", "掌门", "官家",
 ];
+
+/// Titles only one person holds at a time: the reigning emperor is 官家. A
+/// 姓+官家 whose surname several full names share still folds into the one who
+/// outweighs every other [`TITLE_DOMINANCE`] times over — 绍宋's 赵官家 is 赵玖
+/// (4975 mentions), not 赵鼎 (569). Tried on every title, it seated 白姑娘 on
+/// 大秦帝国's 白起 and 叶老爷 on 官路商途's 叶建斌: a 先生 or a 姑娘 is anyone.
+const SOVEREIGN: &[&str] = &["官家"];
+const TITLE_DOMINANCE: u32 = 5;
 
 /// What a surname turns into a role rather than a name (宋老师, 徐叔): never a
 /// rival host when 老宋 looks for the full name it stands for.
@@ -258,6 +266,16 @@ fn strong_two_char_name(name: &str, st: &Stat, standalone: u32) -> bool {
 const NEVER_IN_A_NAME: &str = "我你他她它您咱谁的了着过吧吗呢啊呀哦嘛么和与或及被把将向对从却便就\
 才刚这那哪每某各都也又还再很更最只太是有在来去到会能要让没别一二两三四五六七八九十百千万几\
 人声里中时候什怎为因所虽当随";
+
+/// 中 floods the seeds with 其中, 之中, 心中 — but closing a surname-led
+/// three-character name it is a given-name character like any other: 绍宋's
+/// 杨沂中 (1156 mentions) was never a candidate.
+fn middle_in_full_name(s: &str) -> bool {
+    full_name_shaped(s)
+        && s.ends_with('中')
+        && s.chars().count() == 3
+        && !s.chars().take(2).any(|c| NEVER_IN_A_NAME.contains(c))
+}
 
 /// Common translated-Japanese surname forms that legitimately begin with a
 /// number. Numerals stay in [`NEVER_IN_A_NAME`] because admitting every
@@ -1507,7 +1525,9 @@ fn candidates(paras: &[(usize, &str)]) -> Vec<(String, Stat)> {
         }
     }
     seeds.retain(|s| {
-        (!s.chars().any(|c| NEVER_IN_A_NAME.contains(c)) || allowed_numeric_name(s))
+        (!s.chars().any(|c| NEVER_IN_A_NAME.contains(c))
+            || allowed_numeric_name(s)
+            || middle_in_full_name(s))
             && !NOT_A_NAME.contains(&s.as_str())
     });
 
@@ -1659,10 +1679,22 @@ fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
     };
     let acted_upon = standalone < OBJECT_FLOOR
         || (st.object * 50 >= standalone && (st.boundary_r * 33 >= standalone || subject));
+    // A full three-character name in a book told like a chronicle: 绍宋 writes
+    // 而韩世忠 and 是韩世忠 as often as ，韩世忠, and its third lead (1674
+    // mentions) stood after punctuation 39.7% of the time against the 40% bar.
+    // A surname-led three-character string that also ends a clause and is acted
+    // upon at a name's rate is that name.
+    let full_name = name.chars().count() == 3
+        && full_name_shaped(name)
+        // 董小姐, 彭师傅: a surname and a title, which the title folds handle.
+        && !TITLES.iter().chain(ROLE_TAILS).chain(&["小姐"]).any(|t| name.ends_with(t))
+        && st.boundary * 20 >= standalone * 7
+        && st.boundary_r * 10 >= standalone
+        && st.object * 25 >= standalone;
     Verdict {
         standalone,
         variety: st.count >= MIN_MENTIONS && st.left.len() >= need && st.right.len() >= need,
-        island: island(st, standalone) || strong_two_char_name(name, st, standalone),
+        island: island(st, standalone) || strong_two_char_name(name, st, standalone) || full_name,
         acted_upon,
     }
 }
@@ -1881,25 +1913,61 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
         // 齐静春). Not required to be surname-table-shaped: 齐 need not be in the
         // list for 齐静春 to be the obvious referent, and the uniqueness guard
         // below is what keeps the fold honest.
-        let mut it = alive.iter().copied().filter(|&f| {
-            !taken.contains(&f)
-                && cands[f].0.starts_with(surname)
-                && cands[f].0.chars().count() > surname.chars().count()
-                // A real name, not another honorific on the same surname — else
-                // 齐先生 and 齐姑娘 would each veto the other's fold into 齐静春.
-                && !TITLES.iter().any(|suf| cands[f].0.ends_with(suf))
-        });
-        match (it.next(), it.next()) {
-            (Some(f), None) => Some(f),
+        let mut hosts: Vec<usize> = alive
+            .iter()
+            .copied()
+            .filter(|&f| {
+                !taken.contains(&f)
+                    && cands[f].0.starts_with(surname)
+                    && cands[f].0.chars().count() > surname.chars().count()
+                    // A real name, not another honorific on the same surname — else
+                    // 齐先生 and 齐姑娘 would each veto the other's fold into 齐静春.
+                    && !TITLES.iter().any(|suf| cands[f].0.ends_with(suf))
+            })
+            .collect();
+        hosts.sort_by(|&x, &y| cands[y].1.count.cmp(&cands[x].1.count));
+        match hosts[..] {
+            [f] => Some(f),
+            [f, g, ..]
+                if SOVEREIGN.iter().any(|k| t.ends_with(k))
+                    && cands[f].1.count >= cands[g].1.count * TITLE_DOMINANCE =>
+            {
+                Some(f)
+            }
             _ => None,
         }
     };
+    // A 姓+官家 form is judged by the full name it would fold into, not by the
+    // island test: 赵官家 stands after punctuation 34% of the time (而赵官家,
+    // 是赵官家), below the bar a bare word must clear, yet it can only ever be
+    // the one 赵 the book is about.
+    let title_shaped = |t: usize| {
+        let name = cands[t].0.as_str();
+        SOVEREIGN.iter().any(|suf| {
+            name.strip_suffix(suf).is_some_and(|s| {
+                let mut cs = s.chars();
+                matches!((cs.next(), cs.next()), (Some(c), None) if SURNAMES.contains(c))
+            })
+        })
+    };
+    let titles: Vec<usize> = frequent
+        .iter()
+        .zip(&verdicts)
+        .filter(|&(&i, v)| alive.contains(&i) || (v.variety && title_shaped(i)))
+        .map(|(&i, _)| i)
+        .collect();
     let mut titled: HashMap<usize, Vec<usize>> = HashMap::new();
-    for &t in &alive {
+    for &t in &titles {
         if taken.contains(&t) {
             continue;
         }
         if let Some(f) = host_of(&cands[t].0, &taken) {
+            // Let in past the island test only as a name the book keeps using
+            // for its host — 赵官家 is 78% of 赵玖 — not a stray 吴娘子 (10, the
+            // empress) beside 吴玠 (833).
+            if !alive.contains(&t) && cands[t].1.count * 10 < cands[f].1.count {
+                continue;
+            }
             titled.entry(f).or_default().push(t);
             taken.insert(t);
         }
@@ -2615,6 +2683,68 @@ mod tests {
             cand("徐老师", 185, 0.6, 0.3, 0.05),
         ]);
         assert!(by_name(&members, "徐老师").is_some());
+    }
+
+    #[test]
+    fn the_emperor_title_folds_into_the_surname_that_outweighs_the_rest() {
+        // 绍宋: 赵官家 is 赵玖, though 赵鼎 shares the surname, and it stands
+        // after punctuation only 34% of the time (而赵官家, 是赵官家).
+        let members = select(&[
+            cand("赵玖", 4975, 0.76, 0.02, 0.05),
+            cand("赵鼎", 569, 0.6, 0.1, 0.05),
+            cand("赵官家", 3873, 0.34, 0.1, 0.05),
+        ]);
+        let zhao = by_name(&members, "赵玖").expect("赵玖");
+        assert!(zhao.aliases.contains(&"赵官家".to_string()), "{:?}", zhao.aliases);
+        assert!(by_name(&members, "赵官家").is_none());
+    }
+
+    #[test]
+    fn the_emperor_title_stays_apart_when_no_one_outweighs() {
+        let members = select(&[
+            cand("赵玖", 1000, 0.6, 0.1, 0.05),
+            cand("赵鼎", 400, 0.6, 0.1, 0.05),
+            cand("赵官家", 600, 0.6, 0.1, 0.05),
+        ]);
+        let zhao = by_name(&members, "赵玖").expect("赵玖");
+        assert!(!zhao.aliases.contains(&"赵官家".to_string()), "{:?}", zhao.aliases);
+    }
+
+    #[test]
+    fn an_ordinary_title_still_needs_the_one_full_name() {
+        // 大秦帝国: 白姑娘 is not 白起 just because he outnumbers 白雪.
+        let members = select(&[
+            cand("白起", 3000, 0.6, 0.1, 0.05),
+            cand("白雪", 300, 0.6, 0.1, 0.05),
+            cand("白姑娘", 200, 0.6, 0.3, 0.05),
+        ]);
+        let bai = by_name(&members, "白起").expect("白起");
+        assert!(!bai.aliases.contains(&"白姑娘".to_string()), "{:?}", bai.aliases);
+    }
+
+    /// A candidate's statistics at the given rates, as fractions of `count`.
+    fn stat(count: u32, left: f32, right: f32, object: f32) -> Stat {
+        cand("", count, left, right, object).1
+    }
+
+    #[test]
+    fn a_full_name_in_a_chronicle_clears_a_lower_left_edge() {
+        // 绍宋's 韩世忠: 39.7% after punctuation, 而韩世忠 and 是韩世忠 the rest.
+        let han = stat(1674, 0.397, 0.12, 0.06);
+        assert!(verdict("韩世忠", &han, 0).alive());
+        // The same numbers on a surname and a title are not a full name.
+        assert!(!verdict("董小姐", &han, 0).island);
+        assert!(!verdict("彭师傅", &han, 0).island);
+        // Nor on a string that never ends a clause.
+        assert!(!verdict("韩世忠", &stat(1674, 0.397, 0.05, 0.06), 0).island);
+    }
+
+    #[test]
+    fn zhong_ends_a_full_name_but_not_a_phrase() {
+        assert!(middle_in_full_name("杨沂中"));
+        for phrase in ["其中", "心中", "之中", "人群中", "他心中"] {
+            assert!(!middle_in_full_name(phrase), "{phrase}");
+        }
     }
 }
 
