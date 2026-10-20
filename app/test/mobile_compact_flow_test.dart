@@ -25,6 +25,7 @@ class _CompactReader extends ReaderState {
         lastChapter: 8,
         lastOffset: 1200,
         totalBytes: 500000,
+        addedAt: 1,
         lastOpenedAt: 1,
         encoding: 'UTF-8',
         coverHue: 120,
@@ -49,6 +50,7 @@ class _CompactOpenReader extends _CompactReader {
       encoding: 'UTF-8',
       style: 'web',
       totalBytes: 500000,
+      charCount: 250000,
       chapters: const [
         ChapterInfo(index: 0, title: '第一章 开始', start: 0, end: 10000),
         ChapterInfo(index: 1, title: '第二章 继续', start: 10000, end: 20000),

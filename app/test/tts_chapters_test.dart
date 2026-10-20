@@ -44,6 +44,7 @@ BookInfo book({int id = 7, String first = '第一章 开始'}) => BookInfo(
   encoding: 'UTF-8',
   style: 'web',
   totalBytes: 1000,
+  charCount: 500,
   chapters: [
     ChapterInfo(index: 0, title: first, start: 0, end: 500),
     const ChapterInfo(index: 1, title: '第二章 继续', start: 500, end: 1000),

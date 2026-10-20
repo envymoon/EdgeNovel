@@ -3859,8 +3859,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BookInfo dco_decode_book_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 17)
-      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return BookInfo(
       id: dco_decode_i_64(arr[0]),
       path: dco_decode_String(arr[1]),
@@ -3869,16 +3869,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       encoding: dco_decode_String(arr[4]),
       style: dco_decode_String(arr[5]),
       totalBytes: dco_decode_i_64(arr[6]),
-      chapters: dco_decode_list_chapter_info(arr[7]),
-      volumes: dco_decode_list_volume_info(arr[8]),
-      interstitialCount: dco_decode_u_32(arr[9]),
-      anomalies: dco_decode_list_String(arr[10]),
-      lastChapter: dco_decode_i_64(arr[11]),
-      lastOffset: dco_decode_i_64(arr[12]),
-      coverPath: dco_decode_opt_String(arr[13]),
-      careerFocus: dco_decode_String(arr[14]),
-      romanceFocus: dco_decode_String(arr[15]),
-      growthFocus: dco_decode_String(arr[16]),
+      charCount: dco_decode_i_64(arr[7]),
+      chapters: dco_decode_list_chapter_info(arr[8]),
+      volumes: dco_decode_list_volume_info(arr[9]),
+      interstitialCount: dco_decode_u_32(arr[10]),
+      anomalies: dco_decode_list_String(arr[11]),
+      lastChapter: dco_decode_i_64(arr[12]),
+      lastOffset: dco_decode_i_64(arr[13]),
+      coverPath: dco_decode_opt_String(arr[14]),
+      careerFocus: dco_decode_String(arr[15]),
+      romanceFocus: dco_decode_String(arr[16]),
+      growthFocus: dco_decode_String(arr[17]),
     );
   }
 
@@ -4718,8 +4719,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ShelfItem dco_decode_shelf_item(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 16)
-      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return ShelfItem(
       id: dco_decode_i_64(arr[0]),
       path: dco_decode_String(arr[1]),
@@ -4730,13 +4731,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastOffset: dco_decode_i_64(arr[6]),
       totalBytes: dco_decode_i_64(arr[7]),
       lastOpenedAt: dco_decode_opt_box_autoadd_i_64(arr[8]),
-      encoding: dco_decode_String(arr[9]),
-      coverHue: dco_decode_u_32(arr[10]),
-      lastChapterTitle: dco_decode_String(arr[11]),
-      lastChapterSummary: dco_decode_opt_String(arr[12]),
-      pinned: dco_decode_bool(arr[13]),
-      genreTags: dco_decode_list_String(arr[14]),
-      coverPath: dco_decode_opt_String(arr[15]),
+      addedAt: dco_decode_i_64(arr[9]),
+      encoding: dco_decode_String(arr[10]),
+      coverHue: dco_decode_u_32(arr[11]),
+      lastChapterTitle: dco_decode_String(arr[12]),
+      lastChapterSummary: dco_decode_opt_String(arr[13]),
+      pinned: dco_decode_bool(arr[14]),
+      genreTags: dco_decode_list_String(arr[15]),
+      coverPath: dco_decode_opt_String(arr[16]),
     );
   }
 
@@ -5061,6 +5063,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_encoding = sse_decode_String(deserializer);
     var var_style = sse_decode_String(deserializer);
     var var_totalBytes = sse_decode_i_64(deserializer);
+    var var_charCount = sse_decode_i_64(deserializer);
     var var_chapters = sse_decode_list_chapter_info(deserializer);
     var var_volumes = sse_decode_list_volume_info(deserializer);
     var var_interstitialCount = sse_decode_u_32(deserializer);
@@ -5079,6 +5082,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       encoding: var_encoding,
       style: var_style,
       totalBytes: var_totalBytes,
+      charCount: var_charCount,
       chapters: var_chapters,
       volumes: var_volumes,
       interstitialCount: var_interstitialCount,
@@ -6184,6 +6188,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_lastOffset = sse_decode_i_64(deserializer);
     var var_totalBytes = sse_decode_i_64(deserializer);
     var var_lastOpenedAt = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_addedAt = sse_decode_i_64(deserializer);
     var var_encoding = sse_decode_String(deserializer);
     var var_coverHue = sse_decode_u_32(deserializer);
     var var_lastChapterTitle = sse_decode_String(deserializer);
@@ -6201,6 +6206,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastOffset: var_lastOffset,
       totalBytes: var_totalBytes,
       lastOpenedAt: var_lastOpenedAt,
+      addedAt: var_addedAt,
       encoding: var_encoding,
       coverHue: var_coverHue,
       lastChapterTitle: var_lastChapterTitle,
@@ -6612,6 +6618,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.encoding, serializer);
     sse_encode_String(self.style, serializer);
     sse_encode_i_64(self.totalBytes, serializer);
+    sse_encode_i_64(self.charCount, serializer);
     sse_encode_list_chapter_info(self.chapters, serializer);
     sse_encode_list_volume_info(self.volumes, serializer);
     sse_encode_u_32(self.interstitialCount, serializer);
@@ -7513,6 +7520,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.lastOffset, serializer);
     sse_encode_i_64(self.totalBytes, serializer);
     sse_encode_opt_box_autoadd_i_64(self.lastOpenedAt, serializer);
+    sse_encode_i_64(self.addedAt, serializer);
     sse_encode_String(self.encoding, serializer);
     sse_encode_u_32(self.coverHue, serializer);
     sse_encode_String(self.lastChapterTitle, serializer);

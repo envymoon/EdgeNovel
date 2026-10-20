@@ -275,7 +275,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
               ),
               const SizedBox(height: 7),
               Text(
-                '${widget.book.author ?? '佚名'} · ${info.chapters.length} 章',
+                '${widget.book.author ?? '佚名'} · ${info.chapters.length} 章'
+                '${info.charCount > 0 ? ' · ${_wordCount(info.charCount.toInt())}' : ''}',
                 style: TextStyle(color: t.muted, fontSize: 12.5),
               ),
               if (widget.book.genreTags.isNotEmpty) ...[
@@ -312,11 +313,32 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: t.muted, fontSize: 12, height: 1.4),
               ),
+              if (widget.book.addedAt > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '${_day(widget.book.addedAt.toInt())} 加入书架',
+                  style: TextStyle(
+                    color: t.muted.withValues(alpha: 0.8),
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// 总字数 as a reader says it: 8600 字, 86.3 万字.
+  static String _wordCount(int chars) => chars < 10000
+      ? '$chars 字'
+      : '${(chars / 10000).toStringAsFixed(1)} 万字';
+
+  static String _day(int seconds) {
+    final d = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
   }
 
   Widget _readButton(ReadingTheme t) => SizedBox(

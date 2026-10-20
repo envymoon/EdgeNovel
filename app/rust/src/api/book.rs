@@ -266,6 +266,8 @@ pub struct BookInfo {
     pub encoding: String,
     pub style: String,
     pub total_bytes: i64,
+    /// 总字数: every character but whitespace.
+    pub char_count: i64,
     pub chapters: Vec<ChapterInfo>,
     pub volumes: Vec<VolumeInfo>,
     pub interstitial_count: u32,
@@ -294,6 +296,8 @@ pub struct ShelfItem {
     pub last_offset: i64,
     pub total_bytes: i64,
     pub last_opened_at: Option<i64>,
+    /// When the book first came onto the shelf, in seconds.
+    pub added_at: i64,
     /// What the file decoded as, so the user can tell a wrong guess at a glance.
     pub encoding: String,
     /// Stable per title, so a book keeps its cover colour forever.
@@ -477,6 +481,7 @@ pub fn open_book(path: String) -> Result<BookInfo, String> {
         encoding: d.encoding.to_string(),
         style: format!("{:?}", fp.style),
         total_bytes: d.text.len() as i64,
+        char_count: d.text.chars().filter(|c| !c.is_whitespace()).count() as i64,
         chapters: b
             .chapters
             .iter()
@@ -654,6 +659,7 @@ pub fn list_books() -> Result<Vec<ShelfItem>, String> {
             last_offset: b.last_offset,
             total_bytes: b.total_bytes,
             last_opened_at: b.last_opened_at,
+            added_at: b.added_at,
             pinned: b.pinned_at.is_some(),
             genre_tags: b
                 .genre_tags
