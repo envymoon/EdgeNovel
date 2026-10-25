@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 17;
+pub const SCAN_VERSION: u32 = 18;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -186,12 +186,18 @@ fn is_cjk(c: char) -> bool {
 const SURNAMES: &str = "李王张刘陈杨赵黄周吴徐孙胡朱高林何郭马罗梁宋郑谢韩唐冯于董萧程曹袁邓许\
 傅沈曾彭吕苏卢蒋蔡贾丁魏薛叶阎余潘杜戴夏钟汪田任姜范方石姚谭廖邹熊金陆郝孔白崔康毛邱秦江史顾\
 侯邵孟龙万段雷钱汤尹黎易常武乔贺赖龚文洪庄严牛温季莫翟安路姬秋楚燕冷宁凌霍虞柳祁纪管卫花柯房\
-夜风云顾墨聂沐齐";
+夜风云顾墨聂沐齐\
+简米仇闵祝俞章鲁葛韦倪滕殷骆尤艾鲍岳晏卓栾苗饶窦阮隋詹甄狄褚牟冉戚寇欧裴邢喻蔺邬伍";
 
 const COMPOUND_SURNAMES: &[&str] = &[
     "慕容", "欧阳", "上官", "司马", "诸葛", "东方", "西门", "独孤", "南宫", "夏侯", "皇甫", "尉迟",
     "令狐", "长孙", "宇文", "轩辕", "百里", "呼延", "端木", "司徒", "司空", "公孙", "北堂", "东郭",
     "申屠",
+    "闻人",
+    "澹台",
+    "太史",
+    "宗政",
+    "濮阳",
 ];
 
 /// Honorifics that attach to a surname to name a person indirectly (齐先生,
@@ -277,6 +283,29 @@ fn middle_in_full_name(s: &str) -> bool {
         && !s.chars().take(2).any(|c| NEVER_IN_A_NAME.contains(c))
 }
 
+/// 有, 七, 九 flood the seeds as 有些, 七个, 九成 — but after a surname, inside a
+/// full name, they are given-name characters like any other. 斩神's lead 林七夜
+/// (23900 mentions), 择天记's 徐有容 and 天才医生's 王九九 were never candidates,
+/// and neither was 闻人牧月, whose surname carries 人 — nor 陈二狗 (5046
+/// mentions), the name his book is called by.
+const GIVEN_NAME_ONLY: &str = "有一二三五七九千万";
+
+fn given_in_full_name(s: &str) -> bool {
+    let given = match COMPOUND_SURNAMES.iter().find(|c| s.starts_with(*c)) {
+        Some(c) if s.chars().count() == 4 => &s[c.len()..],
+        _ => {
+            let mut cs = s.chars();
+            match (cs.next(), cs.clone().count()) {
+                (Some(c), 2) if SURNAMES.contains(c) => cs.as_str(),
+                _ => return false,
+            }
+        }
+    };
+    given
+        .chars()
+        .all(|c| !NEVER_IN_A_NAME.contains(c) || GIVEN_NAME_ONLY.contains(c))
+}
+
 /// Common translated-Japanese surname forms that legitimately begin with a
 /// number. Numerals stay in [`NEVER_IN_A_NAME`] because admitting every
 /// two-to-four-character phrase containing 一/三/九 floods the seed table with
@@ -337,6 +366,9 @@ const NOT_A_NAME: &[&str] = &[
     "少年",
     "少女",
     "姑娘",
+    "小姑娘",
+    "小伙子",
+    "小家伙",
     "丫头",
     "小子",
     "家伙",
@@ -634,6 +666,9 @@ const NOT_A_NAME: &[&str] = &[
     "舅舅",
     "老爸",
     "老妈",
+    "老婆",
+    "老公",
+    "媳妇",
     "夫人",
     "公子",
     "小姐",
@@ -664,6 +699,27 @@ const NOT_A_NAME: &[&str] = &[
     "贫道",
     "本官",
     "本宫",
+    // Places and stretches of prose that stand alone after a comma and get
+    // acted upon (看向周围, 对整个) as often as a minor character does: 周围
+    // sat in the top ten of five books, 整个 of four.
+    "周围",
+    "整个",
+    "眼前",
+    "远处",
+    "头顶",
+    "其身",
+    "此事",
+    "之类",
+    "不用",
+    "不管",
+    "好不",
+    "好不好",
+    "大部分",
+    "大部",
+    "周边",
+    "赶快",
+    "尤其",
+    "年长",
 ];
 
 /// Appellations worth carrying as relationship hints. The word itself is the
@@ -1527,7 +1583,8 @@ fn candidates(paras: &[(usize, &str)]) -> Vec<(String, Stat)> {
     seeds.retain(|s| {
         (!s.chars().any(|c| NEVER_IN_A_NAME.contains(c))
             || allowed_numeric_name(s)
-            || middle_in_full_name(s))
+            || middle_in_full_name(s)
+            || given_in_full_name(s))
             && !NOT_A_NAME.contains(&s.as_str())
     });
 
@@ -1691,10 +1748,26 @@ fn verdict(name: &str, st: &Stat, over: u32) -> Verdict {
         && st.boundary * 20 >= standalone * 7
         && st.boundary_r * 10 >= standalone
         && st.object * 25 >= standalone;
+    // A heroine told by a first-person narrator is 我和米彩, 对米彩说, 给米彩:
+    // 我的26岁女房客's 米彩 (8360 mentions) stands after punctuation 37% of
+    // the time, under the bar, because a fifth of her ink follows a word that
+    // acts upon her. Behind such a word a name is just as whole a referent as
+    // behind a comma, so it counts half — and only for a candidate that already
+    // stands alone often and ends a clause like a name: junk seeded off the
+    // cue (对整个, 和真正) never stands after punctuation at all. And it has to
+    // be acted upon like a person, not a place or a time: 前世, 上面, 夜色 come
+    // after such a word 3–4% of the time, 智子, 苦荷 7%, 婉儿, 秦萱冰 13–18%.
+    let acted_island = st.boundary * 10 >= standalone * 3
+        && st.object * 50 >= standalone * 3
+        && (st.boundary * 2 + st.object) * 5 >= standalone * 4
+        && st.boundary_r * 20 >= standalone;
     Verdict {
         standalone,
         variety: st.count >= MIN_MENTIONS && st.left.len() >= need && st.right.len() >= need,
-        island: island(st, standalone) || strong_two_char_name(name, st, standalone) || full_name,
+        island: island(st, standalone)
+            || strong_two_char_name(name, st, standalone)
+            || full_name
+            || acted_island,
         acted_upon,
     }
 }
@@ -1850,6 +1923,33 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
                     && cands[b].0.contains(cands[a].0.as_str())
                     && cands[b].1.count < cands[a].1.count / 8
             })
+        })
+        .collect();
+
+    // 张扬道 out of 张扬道：, 村长说 out of 对村长说: a speaker and the verb
+    // that attributes the line, frequent enough to beat the 1/8 bar above
+    // when the speaker talks a lot. No name ends in 说; one ending in 道 or 问
+    // is only dropped when the name before it is a person met twice as often
+    // without it — 叶无 is all 叶无道, and 叶无道 is the name.
+    let alive: Vec<usize> = alive
+        .iter()
+        .copied()
+        .filter(|&b| {
+            let name = cands[b].0.as_str();
+            if name.chars().count() < 3 {
+                return true;
+            }
+            let Some(last) = name.chars().next_back() else {
+                return true;
+            };
+            let stem = &name[..name.len() - last.len_utf8()];
+            match last {
+                '说' | '讲' => false,
+                '道' | '问' => !alive
+                    .iter()
+                    .any(|&a| cands[a].0 == stem && cands[a].1.count >= cands[b].1.count * 2),
+                _ => true,
+            }
         })
         .collect();
 
@@ -2415,6 +2515,16 @@ impl Reservoir {
 mod tests {
     use super::*;
     use crate::book::Span;
+
+    #[test]
+    fn numerals_and_you_stand_inside_a_full_name() {
+        for name in ["林七夜", "徐有容", "王九九", "陈二狗", "闻人牧月"] {
+            assert!(given_in_full_name(name), "{name}");
+        }
+        for junk in ["有容乃", "林有了", "我有容"] {
+            assert!(!given_in_full_name(junk), "{junk}");
+        }
+    }
 
     fn story() -> String {
         let block = concat!(

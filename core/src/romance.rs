@@ -9,7 +9,7 @@ use crate::cast::{Edge, Person};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
-pub const RELATIONSHIP_VERSION: u32 = 3;
+pub const RELATIONSHIP_VERSION: u32 = 4;
 
 const ROMANTIC_ROLES: &[&str] = &[
     "妻子",
@@ -117,6 +117,18 @@ const TRAP_CUES: &[&str] = &[
     "不爱",
     "没有喜欢",
     "拒绝",
+];
+/// Someone's belief, not the fact: 误以为我是班长的男朋友, 认定我是班长的男友,
+/// 我不承认小芹是我的女朋友 — a first-person lead says these about himself all
+/// the time. Only in the clause that leads into the match: 常海心主动搂住张扬的
+/// 脖子：“我还以为…… is a real embrace.
+const BELIEF_CUES: &[&str] = &[
+    "以为", "认定", "默认", "当成", "当作", "承认", "觉得", "难道", "干嘛", "怀疑",
+];
+/// What follows a lead's name to make it a relative's: 我老爸, 张述桐他妈.
+const KIN_AFTER: &[&str] = &[
+    "老爸", "老妈", "爸爸", "妈妈", "爸", "妈", "父亲", "母亲", "爷爷", "奶奶", "外公", "外婆",
+    "哥哥", "姐姐", "弟弟", "妹妹", "舅舅", "叔叔", "姑姑", "家",
 ];
 const GROUP_CUES: &[&str] = &[
     "平等的爱",
@@ -362,13 +374,14 @@ fn relation_rules(a: &Person, b: &Person) -> Vec<Rule> {
             "A→B",
         ),
         (
-            format!("{aa}的{role}(?:是|叫|名叫)?{bb}"),
+            // 陈浮生老婆曹蒹葭: the 的 is often left out before the role.
+            format!("{aa}的?{role}(?:是|叫|名叫)?{bb}"),
             10,
             Kind::Explicit,
             "A→B",
         ),
         (
-            format!("{bb}的{role}(?:是|叫|名叫)?{aa}"),
+            format!("{bb}的?{role}(?:是|叫|名叫)?{aa}"),
             10,
             Kind::Explicit,
             "B→A",
@@ -846,13 +859,49 @@ fn add_dialogue_evidence(paras: &[(usize, &str)], all_people: &[&Person], ledger
     let you_love_me =
         Regex::new(r"你[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?我").unwrap();
 
+    let role = alt(ROMANTIC_ROLES);
     for (candidate_position, ledger) in ledgers.iter_mut().enumerate() {
         let candidate = candidate_position + 1;
+        // 将夜's 宁缺 never says it in the narration: “桑桑是我妻子”, “正式
+        // 介绍，我妻子桑桑”. One of the pair, speaking, names the other as
+        // their spouse — no need to work out whom they are talking to.
+        let claim = |other: usize| {
+            let names = person_alt(all_people[other]);
+            Regex::new(&format!(
+                "(?:{names})(?:是|就是|便是)?我的?{role}|我的?{role}(?:是|叫)?(?:{names})"
+            ))
+            .ok()
+        };
+        let claims = [claim(candidate), claim(0)];
         for turn in &turns {
             if turn.speaker != 0 && turn.speaker != candidate {
                 continue;
             }
             let other = if turn.speaker == 0 { candidate } else { 0 };
+            let said = claims[if turn.speaker == 0 { 0 } else { 1 }]
+                .as_ref()
+                .and_then(|re| re.find(&turn.quote));
+            if let Some(found) = said {
+                let before = tail_chars(&turn.quote[..found.start()], 6);
+                let after = head_chars(&turn.quote[found.end()..], 3);
+                let denied = has_any(&before, &["不是", "才不", "不算", "假装", "冒充", "当"])
+                    || has_any(&turn.quote, DIALOGUE_HARD_TRAPS)
+                    || has_any(&after, &["？", "?", "吗", "么"]);
+                let matched = format!("对话称配偶：{}", found.as_str());
+                if !denied && ledger.seen.insert((turn.chapter, Kind::Explicit, matched)) {
+                    ledger.evidence.push((
+                        Kind::Explicit,
+                        "双向",
+                        RelationshipEvidence {
+                            chapter: turn.chapter,
+                            person: all_people[candidate].name.clone(),
+                            kind: Kind::Explicit.zh().to_string(),
+                            strength: 10,
+                            text: turn.text.clone(),
+                        },
+                    ));
+                }
+            }
             if !dialogue_pair_is_bound(turn, other, &turns, paras, all_people) {
                 continue;
             }
@@ -937,6 +986,7 @@ fn summarize(
     ledger: Ledger,
     cast_label: Option<&str>,
     romantic_hints: u32,
+    kin: bool,
 ) -> RelationshipPerson {
     let mut counts: HashMap<Kind, HashSet<usize>> = HashMap::new();
     let mut directions = HashSet::new();
@@ -956,7 +1006,8 @@ fn summarize(
     let intimate = count(Kind::Intimate);
     let tension = count(Kind::RomanticTension);
     let comfort = count(Kind::EmotionalComfort);
-    let nonromance = cast_label.is_some_and(|label| NON_ROMANCE_LABELS.contains(&label));
+    let nonromance =
+        kin || cast_label.is_some_and(|label| NON_ROMANCE_LABELS.contains(&label));
     let confirmed = explicit >= 1 || sexual >= 1 || sexual_cultivation >= 1;
     let directional_mutual = directions.contains("A→B") && directions.contains("B→A");
     let conventional_sustained = confirmed
@@ -1217,6 +1268,210 @@ fn classify(
     )
 }
 
+/// Stands for the narrator's 我 in a first-person book, so every rule written
+/// for a named protagonist reads 我搂住米彩 as it reads 昭阳搂住米彩. Two
+/// private-use characters: [`variants`] keeps only forms of two or more, and
+/// no book contains them. Turned back into 我 before any text is shown.
+const NARRATOR: &str = "\u{E000}\u{E001}";
+
+/// Narration only: what is inside “” or 「」 is replaced by a comma, since
+/// a 我 or a 他 there is whoever is speaking.
+fn narration(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut depth = 0usize;
+    for c in line.chars() {
+        match c {
+            '“' | '「' | '『' => {
+                if depth == 0 {
+                    out.push('，');
+                }
+                depth += 1;
+            }
+            '”' | '」' | '』' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Each person's pronoun, read where the narration opens a sentence on them
+/// and the next clause starts with one: 顾秋绵扭过头，她…… Anywhere else a
+/// pronoun is as likely someone else's — the viewpoint character is 他 in
+/// every scene a heroine is in — but a clause-initial pronoun after a
+/// sentence-initial subject is that subject's. Measured on 冬日重现, 极品家丁,
+/// 我真没想重生啊, 将夜 and 余华: every lead with five or more such sentences
+/// came out the right way, by 5:1 or more. `Some(true)` is 她.
+fn genders(paras: &[(usize, &str)], people: &[&Person]) -> Vec<Option<bool>> {
+    let mut names: Vec<(&str, usize)> = people
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| variants(p).into_iter().map(move |n| (n, i)))
+        .collect();
+    names.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+    let mut counts = vec![(0u32, 0u32); people.len()];
+    for &(_, line) in paras {
+        let text = narration(line);
+        for sentence in text.split(['。', '！', '？', '!', '?']) {
+            let present: HashSet<usize> = names
+                .iter()
+                .filter(|(n, _)| sentence.contains(n))
+                .map(|&(_, i)| i)
+                .collect();
+            if present.len() != 1 {
+                continue;
+            }
+            let opening = sentence
+                .trim_start_matches(|c: char| c.is_whitespace() || "，,；;：:…—".contains(c));
+            let Some(&(name, who)) = names.iter().find(|(n, _)| opening.starts_with(n)) else {
+                continue;
+            };
+            let rest: Vec<char> = opening[name.len()..].chars().take(40).collect();
+            let pronoun = rest.windows(3).find_map(|w| {
+                ("，,；;".contains(w[0]) && (w[1] == '他' || w[1] == '她')).then_some(w)
+            });
+            match pronoun {
+                Some(w) if w[2] == '们' => {}
+                Some(w) if w[1] == '她' => counts[who].1 += 1,
+                Some(_) => counts[who].0 += 1,
+                None => {}
+            }
+        }
+    }
+    // Where the pronouns say too little, a name that ends in what it is
+    // called still says it: 白鹿原's 冷大哥, 苏姑娘.
+    let by_name = |p: &Person| {
+        let n = p.name.as_str();
+        if ["姐", "妹", "姑娘", "小姐", "夫人", "娘", "姨", "嫂", "婆"].iter().any(|t| n.ends_with(t)) {
+            Some(true)
+        } else if ["哥", "兄", "叔", "伯", "爷", "先生", "公子", "少爷"].iter().any(|t| n.ends_with(t)) {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    counts
+        .into_iter()
+        .zip(people)
+        .map(|((he, she), p)| {
+            if she >= 5 && she >= he * 2 {
+                Some(true)
+            } else if he >= 5 && he >= she * 2 {
+                Some(false)
+            } else {
+                by_name(p)
+            }
+        })
+        .collect()
+}
+
+/// The narrator of a first-person book, if the cast names them: narration
+/// says 我 more often than 他 and 她 together, and one of the leads is almost
+/// never named outside dialogue — 我的26岁女房客's 昭阳 (1873 mentions) is
+/// named in the narration 4% of the time, the people around him 60% and up.
+/// With the narrator's gender, which narration never gives away: read off
+/// what the others say of him (“昭阳他……”), a weaker signal held to 3:2.
+fn narrator(paras: &[(usize, &str)], people: &[Person]) -> Option<(usize, Option<bool>)> {
+    let told: Vec<String> = paras.iter().map(|(_, line)| narration(line)).collect();
+    let (mut me, mut third) = (0usize, 0usize);
+    for text in &told {
+        let cs: Vec<char> = text.chars().collect();
+        for (i, c) in cs.iter().enumerate() {
+            if cs.get(i + 1) == Some(&'们') {
+                continue;
+            }
+            match c {
+                '我' => me += 1,
+                '他' | '她' => third += 1,
+                _ => {}
+            }
+        }
+    }
+    if me < 200 || me < third {
+        return None;
+    }
+    let (who, _) = people
+        .iter()
+        .enumerate()
+        .take(15)
+        .filter(|(_, p)| p.mentions >= 100 && candidate_usable(p))
+        .map(|(i, p)| {
+            let all: usize = paras.iter().map(|(_, l)| l.matches(p.name.as_str()).count()).sum();
+            let out: usize = told.iter().map(|l| l.matches(p.name.as_str()).count()).sum();
+            (i, out as f32 / all.max(1) as f32)
+        })
+        .filter(|&(_, share)| share <= 0.2)
+        // The most-mentioned of them: 叶麟同学 is named in narration even less
+        // than 叶麟, but it is how one classmate addresses him.
+        .max_by_key(|&(i, _)| people[i].mentions)?;
+    let name = people[who].name.as_str();
+    let (mut he, mut she) = (0u32, 0u32);
+    for &(_, line) in paras {
+        let mut rest = line;
+        while let Some(open) = rest.find('“') {
+            let body = &rest[open + '“'.len_utf8()..];
+            let end = body.find('”').unwrap_or(body.len());
+            let quote = &body[..end];
+            for (i, _) in quote.match_indices(name) {
+                let after: Vec<char> = quote[i + name.len()..].chars().take(20).collect();
+                let pronoun = after.iter().enumerate().find(|&(j, &c)| {
+                    (c == '他' || c == '她') && after.get(j + 1) != Some(&'们')
+                });
+                match pronoun.map(|(_, &c)| c) {
+                    Some('他') => he += 1,
+                    Some('她') => she += 1,
+                    _ => {}
+                }
+            }
+            rest = &body[end..];
+        }
+    }
+    let gender = if she >= 5 && she * 2 >= he * 3 {
+        Some(true)
+    } else if he >= 5 && he * 2 >= she * 3 {
+        Some(false)
+    } else {
+        None
+    };
+    Some((who, gender))
+}
+
+/// The book with the narrator's 我 in the narration replaced by [`NARRATOR`].
+fn narrated(paras: &[(usize, &str)]) -> Vec<(usize, String)> {
+    paras
+        .iter()
+        .map(|&(chapter, line)| {
+            let mut out = String::with_capacity(line.len() + 8);
+            let mut depth = 0usize;
+            let mut cs = line.chars().peekable();
+            while let Some(c) = cs.next() {
+                match c {
+                    '“' | '「' | '『' => depth += 1,
+                    '”' | '」' | '』' => depth = depth.saturating_sub(1),
+                    '我' if depth == 0 && cs.peek() != Some(&'们') => {
+                        out.push_str(NARRATOR);
+                        continue;
+                    }
+                    _ => {}
+                }
+                out.push(c);
+            }
+            (chapter, out)
+        })
+        .collect()
+}
+
+/// 异兽迷城's 高欣欣 is 高阳's sister, and she falls asleep on his shoulder: a
+/// lead's surname on someone else is family far more often than a partner, so
+/// it needs a confirmed relationship to count, the way a 师徒 or 亲子 label does.
+fn same_family(lead: &Person, other: &Person) -> bool {
+    let first = |p: &Person| p.name.chars().next();
+    lead.name.chars().count() >= 2
+        && other.name.chars().count() >= 2
+        && first(lead) == first(other)
+        && first(lead).is_some_and(|c| !"小阿老大".contains(c))
+}
+
 /// Analyze the full ranked cast before the graph UI trims it to ten people.
 pub fn analyze(
     paras: &[(usize, &str)],
@@ -1225,7 +1480,28 @@ pub fn analyze(
     analyzed_chapters: usize,
     romance_focus: &str,
 ) -> RelationshipReport {
-    let Some(protagonist) = people.first() else {
+    let told = narrator(paras, people);
+    let lead = told.map_or(0, |(who, _)| who);
+    let narrated_paras = told.map(|_| narrated(paras));
+    let narrated_view: Vec<(usize, &str)> = narrated_paras
+        .iter()
+        .flatten()
+        .map(|(chapter, line)| (*chapter, line.as_str()))
+        .collect();
+    let paras = if told.is_some() { &narrated_view[..] } else { paras };
+    let narrator_person = told.map(|(who, _)| {
+        let p = &people[who];
+        Person {
+            name: p.name.clone(),
+            aliases: p.aliases.iter().cloned().chain([NARRATOR.to_string()]).collect(),
+            mentions: p.mentions,
+            chapters: p.chapters,
+            first_chapter: p.first_chapter,
+            uncertain: p.uncertain,
+            evidence: Vec::new(),
+        }
+    });
+    let Some(protagonist) = narrator_person.as_ref().or(people.first()) else {
         return RelationshipReport {
             label: "无法判断".into(),
             reason: "没有识别到可用的主角人物".into(),
@@ -1238,19 +1514,33 @@ pub fn analyze(
             version: RELATIONSHIP_VERSION,
         };
     };
+    // A romance is between the lead and someone of the other sex, when the
+    // narration says what both are: the confirmed partners this used to find
+    // for 余华's 李光头 (宋钢) and 余罪 (武小磊) were his sworn brother and his
+    // friend. Unknown either way keeps the candidate.
+    let everyone: Vec<&Person> = people.iter().collect();
+    let gender = genders(paras, &everyone);
+    let lead_gender = match told {
+        Some((_, g)) => g,
+        None => gender.first().copied().flatten(),
+    };
+    let other_sex = |i: usize| match (lead_gender, gender[i]) {
+        (Some(a), Some(b)) => a != b,
+        _ => true,
+    };
     let candidates: Vec<(usize, &Person)> = people
         .iter()
         .enumerate()
-        .skip(1)
-        .filter(|(_, person)| candidate_usable(person))
+        .filter(|&(i, person)| i != lead && candidate_usable(person) && other_sex(i))
         .collect();
     // Direct group statements often use forms such as “某某学姐” or
     // “某某老师”. They are too noisy for per-person scoring, but remain valid
     // named participants when a strict multi-partner sentence binds them.
     let group_candidates: Vec<&Person> = people
         .iter()
-        .skip(1)
-        .filter(|person| group_candidate_usable(person))
+        .enumerate()
+        .filter(|&(i, person)| i != lead && group_candidate_usable(person) && other_sex(i))
+        .map(|(_, person)| person)
         .collect();
     let windows = sentence_windows(paras);
     let protagonist_variants = variants(protagonist);
@@ -1304,6 +1594,42 @@ pub fn analyze(
                     .map(|(index, _)| found.end() + index)
                     .unwrap_or(window.len());
                 if has_any(&window[local_start..local_end], TRAP_CUES) {
+                    continue;
+                }
+                let clause_start = window[..found.start()]
+                    .rfind(['，', ',', '。', '！', '？', '；', ';', '：', ':', '“', '”'])
+                    .map_or(0, |i| {
+                        i + window[i..].chars().next().map_or(0, char::len_utf8)
+                    });
+                if has_any(&window[clause_start..found.end()], BELIEF_CUES) {
+                    continue;
+                }
+                // A question is not a statement: 难道他以为小芹是我的女朋友吗？
+                let rest = &window[found.end()..];
+                let clause_end = rest.find(['。', '！', '!', '？', '?']).unwrap_or(rest.len());
+                if matches!(rule.kind, Kind::Explicit | Kind::Love | Kind::Mutual)
+                    && (rest[clause_end..].starts_with(['？', '?'])
+                        || rest[..clause_end].ends_with(['吗', '么']))
+                {
+                    continue;
+                }
+                // 任阿姨和我老爸还没结婚: the lead's name, each time it stands
+                // in the match, is only the possessor of a relative.
+                let matched_text = found.as_str();
+                let lead_hits: Vec<usize> = protagonist_variants
+                    .iter()
+                    .flat_map(|name| {
+                        matched_text
+                            .match_indices(name)
+                            .map(move |(i, _)| i + name.len())
+                    })
+                    .collect();
+                if !lead_hits.is_empty()
+                    && lead_hits.iter().all(|&end| {
+                        let after = &window[found.start() + end..];
+                        KIN_AFTER.iter().any(|kin| after.starts_with(kin))
+                    })
+                {
                     continue;
                 }
                 if matches!(rule.kind, Kind::RomanticTension | Kind::EmotionalComfort)
@@ -1365,12 +1691,13 @@ pub fn analyze(
         .iter()
         .enumerate()
         .map(|(position, (original_index, candidate))| {
-            let (label, hints) = cast_context(edges, 0, *original_index);
+            let (label, hints) = cast_context(edges, lead, *original_index);
             summarize(
                 candidate,
                 std::mem::take(&mut ledgers[position]),
                 label,
                 hints,
+                same_family(protagonist, candidate),
             )
         })
         .collect();
@@ -1425,6 +1752,15 @@ pub fn analyze(
     let (label, reason, confidence) = classify(&rows, romance_focus, &group_evidence);
     rows.retain(|row| row.confirmed || row.sustained || row.possible);
     rows.truncate(12);
+    if told.is_some() {
+        for evidence in rows
+            .iter_mut()
+            .flat_map(|row| row.evidence.iter_mut())
+            .chain(group_evidence.iter_mut())
+        {
+            evidence.text = evidence.text.replace(NARRATOR, "我");
+        }
+    }
     RelationshipReport {
         label,
         reason,
@@ -1657,5 +1993,73 @@ mod tests {
         );
         assert_eq!(report.label, "无法判断");
         assert!(report.people.is_empty());
+    }
+
+    fn run_lines(lines: &[String], names: &[&str]) -> RelationshipReport {
+        let people: Vec<Person> = names.iter().map(|name| person(name)).collect();
+        let paras: Vec<(usize, &str)> = lines.iter().map(|l| (0, l.as_str())).collect();
+        analyze(&paras, &people, &[], 1, "中等")
+    }
+
+    #[test]
+    fn a_partner_of_the_same_sex_is_not_a_heroine() {
+        let told = |other: &str, pronoun: &str| -> Vec<String> {
+            let mut lines: Vec<String> = (0..6)
+                .flat_map(|_| {
+                    [
+                        "李光头走进屋，他坐了下来。".to_string(),
+                        format!("{other}站在门口，{pronoun}没有说话。"),
+                    ]
+                })
+                .collect();
+            lines.push(format!("李光头和{other}结为夫妻。"));
+            lines
+        };
+        assert_eq!(run_lines(&told("宋钢", "他"), &["李光头", "宋钢"]).label, "无法判断");
+        assert_eq!(run_lines(&told("林红", "她"), &["李光头", "林红"]).label, "单女主");
+    }
+
+    #[test]
+    fn a_first_person_narrator_is_the_lead() {
+        let mut lines: Vec<String> = (0..220).map(|_| "我看着窗外。".into()).collect();
+        lines.extend((0..20).map(|_| "“昭阳，你来了。”米彩说。".to_string()));
+        lines.push("我的女朋友米彩推门进来。".into());
+        let report = run_lines(&lines, &["米彩", "昭阳"]);
+        assert_eq!(report.protagonist, "昭阳");
+        assert_eq!(report.label, "单女主");
+        assert_eq!(report.people[0].name, "米彩");
+        assert!(report.people[0].evidence[0].text.contains("我的女朋友米彩"));
+    }
+
+    #[test]
+    fn what_someone_believes_or_asks_is_not_a_relationship() {
+        let report = run("旁人都以为苏晚是林川的妻子。", &["林川", "苏晚"], "中等");
+        assert_eq!(report.label, "无法判断");
+        let report = run("难道苏晚是林川的妻子？", &["林川", "苏晚"], "中等");
+        assert_eq!(report.label, "无法判断");
+    }
+
+    #[test]
+    fn a_relative_of_the_lead_marrying_is_not_the_lead() {
+        let report = run("任阿姨和林川老爸还没结婚。", &["林川", "任阿姨"], "中等");
+        assert_eq!(report.label, "无法判断");
+    }
+
+    #[test]
+    fn the_lead_calling_her_his_wife_confirms_it() {
+        let report = run("宁缺笑着说：“桑桑是我妻子。”", &["宁缺", "桑桑"], "中等");
+        assert_eq!(report.label, "单女主");
+        let report = run("宁缺笑着说：“桑桑不是我妻子。”", &["宁缺", "桑桑"], "中等");
+        assert_eq!(report.label, "无法判断");
+    }
+
+    #[test]
+    fn the_leads_surname_on_her_needs_a_confirmed_tie() {
+        let report = run(
+            "高欣欣靠在高阳的肩膀上睡着了，怀里很踏实。高欣欣靠着高阳的肩膀入睡，很安心。",
+            &["高阳", "高欣欣"],
+            "中等",
+        );
+        assert_eq!(report.label, "无法判断");
     }
 }
