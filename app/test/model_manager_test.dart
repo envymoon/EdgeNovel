@@ -82,10 +82,30 @@ void main() {
           stopped = true;
         },
       ),
-      throwsA(anything),
+      throwsA(isA<ModelFileInvalid>()),
     );
     expect(await active.readAsString(), 'current');
     expect(stopped, isFalse);
+  });
+
+  test('a good file that fails to switch in is not called invalid', () async {
+    const manager = ModelManager();
+    final package = _packageFor('good');
+    final download = File(
+      '${directory.path}${Platform.pathSeparator}${package.downloadFileName}',
+    );
+    await download.writeAsString('good');
+
+    await expectLater(
+      manager.installDownloaded(
+        directory: directory.path,
+        package: package,
+        download: download,
+        stopEngine: () async => throw '引擎还在忙',
+      ),
+      throwsA(isNot(isA<ModelFileInvalid>())),
+    );
+    expect(await download.readAsString(), 'good');
   });
 }
 

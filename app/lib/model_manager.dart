@@ -74,6 +74,17 @@ const embeddingModelPackage = ManagedModelPackage(
   minimumBytes: 40 * 1024 * 1024,
 );
 
+/// The downloaded file itself is wrong; any other failure leaves it worth
+/// keeping, to be installed again without fetching it anew.
+class ModelFileInvalid implements Exception {
+  const ModelFileInvalid(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class ManagedModelState {
   const ManagedModelState({
     required this.activeFile,
@@ -274,10 +285,12 @@ class ModelManager {
   Future<void> _verify(File file, ManagedModelPackage package) async {
     if (!await file.exists()) throw '下载文件不存在';
     final length = await file.length();
-    if (length < package.minimumBytes) throw '文件大小异常，可能下载不完整';
+    if (length < package.minimumBytes) {
+      throw const ModelFileInvalid('文件大小异常，可能下载不完整');
+    }
     final digest = await sha256.bind(file.openRead()).first;
     if (digest.toString().toLowerCase() != package.sha256.toLowerCase()) {
-      throw '文件校验失败，已保留当前模型';
+      throw const ModelFileInvalid('文件校验失败，已保留当前模型');
     }
   }
 
