@@ -339,12 +339,29 @@ final class Transfers: NSObject, URLSessionDownloadDelegate {
   }
 
   /// What a task is for, written on the task so it outlives the app:
-  /// "<offset>|<path of the .part file>".
+  /// "<offset>|<path of the .part file>". The path is kept from the app's
+  /// home on ("~/Library/…"): reinstalling a sideloaded app moves its home,
+  /// and a task begun before must still find its file in the new one.
   private static func job(_ task: URLSessionTask) -> (part: String, offset: Int64)? {
     guard let d = task.taskDescription, let bar = d.firstIndex(of: "|"),
       let offset = Int64(d[..<bar])
     else { return nil }
-    return (String(d[d.index(after: bar)...]), offset)
+    return (resolve(String(d[d.index(after: bar)...])), offset)
+  }
+
+  private static func describe(_ part: String, offset: Int64) -> String {
+    let home = NSHomeDirectory()
+    let kept = part.hasPrefix(home + "/") ? "~" + part.dropFirst(home.count) : part
+    return "\(offset)|\(kept)"
+  }
+
+  private static func resolve(_ kept: String) -> String {
+    if kept.hasPrefix("~/") { return NSHomeDirectory() + kept.dropFirst() }
+    // Written whole by an older build: ".../Data/Application/<id>/Library/…".
+    guard let apps = kept.range(of: "/Data/Application/"),
+      let slash = kept[apps.upperBound...].firstIndex(of: "/")
+    else { return kept }
+    return NSHomeDirectory() + kept[slash...]
   }
 
   private static func resumeFile(_ part: String) -> String { part + ".resume" }
@@ -403,7 +420,7 @@ final class Transfers: NSObject, URLSessionDownloadDelegate {
           if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
           task = self.session.downloadTask(with: request)
         }
-        task!.taskDescription = "\(offset)|\(part)"
+        task!.taskDescription = Transfers.describe(part, offset: offset)
         task!.resume()
         reply = "started"
       case "pause":

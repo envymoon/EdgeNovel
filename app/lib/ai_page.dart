@@ -343,9 +343,10 @@ class _AiPageState extends State<AiPage> {
         });
       }
     } catch (e) {
-      // A completed but invalid file cannot be resumed. Network failures occur
-      // before this rename, so their .part bytes remain available for retry.
-      if (await out.exists()) await out.delete();
+      // A completed but invalid file cannot be resumed. Anything else (a busy
+      // engine, a full disk while switching) leaves a good file: kept, the
+      // next try installs it without downloading again.
+      if (e is ModelFileInvalid && await out.exists()) await out.delete();
       if (mounted) {
         setState(() {
           onError('$e');
