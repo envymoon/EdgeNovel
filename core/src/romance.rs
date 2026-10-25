@@ -9,7 +9,7 @@ use crate::cast::{Edge, Person};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
-pub const RELATIONSHIP_VERSION: u32 = 4;
+pub const RELATIONSHIP_VERSION: u32 = 5;
 
 const ROMANTIC_ROLES: &[&str] = &[
     "妻子",
@@ -1461,6 +1461,70 @@ fn narrated(paras: &[(usize, &str)]) -> Vec<(usize, String)> {
         .collect()
 }
 
+const NAME_CUES: &[&str] = &[
+    "小名", "乳名", "绰号", "外号", "诨号", "本名", "原名", "大名", "真名", "学名", "又名", "别名",
+    "化名",
+];
+
+/// Others in the cast who are the lead under another name, as the book says
+/// in so many words: 陈二狗的妖孽人生's 陈浮生 is 陈二狗 (“名浮生，绰号二狗”,
+/// “他叫陈浮生，在东北乡下小名二狗”), and the later half of the book calls him
+/// only 陈浮生 — 陈浮生老婆曹蒹葭. The cast keeps them apart; the romance reads
+/// both as the lead. Two such sentences, a name right after the cue, and no
+/// pronoun saying they are of different sexes.
+fn other_names(
+    paras: &[(usize, &str)],
+    people: &[Person],
+    lead: usize,
+    lead_gender: Option<bool>,
+    gender: &[Option<bool>],
+) -> Vec<usize> {
+    let forms = |p: &Person| {
+        let mut out: Vec<String> = variants(p).into_iter().map(String::from).collect();
+        // The given name: 二狗 of 陈二狗.
+        if p.name.chars().count() == 3 {
+            out.push(p.name.chars().skip(1).collect());
+        }
+        out.sort_by_key(|n| std::cmp::Reverse(n.chars().count()));
+        out.dedup();
+        alt(&out.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    let Some(me) = people.get(lead) else {
+        return Vec::new();
+    };
+    let mine = forms(me);
+    let cue = alt(NAME_CUES);
+    let link = |x: &str, y: &str| {
+        Regex::new(&format!(
+            r#"{x}[^。！？!?“”"]{{0,12}}?{cue}(?:是|叫|为|就是|就叫)?[“‘"]?{y}"#
+        ))
+        .ok()
+    };
+    people
+        .iter()
+        .enumerate()
+        .take(10)
+        .filter(|&(i, _)| i != lead)
+        .filter(|&(i, _)| match (lead_gender, gender[i]) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        })
+        .filter(|&(_, p)| {
+            let theirs = forms(p);
+            let (Some(a), Some(b)) = (link(&mine, &theirs), link(&theirs, &mine)) else {
+                return false;
+            };
+            let said = paras
+                .iter()
+                .flat_map(|(_, line)| line.split(['。', '！', '？', '!', '?']))
+                .filter(|s| a.is_match(s) || b.is_match(s))
+                .count();
+            said >= 2
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// 异兽迷城's 高欣欣 is 高阳's sister, and she falls asleep on his shoulder: a
 /// lead's surname on someone else is family far more often than a partner, so
 /// it needs a confirmed relationship to count, the way a 师徒 or 亲子 label does.
@@ -1489,19 +1553,35 @@ pub fn analyze(
         .map(|(chapter, line)| (*chapter, line.as_str()))
         .collect();
     let paras = if told.is_some() { &narrated_view[..] } else { paras };
-    let narrator_person = told.map(|(who, _)| {
-        let p = &people[who];
-        Person {
-            name: p.name.clone(),
-            aliases: p.aliases.iter().cloned().chain([NARRATOR.to_string()]).collect(),
-            mentions: p.mentions,
-            chapters: p.chapters,
-            first_chapter: p.first_chapter,
-            uncertain: p.uncertain,
-            evidence: Vec::new(),
-        }
+    // A romance is between the lead and someone of the other sex, when the
+    // narration says what both are: the confirmed partners this used to find
+    // for 余华's 李光头 (宋钢) and 余罪 (武小磊) were his sworn brother and his
+    // friend. Unknown either way keeps the candidate.
+    let everyone: Vec<&Person> = people.iter().collect();
+    let gender = genders(paras, &everyone);
+    let lead_gender = match told {
+        Some((_, g)) => g,
+        None => gender.first().copied().flatten(),
+    };
+    let also = other_names(paras, people, lead, lead_gender, &gender);
+    let lead_person = people.get(lead).map(|p| Person {
+        name: p.name.clone(),
+        aliases: p
+            .aliases
+            .iter()
+            .cloned()
+            .chain(told.map(|_| NARRATOR.to_string()))
+            .chain(also.iter().flat_map(|&i| {
+                std::iter::once(people[i].name.clone()).chain(people[i].aliases.iter().cloned())
+            }))
+            .collect(),
+        mentions: p.mentions,
+        chapters: p.chapters,
+        first_chapter: p.first_chapter,
+        uncertain: p.uncertain,
+        evidence: Vec::new(),
     });
-    let Some(protagonist) = narrator_person.as_ref().or(people.first()) else {
+    let Some(protagonist) = lead_person.as_ref() else {
         return RelationshipReport {
             label: "无法判断".into(),
             reason: "没有识别到可用的主角人物".into(),
@@ -1514,16 +1594,6 @@ pub fn analyze(
             version: RELATIONSHIP_VERSION,
         };
     };
-    // A romance is between the lead and someone of the other sex, when the
-    // narration says what both are: the confirmed partners this used to find
-    // for 余华's 李光头 (宋钢) and 余罪 (武小磊) were his sworn brother and his
-    // friend. Unknown either way keeps the candidate.
-    let everyone: Vec<&Person> = people.iter().collect();
-    let gender = genders(paras, &everyone);
-    let lead_gender = match told {
-        Some((_, g)) => g,
-        None => gender.first().copied().flatten(),
-    };
     let other_sex = |i: usize| match (lead_gender, gender[i]) {
         (Some(a), Some(b)) => a != b,
         _ => true,
@@ -1531,7 +1601,9 @@ pub fn analyze(
     let candidates: Vec<(usize, &Person)> = people
         .iter()
         .enumerate()
-        .filter(|&(i, person)| i != lead && candidate_usable(person) && other_sex(i))
+        .filter(|&(i, person)| {
+            i != lead && !also.contains(&i) && candidate_usable(person) && other_sex(i)
+        })
         .collect();
     // Direct group statements often use forms such as “某某学姐” or
     // “某某老师”. They are too noisy for per-person scoring, but remain valid
@@ -1539,7 +1611,9 @@ pub fn analyze(
     let group_candidates: Vec<&Person> = people
         .iter()
         .enumerate()
-        .filter(|&(i, person)| i != lead && group_candidate_usable(person) && other_sex(i))
+        .filter(|&(i, person)| {
+            i != lead && !also.contains(&i) && group_candidate_usable(person) && other_sex(i)
+        })
         .map(|(_, person)| person)
         .collect();
     let windows = sentence_windows(paras);
@@ -2061,5 +2135,20 @@ mod tests {
             "中等",
         );
         assert_eq!(report.label, "无法判断");
+    }
+
+    #[test]
+    fn the_leads_other_name_counts_as_the_lead() {
+        let mut lines: Vec<String> = vec![
+            "他叫陈浮生，在东北乡下小名二狗。".into(),
+            "名浮生，绰号二狗。".into(),
+            "陈浮生老婆曹蒹葭推门进来。".into(),
+        ];
+        let report = run_lines(&lines, &["陈二狗", "陈浮生", "曹蒹葭"]);
+        assert_eq!(report.label, "单女主");
+        assert_eq!(report.people[0].name, "曹蒹葭");
+        // Said once, it could be anyone's nickname.
+        lines.remove(1);
+        assert_eq!(run_lines(&lines, &["陈二狗", "陈浮生", "曹蒹葭"]).label, "无法判断");
     }
 }
