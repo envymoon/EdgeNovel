@@ -63,17 +63,20 @@ const interfaceAccents = <Color>[
   Color(0xFF996154),
 ];
 
-/// Windows and iOS use the new appearance; Android keeps the old one until it
-/// has been checked on a phone.
+/// Windows, iOS and Android use the new appearance.
 bool get windowsAppearance =>
     defaultTargetPlatform == TargetPlatform.windows ||
-    defaultTargetPlatform == TargetPlatform.iOS;
+    defaultTargetPlatform == TargetPlatform.iOS ||
+    defaultTargetPlatform == TargetPlatform.android;
 
 /// The face interface and body text fall back to: 微软雅黑 on Windows, the
-/// system's own 苹方 on iOS.
-String get defaultFontFamily => defaultTargetPlatform == TargetPlatform.iOS
-    ? 'PingFang SC'
-    : 'Microsoft YaHei';
+/// system's own 苹方 on iOS, the system's own sans-serif (思源黑体 for Chinese)
+/// on Android.
+String get defaultFontFamily => switch (defaultTargetPlatform) {
+  TargetPlatform.iOS => 'PingFang SC',
+  TargetPlatform.android => 'sans-serif',
+  _ => 'Microsoft YaHei',
+};
 
 /// The shared, deliberately static visual system. It gives backgrounds, bars,
 /// cards, controls and icons one rhythm while remaining as cheap to render as

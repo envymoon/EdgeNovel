@@ -221,8 +221,8 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     reader.setReadingActive(_reading);
     spokenChapterWanted.addListener(_openSpoken);
-    if (_backgroundWindows) {
-      _background.setMethodCallHandler(_onBackground);
+    if (_backgroundWindows) _background.setMethodCallHandler(_onBackground);
+    if (AppPlatformSupport.isMobile) {
       reader.addListener(_aliveChanged);
       AiRuntimeSettings.instance.addListener(_aliveChanged);
       _aliveChanged();
@@ -234,6 +234,9 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
   // queue keeps the app running while it has work ([SilentKeepAlive]), and
   // the moment the app is off screen — locked, or another app in front — it
   // goes on on the CPU, and back on the GPU when the app is.
+  //
+  // Android keeps the app running the same way (a foreground service, see
+  // keep_alive.dart), and there the GPU stays the app's behind the screen.
   //
   // Where the app was not kept running, iOS still lends it a stretch of CPU
   // when it sees fit (a BGProcessingTask, AppDelegate.swift). The queue runs
@@ -330,7 +333,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
     } else {
       unawaited(_offScreenChanged());
     }
-    if (_backgroundWindows) _aliveChanged();
+    if (AppPlatformSupport.isMobile) _aliveChanged();
     if (_backgroundWindows &&
         state == AppLifecycleState.paused &&
         AiRuntimeSettings.instance.lockedEnabled &&

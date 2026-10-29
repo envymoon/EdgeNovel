@@ -141,9 +141,10 @@ class AppMemory {
   }
 }
 
-/// What the phone is doing right now (AppDelegate.swift): the CPU's busy
-/// share across all cores, and, where iOS shows them to an app, the GPU's and
-/// the battery's temperature. Null on other platforms.
+/// What the phone is doing right now (AppDelegate.swift, Native.kt): the
+/// CPU's busy share across all cores, and, where the phone shows them to an
+/// app, the GPU's and the battery's temperature (Android shows only the
+/// battery's). Null on other platforms.
 class DeviceLoad {
   const DeviceLoad({this.cpu, this.gpu, this.batteryCelsius});
 
@@ -152,7 +153,7 @@ class DeviceLoad {
   final double? batteryCelsius;
 
   static Future<DeviceLoad?> read() async {
-    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    if (!AppPlatformSupport.isMobile) return null;
     try {
       final m = await const MethodChannel(
         'novel/device',
@@ -174,16 +175,16 @@ abstract interface class DeviceStatusReader {
   Future<AiDeviceState> read();
 }
 
-/// The Rust bridge supplies Windows facts; on iOS the app adds the phone's own
-/// heat, power and memory, without which the queue cannot cool down or wait
-/// for a charger. Android can add the same later.
+/// The Rust bridge supplies Windows facts; on a phone the app adds the phone's
+/// own heat, power and memory, without which the queue cannot cool down or
+/// wait for a charger.
 class NativeDeviceStatusReader implements DeviceStatusReader {
   const NativeDeviceStatusReader();
 
   @override
   Future<AiDeviceState> read() async {
     final base = await aiDeviceState();
-    if (defaultTargetPlatform != TargetPlatform.iOS) return base;
+    if (!AppPlatformSupport.isMobile) return base;
     try {
       final d = await const MethodChannel(
         'novel/device',

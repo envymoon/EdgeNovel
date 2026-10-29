@@ -29,7 +29,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       expect(restored.resolvedReadingFont, 'PingFang SC');
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(restored.resolvedReadingFont, isNull);
+      expect(restored.resolvedReadingFont, 'sans-serif');
     },
   );
 

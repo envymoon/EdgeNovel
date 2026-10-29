@@ -88,6 +88,7 @@ const _english = <String, String>{
   '下载或导入界面字体': 'Download or import an interface font',
   '微软雅黑（默认）': 'Microsoft YaHei (default)',
   '苹方（默认）': 'PingFang (default)',
+  '系统字体（默认）': 'System font (default)',
   '宋体': 'SimSun',
   '楷体': 'KaiTi',
   '统一界面字重': 'Uniform interface weight',

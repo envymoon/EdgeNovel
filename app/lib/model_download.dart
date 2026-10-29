@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'keep_alive.dart';
+
 enum DownloadStopKind { paused, cancelled }
 
 class DownloadStopped implements Exception {
@@ -31,6 +33,17 @@ class ResumableFileDownload {
   String? _systemPart;
 
   bool get stopping => _pauseRequested || _cancelRequested;
+
+  /// Android: downloads under way, and what keeps them going behind the
+  /// screen (keep_alive.dart). iOS hands them to the system instead.
+  static int _running = 0;
+  static final _keep = SilentKeepAlive(reason: 'download');
+
+  static void _hold(int change) {
+    if (!Platform.isAndroid) return;
+    _running += change;
+    unawaited(_keep.set(_running > 0));
+  }
 
   void pause() {
     if (stopping) return;
@@ -73,6 +86,7 @@ class ResumableFileDownload {
     required DownloadProgressCallback onProgress,
   }) async {
     _finished = Completer<void>();
+    _hold(1);
     try {
       if (urls.isEmpty) throw '没有可用的下载地址';
       if (await target.exists()) return;
@@ -91,6 +105,7 @@ class ResumableFileDownload {
       }
       throw lastError ?? '下载失败';
     } finally {
+      _hold(-1);
       try {
         if (_cancelRequested) await discard(target);
       } finally {

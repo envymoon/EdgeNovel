@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'keep_alive.dart';
 import 'reader_state.dart';
 import 'platform_services.dart';
 import 'platform_support.dart';
@@ -50,7 +51,17 @@ class TtsController extends ChangeNotifier {
        _remote = enableIo ? TtsRemoteClient() : null {
     final player = _player;
     if (_byChapter && player != null) _listen(player);
+    if (enableIo && defaultTargetPlatform == TargetPlatform.android) {
+      addListener(_holdListening);
+    }
   }
+
+  /// Android lets an app behind the screen go on only as a foreground
+  /// service: listening holds one for as long as it plays, so a locked
+  /// phone reads on from chapter to chapter (keep_alive.dart).
+  final _listening = SilentKeepAlive(reason: 'listen');
+
+  void _holdListening() => unawaited(_listening.set(playing));
 
   AudioPlayer? _player;
 
@@ -398,12 +409,19 @@ class TtsController extends ChangeNotifier {
       }
       gaps.add(ms / speed / 1000);
     }
-    await _speech.invokeMethod('speak', {
-      'texts': [for (var i = from; i < _utts.length; i++) _utts[i].text],
-      'gaps': gaps,
-      'from': from,
-      'rate': systemRate(speed),
-    });
+    try {
+      await _speech.invokeMethod('speak', {
+        'texts': [for (var i = from; i < _utts.length; i++) _utts[i].text],
+        'gaps': gaps,
+        'from': from,
+        'rate': systemRate(speed),
+      });
+    } on PlatformException catch (e) {
+      // Android with no Chinese voice installed.
+      playing = false;
+      notifyListeners();
+      throw e.message ?? '朗读失败';
+    }
   }
 
   /// The pace slider's 0.6–2× as the phone's voice takes it: 0.5 is its own
@@ -896,6 +914,7 @@ class TtsController extends ChangeNotifier {
       if (_system) _speech.invokeMethod('stop').ignore();
     }
     _release();
+    unawaited(_listening.set(false));
     _positionSub?.cancel();
     _completeSub?.cancel();
     _player?.dispose();

@@ -1,5 +1,49 @@
 # Android 原生引擎与 Q8 KV
 
+## 2026-10-29：与 iOS / Windows 功能对齐（已编译，模拟器跑通，未上真机）
+
+- 三个引擎都随 APK 安装，都先用 GPU（Vulkan），CPU 兜底：
+  - 聊天/嵌入：`libedge_llama_server.so`，`-ngl 99`；仅 CPU 时 `-ngl 0 --device none`。
+  - 听书：qwentts.cpp 的 tts-server，`libedge_tts_server.so`（`cpp/tts/`），
+    与 Windows/iOS 同一版本和补丁；GPU 时按 `lanes` 文件传 `--max-batch`，CPU 时 `--device CPU`。
+  - 生图：stable-diffusion.cpp 的 sd-cli，`libedge_sd_cli.so`（`cpp/sd/`），
+    带 Windows 的量化卷积补丁和 iOS 的只留 CLIP 词表补丁；CPU 时 `--backend cpu`。
+- 回退：任一引擎在 GPU 上启动失败、生图在 GPU 上失败、或 GPU 上的引擎因
+  SIGSEGV/SIGBUS/SIGILL/SIGABRT/SIGFPE 崩溃，本次运行内所有引擎改用 CPU
+  （`android_engine::mark_gpu_failed`）。被系统按内存杀掉（SIGKILL）不算。
+  CPU 时再设 `GGML_VK_VISIBLE_DEVICES=`（空）：一个 GPU 设备都不开，免得坏掉的
+  GPU 在初始化时把 CPU 这次也带崩。
+- 构建：`cpp/edge_vulkan.cmake` 用构建机的 Vulkan SDK（`VULKAN_SDK`，Windows 默认
+  `C:/VulkanSDK/1.4.363.0`）提供 vulkan.hpp 与 glslc，手机端链接 NDK 的 libvulkan.so
+  （ggml 走动态分发，API 24 可链接）。着色器生成器在构建机上编：Windows 用 vswhere
+  找 MSVC，写出 host toolchain，不需要 vcvars。听书、生图各自是独立的 CMake 工程
+  （各带一份 ggml），由主工程 ExternalProject 构建，产物与聊天引擎放在同一目录，
+  Gradle 一起打包。补丁用 Git 自带的 `patch`。
+- 后台：`KeepService`（前台服务 + 通知 + 部分唤醒锁）代替 iOS 的静音播放。
+  锁屏/后台运行（AI 队列、提前合成）、听书、模型下载各持一个理由，任一在用就保持。
+  只能在应用在前台时启动。安卓后台不切 CPU。
+- 设备状态：温度等级（API 29+）、电量、充电、总内存、电池温度；安卓不给应用看 CPU/GPU 负载。
+- 合成音频：WAV 用 MediaCodec 转 AAC m4a（64/48/32 kbit/s 依次尝试），同 iOS。
+- 编译中踩过的坑：
+  - Gradle 的 CMake 路径太长，着色器生成器的 MSVC 编译超过 Windows 260 字符上限：
+    暂存目录改为 `build/ne`，子工程目录改为 `tts`/`sd`，qwentts 的 ggml 取名 `qg`。
+  - ggml 直接调用 Vulkan 1.1 的 `vkGetPhysicalDeviceFeatures2`，API 24 的 libvulkan.so
+    没有：`cpp/vulkan11_shim.cpp` 运行时到系统 loader 里找，找不到就只填 1.0 的部分。
+  - sd.cpp 的 `src/convert.cpp` 是 CRLF，Windows 检出的补丁也带 CRLF：打补丁前用
+    Git 的 perl（`cpp/crlf_to_lf.pl`）都转 LF。脚本而非 `-e`：FetchContent 把命令读两遍，
+    `\r` 会变成真回车。
+  - 只给手机的包：`--target-platform android-arm64 --android-project-arg edgeAbis=arm64-v8a`；
+    不加时打 arm64 + x86_64（模拟器）。
+- 模拟器（API 34，x86_64）实测：
+  - 模拟器的 Vulkan（gfxstream，转到主机 RTX 4060）建设备失败；聊天引擎 GPU 启动即
+    SIGSEGV，自动换 CPU 后章节概括正常进行；之后听书直接走 CPU。
+  - 生图引擎 GPU 时抛异常退出（134），CPU 出图正常（512×768，模拟器 CPU 约 6 分钟）。
+  - 听书引擎 CPU 合成正常（一句 6.3 秒音频约 59 秒）；整章合成后转 m4a，播放正常。
+  - 锁屏：开「锁屏/后台运行」后，章节概括在锁屏时继续；模型下载锁屏时继续；
+    听书播放时前台服务类型为 mediaPlayback，其余为 specialUse。
+  - APK：arm64 + x86_64 共 108.9 MB。
+- 待真机验证：手机 GPU 的速度、发热、内存，以及 GPU 是否真能跑起来。
+
 2026-09-03：补齐 Android 原生 llama.cpp 的构建、随包安装与 Rust 启动接入。
 设备端模型推理尚未验证；不能把编译通过等同于功能、内存或质量验收通过。
 

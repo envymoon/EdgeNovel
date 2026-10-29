@@ -494,12 +494,67 @@ fn health(port: u16) -> bool {
 /// `waiting` is called once a second while the model loads, with the seconds
 /// spent so far. A cold load off a spinning disk can take most of a minute, and
 /// a caller that cannot say anything during it looks hung.
+#[cfg(not(target_os = "android"))]
 fn ensure(
     port: u16,
     slot: &'static Mutex<Option<Engine>>,
     model: PathBuf,
     extra: &[&str],
+    waiting: impl FnMut(u32),
+) -> Result<(), String> {
+    ensure_on(port, slot, model, extra, waiting)
+}
+
+/// Android: on the GPU (Vulkan) unless the reader chose 仅 CPU; an engine that
+/// will not come up there comes up on the CPU, and so does every engine after
+/// it this run ([`crate::android_engine::mark_gpu_failed`]).
+#[cfg(target_os = "android")]
+fn ensure(
+    port: u16,
+    slot: &'static Mutex<Option<Engine>>,
+    model: PathBuf,
+    extra: &[&str],
+    startup_generation: u64,
+    mut waiting: impl FnMut(u32),
+) -> Result<(), String> {
+    let gpu = crate::android_engine::use_gpu();
+    let first = ensure_on(port, slot, model.clone(), extra, startup_generation, gpu, &mut waiting);
+    if first.is_ok() || !gpu || crate::android_engine::generation() != startup_generation {
+        return first;
+    }
+    crate::android_engine::mark_gpu_failed();
+    if let Some(mut child) = slot.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    ensure_on(port, slot, model, extra, startup_generation, false, &mut waiting)
+}
+
+/// Android: an engine on the GPU that crashed under a request — a driver that
+/// loads the model but cannot run it — moves every engine to the CPU. Killed
+/// for memory, or by us, it is SIGKILL and says nothing about the GPU.
+#[cfg(target_os = "android")]
+fn note_crash(slot: &Mutex<Option<Engine>>) {
+    use std::os::unix::process::ExitStatusExt;
+    let Some(status) = slot.lock().unwrap().as_mut().and_then(|c| c.try_wait().ok().flatten()) else {
+        return;
+    };
+    let crashed = matches!(
+        status.signal(),
+        Some(libc::SIGSEGV | libc::SIGBUS | libc::SIGILL | libc::SIGABRT | libc::SIGFPE)
+    );
+    if crashed && crate::android_engine::use_gpu() {
+        crate::android_engine::mark_gpu_failed();
+    }
+}
+
+fn ensure_on(
+    port: u16,
+    slot: &'static Mutex<Option<Engine>>,
+    model: PathBuf,
+    extra: &[&str],
     #[cfg(target_os = "android")] startup_generation: u64,
+    #[cfg(target_os = "android")] gpu: bool,
     mut waiting: impl FnMut(u32),
 ) -> Result<(), String> {
     #[cfg(target_os = "android")]
@@ -537,10 +592,8 @@ fn ensure(
     }
     #[cfg(not(target_os = "android"))]
     let gpu_layers = if config.backend == 1 { "0" } else { "99" };
-    // The bundled portable Android engine is CPU-only, including when a saved
-    // preference came from a desktop GPU profile.
     #[cfg(target_os = "android")]
-    let gpu_layers = "0";
+    let gpu_layers = if gpu { "99" } else { "0" };
     let priority = match config.mode {
         0 => "-1",
         1 => "0",
@@ -591,6 +644,12 @@ fn ensure(
     if config.backend == 1 {
         args.extend(["--device", "none"].map(OsStr::new));
     }
+    // The same on Android, where the CPU is also what is left after the GPU
+    // failed.
+    #[cfg(target_os = "android")]
+    if !gpu {
+        args.extend(["--device", "none"].map(OsStr::new));
+    }
 
     #[cfg(not(in_process_engine))]
     let child = {
@@ -605,6 +664,11 @@ fn ensure(
             cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
                 .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
                 .args(["--threads-http", "2"]);
+            // No GPU device opened at all: the one that failed can take the
+            // CPU run down with it while it is being set up.
+            if !gpu {
+                cmd.env("GGML_VK_VISIBLE_DEVICES", "");
+            }
             // Startup diagnostics only; prompts and model responses are not logged.
             let cache = extra
                 .windows(2)
@@ -749,6 +813,8 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     {
         return Ok(());
     }
+    #[cfg(target_os = "android")]
+    note_crash(engine_child());
     if health(PORT) || engine_child().lock().unwrap().is_some() {
         stop_chat_engine();
     }
@@ -807,6 +873,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
     #[cfg(in_process_engine)]
     let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
+    #[cfg(target_os = "android")]
+    note_crash(embed_child());
     ensure(
         EMBED_PORT,
         embed_child(),

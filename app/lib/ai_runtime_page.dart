@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
@@ -88,10 +87,11 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
             _panel(
               t,
               children: [
-                // On iOS the queue runs whenever the app is open; one switch
-                // is for the reader's page, the other for the locked phone,
-                // where only the CPU windows the system grants are left.
-                if (defaultTargetPlatform == TargetPlatform.iOS) ...[
+                // On a phone the queue runs whenever the app is open; one
+                // switch is for the reader's page, the other for the locked
+                // phone (on iOS only the CPU windows the system grants are
+                // left there; Android keeps the app running).
+                if (AppPlatformSupport.isMobile) ...[
                   SwitchListTile(
                     value: runtime.lockedEnabled,
                     onChanged: runtime.setLockedEnabled,
@@ -444,20 +444,16 @@ class _AiRuntimePageState extends State<AiRuntimePage> {
           ListTile(
             title: Text('处理器', style: TextStyle(color: t.text, fontSize: 13)),
             trailing: DropdownButton<AiBackend>(
-              value: AppPlatformSupport.bundledEngineIsCpuOnly
-                  ? AiBackend.cpu
-                  : runtime.backend,
+              value: runtime.backend,
               underline: const SizedBox.shrink(),
               items: const [
                 DropdownMenuItem(value: AiBackend.auto, child: Text('自动')),
                 DropdownMenuItem(value: AiBackend.cpu, child: Text('仅 CPU')),
                 DropdownMenuItem(value: AiBackend.gpu, child: Text('优先 GPU')),
               ],
-              onChanged: AppPlatformSupport.bundledEngineIsCpuOnly
-                  ? null
-                  : (value) {
-                      if (value != null) runtime.setBackend(value);
-                    },
+              onChanged: (value) {
+                if (value != null) runtime.setBackend(value);
+              },
             ),
           ),
           _sliderTile(
