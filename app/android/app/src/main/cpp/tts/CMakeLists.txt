@@ -23,7 +23,7 @@ FetchContent_Declare(edge_qwentts
     PATCH_COMMAND "${EDGE_PATCH}" -p1 -i "${EDGE_REPO}/experiments/qwen-tts/qwentts.patch"
     # Sources only: its own CMakeLists builds every tool.
     SOURCE_SUBDIR no-cmake)
-FetchContent_Declare(edge_qwentts_ggml
+FetchContent_Declare(qg
     URL "https://codeload.github.com/ServeurpersoCom/ggml/tar.gz/${EDGE_QWENTTS_GGML_COMMIT}"
     URL_HASH SHA256=aa59ede8471d7d6c679e697c83c5a9392b3f8fc8cbc16d5b11dfab21865c1139
     TLS_VERIFY TRUE)
@@ -42,7 +42,7 @@ foreach(feature AVX AVX2 AVX512 AVX_VNNI FMA F16C BMI2)
 endforeach()
 # Tensor names in the codec are longer than ggml's default.
 add_compile_definitions(GGML_MAX_NAME=128)
-FetchContent_MakeAvailable(edge_qwentts edge_qwentts_ggml)
+FetchContent_MakeAvailable(edge_qwentts qg)
 
 set(QT "${edge_qwentts_SOURCE_DIR}")
 find_package(Threads REQUIRED)
@@ -56,6 +56,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.h"
 # Its main becomes edge_engine_main, under one that ends it with the app.
 add_executable(edge_tts
     "${EDGE_CPP}/parent_main.cpp"
+    "${EDGE_CPP}/vulkan11_shim.cpp"
     "${QT}/tools/tts-server.cpp"
     "${QT}/src/qwen.cpp"
     "${QT}/src/pipeline-tts.cpp"
@@ -64,7 +65,7 @@ set_source_files_properties("${QT}/tools/tts-server.cpp"
     PROPERTIES COMPILE_DEFINITIONS main=edge_engine_main)
 target_compile_definitions(edge_tts PRIVATE QWEN_STATIC)
 target_include_directories(edge_tts PRIVATE
-    "${QT}/src" "${QT}" "${QT}/tools" "${CMAKE_CURRENT_BINARY_DIR}")
+    "${QT}/src" "${QT}" "${QT}/tools" "${CMAKE_CURRENT_BINARY_DIR}" "${Vulkan_INCLUDE_DIR}")
 target_link_libraries(edge_tts PRIVATE ggml ggml-base ggml-cpu ggml-vulkan httplib yyjson Threads::Threads)
 set_target_properties(edge_tts PROPERTIES
     OUTPUT_NAME libedge_tts_server.so

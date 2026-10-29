@@ -44,20 +44,26 @@ void main() {
     },
   );
 
-  testWidgets('a plate goes away at a tap', (tester) async {
-    var done = 0;
+  testWidgets('a plate turns like a page', (tester) async {
+    var forward = 0;
+    var back = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: PlateView(
             path: 'missing.png',
             theme: ReadingSettings().theme,
-            onDone: () => done++,
+            compactTapZones: false,
+            onForward: () => forward++,
+            onBack: () => back++,
           ),
         ),
       ),
     );
-    await tester.tap(find.text('轻触继续'));
-    expect(done, greaterThanOrEqualTo(1));
+    final box = tester.getRect(find.byType(PlateView));
+    await tester.tapAt(Offset(box.right - 10, box.center.dy));
+    expect(forward, 1);
+    await tester.tapAt(Offset(box.left + 10, box.center.dy));
+    expect(back, 1);
   });
 }

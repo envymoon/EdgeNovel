@@ -438,7 +438,7 @@ fn start(gpu: bool) -> Result<(), String> {
                 .clamp(1, 4);
             cmd.args(["--max-batch", &lanes.to_string()]);
         } else {
-            cmd.args(["--device", "CPU"]);
+            cmd.args(["--device", "CPU"]).env("GGML_VK_VISIBLE_DEVICES", "");
         }
         // Startup diagnostics only, beside the chat engine's.
         if let Ok(log) = std::fs::File::create(dir.join(".novel-tts-engine.log")) {

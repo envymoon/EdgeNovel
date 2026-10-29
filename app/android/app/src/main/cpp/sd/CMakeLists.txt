@@ -26,12 +26,20 @@ FetchContent_Declare(edge_sd_ggml
     TLS_VERIFY TRUE
     # Sources only: sd.cpp adds it itself.
     SOURCE_SUBDIR no-cmake)
-FetchContent_Declare(edge_sd
+# Upstream keeps src/convert.cpp with CRLF line ends, and a Windows checkout
+# gives part of the patch CRLF too: both go to LF (Git's perl, beside its
+# patch) before it applies.
+get_filename_component(_edge_git_bin "${EDGE_PATCH}" DIRECTORY)
+find_program(EDGE_PERL perl HINTS "${_edge_git_bin}" REQUIRED)
+set(_edge_conv_patch "${CMAKE_BINARY_DIR}/sdcpp-quantized-conv.patch")
+FetchContent_Declare(sd
     URL "https://codeload.github.com/leejet/stable-diffusion.cpp/tar.gz/${EDGE_SD_COMMIT}"
     URL_HASH SHA256=af0d33ffe265503ece89526b283015a4c987cfdf54479559e7ce08fc32327216
     TLS_VERIFY TRUE
-    PATCH_COMMAND "${CMAKE_COMMAND}" -DFILE=src/convert.cpp -P "${EDGE_CPP}/strip_cr.cmake"
-          COMMAND "${EDGE_PATCH}" -p1 -i "${EDGE_REPO}/experiments/anime-cover-model/sdcpp-quantized-conv.patch"
+    PATCH_COMMAND "${CMAKE_COMMAND}" -E copy
+              "${EDGE_REPO}/experiments/anime-cover-model/sdcpp-quantized-conv.patch" "${_edge_conv_patch}"
+          COMMAND "${EDGE_PERL}" -pi "${EDGE_CPP}/crlf_to_lf.pl" src/convert.cpp "${_edge_conv_patch}"
+          COMMAND "${EDGE_PATCH}" -p1 -i "${_edge_conv_patch}"
           COMMAND "${EDGE_PATCH}" -p1 -i "${EDGE_REPO}/app/rust/ios_sd/sdcpp-clip-vocab-only.patch")
 FetchContent_MakeAvailable(edge_sd_ggml)
 
@@ -53,8 +61,10 @@ set(SD_WEBP OFF CACHE BOOL "" FORCE)
 set(SD_WEBM OFF CACHE BOOL "" FORCE)
 set(SD_SERVER_BUILD_FRONTEND OFF CACHE BOOL "" FORCE)
 set(SD_GGML_SOURCE_DIR "${edge_sd_ggml_SOURCE_DIR}" CACHE PATH "" FORCE)
-FetchContent_MakeAvailable(edge_sd)
+FetchContent_MakeAvailable(sd)
 
+target_sources(sd-cli PRIVATE "${EDGE_CPP}/vulkan11_shim.cpp")
+target_include_directories(sd-cli PRIVATE "${Vulkan_INCLUDE_DIR}")
 set_target_properties(sd-cli PROPERTIES
     OUTPUT_NAME libedge_sd_cli.so
     RUNTIME_OUTPUT_DIRECTORY "${EDGE_OUTPUT_DIR}")

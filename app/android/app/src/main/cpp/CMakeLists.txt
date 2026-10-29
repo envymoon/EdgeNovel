@@ -62,7 +62,8 @@ set_property(SOURCE "${edge_llama_SOURCE_DIR}/tools/server/server-models.cpp"
 target_include_directories(server-context PRIVATE "${edge_llama_SOURCE_DIR}")
 target_include_directories(llama-server-impl PRIVATE "${edge_llama_SOURCE_DIR}")
 
-add_executable(edge_llama_server engine_main.cpp)
+add_executable(edge_llama_server engine_main.cpp vulkan11_shim.cpp)
+target_include_directories(edge_llama_server PRIVATE "${Vulkan_INCLUDE_DIR}")
 license_add_file("Android NDK toolchain / static C++ runtime" "${ANDROID_NDK}/NOTICE.toolchain")
 license_generate(edge_llama_server)
 target_link_libraries(edge_llama_server PRIVATE llama-server-impl)
@@ -82,7 +83,7 @@ include(ExternalProject)
 foreach(engine tts sd)
     ExternalProject_Add(edge_${engine}_engine
         SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${engine}"
-        BINARY_DIR "${CMAKE_BINARY_DIR}/edge-${engine}"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/${engine}"
         CMAKE_ARGS
             "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
             "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"

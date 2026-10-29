@@ -1,5 +1,7 @@
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -22,6 +24,9 @@ abstract class StageEdgeEngineTask : DefaultTask() {
     @get:OutputDirectory
     abstract val destinationDirectory: DirectoryProperty
 
+    @get:Input
+    abstract val abis: ListProperty<String>
+
     @get:Inject
     abstract val fileSystemOperations: FileSystemOperations
 
@@ -29,7 +34,7 @@ abstract class StageEdgeEngineTask : DefaultTask() {
     fun stage() {
         // The chat engine, the 听书 engine and the picture engine.
         val engines = listOf("libedge_llama_server.so", "libedge_tts_server.so", "libedge_sd_cli.so")
-        val files = listOf("arm64-v8a", "x86_64").flatMap { abi -> engines.map { "$abi/$it" } }
+        val files = abis.get().flatMap { abi -> engines.map { "$abi/$it" } }
         for (file in files) {
             check(nativeDirectory.file(file).get().asFile.isFile) {
                 "Missing freshly built Android engine $file"
@@ -42,6 +47,11 @@ abstract class StageEdgeEngineTask : DefaultTask() {
         }
     }
 }
+
+// Phones are arm64; x86_64 is for the emulator. A release for phones only
+// passes -PedgeAbis=arm64-v8a (flutter: --android-project-arg).
+val edgeAbis = (findProperty("edgeAbis") as String?)?.split(",")?.map { it.trim() }
+    ?: listOf("arm64-v8a", "x86_64")
 
 android {
     namespace = "com.novel.novel"
@@ -67,11 +77,11 @@ android {
         // x86_64 is retained so development can continue in an emulator without
         // owning an Android handset.
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += edgeAbis
         }
         externalNativeBuild {
             cmake {
-                abiFilters += listOf("arm64-v8a", "x86_64")
+                abiFilters += edgeAbis
                 targets += "edge_llama_server"
                 arguments += listOf(
                     "-DANDROID_STL=c++_static",
@@ -86,7 +96,7 @@ android {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
-            buildStagingDirectory = rootProject.layout.buildDirectory.dir("native-engine-cmake").get().asFile
+            buildStagingDirectory = rootProject.layout.buildDirectory.dir("ne").get().asFile
         }
     }
     packaging {
@@ -113,6 +123,7 @@ androidComponents {
         val stageEngine = tasks.register<StageEdgeEngineTask>("stage${capitalized}AiEngine") {
             dependsOn("externalNativeBuild$capitalized")
             nativeDirectory.set(layout.buildDirectory.dir("native-engine-output/$cmakeType"))
+            abis.set(edgeAbis)
             // CMake is an external writer. Explicit staging avoids AGP's VFS
             // snapshot reusing yesterday's executable after a native rebuild.
             outputs.upToDateWhen { false }

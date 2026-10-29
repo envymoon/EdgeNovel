@@ -916,6 +916,9 @@ fn render_on(
     // Without a backend sd.cpp fits everything on the best GPU it finds.
     if !gpu {
         cmd.args(["--backend", "cpu"]);
+        // No GPU device opened at all, as for the chat engine.
+        #[cfg(target_os = "android")]
+        cmd.env("GGML_VK_VISIBLE_DEVICES", "");
     }
     cmd.current_dir(exe.parent().unwrap_or(dir))
         .stdin(Stdio::null())

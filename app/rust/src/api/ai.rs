@@ -664,6 +664,11 @@ fn ensure_on(
             cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
                 .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
                 .args(["--threads-http", "2"]);
+            // No GPU device opened at all: the one that failed can take the
+            // CPU run down with it while it is being set up.
+            if !gpu {
+                cmd.env("GGML_VK_VISIBLE_DEVICES", "");
+            }
             // Startup diagnostics only; prompts and model responses are not logged.
             let cache = extra
                 .windows(2)

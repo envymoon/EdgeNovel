@@ -54,7 +54,10 @@ set(SPIRV-Headers_DIR "${_edge_vk_cmake}/SPIRV-Headers" CACHE PATH "" FORCE)
 # Gradle's PATH.
 function(edge_vulkan_host_toolchain out)
     set(file "${CMAKE_BINARY_DIR}/edge-host-toolchain.cmake")
-    set(text "set(CMAKE_MAKE_PROGRAM \"${CMAKE_MAKE_PROGRAM}\" CACHE FILEPATH \"\" FORCE)\n")
+    # Gradle hands it over with backslashes, which a CMake string would read
+    # as escapes.
+    file(TO_CMAKE_PATH "${CMAKE_MAKE_PROGRAM}" make)
+    set(text "set(CMAKE_MAKE_PROGRAM \"${make}\" CACHE FILEPATH \"\" FORCE)\n")
     string(APPEND text "set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\n")
     string(APPEND text "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY NEVER)\n")
     string(APPEND text "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE NEVER)\n")
