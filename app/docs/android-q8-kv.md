@@ -1,5 +1,30 @@
 # Android 原生引擎与 Q8 KV
 
+## 2026-10-29：与 iOS / Windows 功能对齐（代码已写，未编译、未上机）
+
+- 三个引擎都随 APK 安装，都先用 GPU（Vulkan），CPU 兜底：
+  - 聊天/嵌入：`libedge_llama_server.so`，`-ngl 99`；仅 CPU 时 `-ngl 0 --device none`。
+  - 听书：qwentts.cpp 的 tts-server，`libedge_tts_server.so`（`cpp/tts/`），
+    与 Windows/iOS 同一版本和补丁；GPU 时按 `lanes` 文件传 `--max-batch`，CPU 时 `--device CPU`。
+  - 生图：stable-diffusion.cpp 的 sd-cli，`libedge_sd_cli.so`（`cpp/sd/`），
+    带 Windows 的量化卷积补丁和 iOS 的只留 CLIP 词表补丁；CPU 时 `--backend cpu`。
+- 回退：任一引擎在 GPU 上启动失败、生图在 GPU 上失败、或 GPU 上的引擎因
+  SIGSEGV/SIGBUS/SIGILL/SIGABRT/SIGFPE 崩溃，本次运行内所有引擎改用 CPU
+  （`android_engine::mark_gpu_failed`）。被系统按内存杀掉（SIGKILL）不算。
+- 构建：`cpp/edge_vulkan.cmake` 用构建机的 Vulkan SDK（`VULKAN_SDK`，Windows 默认
+  `C:/VulkanSDK/1.4.363.0`）提供 vulkan.hpp 与 glslc，手机端链接 NDK 的 libvulkan.so
+  （ggml 走动态分发，API 24 可链接）。着色器生成器在构建机上编：Windows 用 vswhere
+  找 MSVC，写出 host toolchain，不需要 vcvars。听书、生图各自是独立的 CMake 工程
+  （各带一份 ggml），由主工程 ExternalProject 构建，产物与聊天引擎放在同一目录，
+  Gradle 一起打包。补丁用 Git 自带的 `patch`。
+- 后台：`KeepService`（前台服务 + 通知 + 部分唤醒锁）代替 iOS 的静音播放。
+  锁屏/后台运行（AI 队列、提前合成）、听书、模型下载各持一个理由，任一在用就保持。
+  只能在应用在前台时启动。安卓后台不切 CPU。
+- 设备状态：温度等级（API 29+）、电量、充电、总内存、电池温度；安卓不给应用看 CPU/GPU 负载。
+- 合成音频：WAV 用 MediaCodec 转 AAC m4a（64/48/32 kbit/s 依次尝试），同 iOS。
+- 待验证：三个引擎的 Vulkan 编译（尤其 Windows 上的 MSVC host toolchain）、
+  APK 体积、模拟器上的 GPU/CPU 回退、真机速度与内存。
+
 2026-09-03：补齐 Android 原生 llama.cpp 的构建、随包安装与 Rust 启动接入。
 设备端模型推理尚未验证；不能把编译通过等同于功能、内存或质量验收通过。
 

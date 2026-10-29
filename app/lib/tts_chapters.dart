@@ -323,12 +323,14 @@ class TtsChapters extends ChangeNotifier {
 
   static const _audio = MethodChannel('novel/audio');
 
-  /// A closed piece's WAV as AAC (AppDelegate.swift), on the CPU beside the
-  /// voice on the GPU, written aside and renamed, so a piece is never half
-  /// one. The WAV goes once nothing plays it ([_piece]); a piece that would
-  /// not convert stays a WAV.
+  /// A closed piece's WAV as AAC (AppDelegate.swift, Native.kt on Android),
+  /// on the CPU beside the voice on the GPU, written aside and renamed, so a
+  /// piece is never half one. The WAV goes once nothing plays it ([_piece]);
+  /// a piece that would not convert stays a WAV.
   Future<void> _compress(String stem) async {
-    if (!Platform.isIOS || !_compressing.add(stem)) return;
+    if (!(Platform.isIOS || Platform.isAndroid) || !_compressing.add(stem)) {
+      return;
+    }
     final wav = '$stem.wav';
     final aside = '$stem.tmp.m4a';
     try {

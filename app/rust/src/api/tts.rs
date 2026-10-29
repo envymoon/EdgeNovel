@@ -26,7 +26,8 @@
 //! playback instead, which also means a pace change needs nothing re-spoken.
 //!
 //! On iOS, where an app may start no process, the engine is compiled into the
-//! app instead and spoken to directly ([`engine`]).
+//! app instead and spoken to directly ([`engine`]). On Android the server
+//! ships in the APK (`libedge_tts_server.so`) and is started as here.
 
 #[cfg(not(in_process_engine))]
 use crate::api::ai::http;
@@ -44,6 +45,7 @@ static TTS_DIR: OnceLock<PathBuf> = OnceLock::new();
 #[cfg(windows)]
 const ENGINE_EXE: &str = "tts-server.exe";
 #[cfg(not(windows))]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 const ENGINE_EXE: &str = "tts-server";
 
 /// The voice model is two files that load together: the talker (the language
@@ -94,14 +96,21 @@ fn tts_dir() -> Result<&'static Path, String> {
         .ok_or_else(|| "朗读目录未初始化".into())
 }
 
-/// Whether there is an engine: compiled into the app on iOS, a download
-/// everywhere else.
+/// Whether there is an engine: compiled into the app on iOS, in the APK on
+/// Android, a download everywhere else.
 fn has_engine(dir: &Path) -> bool {
     cfg!(in_process_engine) || find_engine(dir).is_some()
 }
 
+/// The engine the APK installed beside the app's own code.
+#[cfg(target_os = "android")]
+fn find_engine(_: &Path) -> Option<PathBuf> {
+    crate::android_engine::bundled("libedge_tts_server.so")
+}
+
 /// The engine: `tts-server` at the top of the dir or one folder down (the
 /// download unpacks into its own folder).
+#[cfg(not(target_os = "android"))]
 fn find_engine(dir: &Path) -> Option<PathBuf> {
     let top = dir.join(ENGINE_EXE);
     if top.is_file() {
@@ -187,7 +196,7 @@ pub fn tts_ready() -> Result<bool, String> {
 /// Delete the engine (its folder, if it came in one), but never the voice —
 /// that is a separate download with a separate button.
 pub fn delete_tts_engine() -> Result<(), String> {
-    if cfg!(in_process_engine) {
+    if cfg!(any(in_process_engine, target_os = "android")) {
         return Err("朗读引擎内置于应用".into());
     }
     let dir = tts_dir()?;
@@ -347,6 +356,47 @@ fn ensure() -> Result<(), String> {
     if health() {
         return Ok(());
     }
+    #[cfg(target_os = "android")]
+    let gpu = {
+        note_crash();
+        crate::android_engine::use_gpu()
+    };
+    #[cfg(not(target_os = "android"))]
+    let gpu = true;
+    let first = start(gpu);
+    // A driver that cannot run it: the CPU, for this and every engine after it
+    // this run.
+    #[cfg(target_os = "android")]
+    if first.is_err() && gpu {
+        crate::android_engine::mark_gpu_failed();
+        return start(false);
+    }
+    first
+}
+
+/// Android: a voice on the GPU that crashed under a sentence moves every
+/// engine to the CPU, as the chat engine's does (ai.rs).
+#[cfg(target_os = "android")]
+fn note_crash() {
+    use std::os::unix::process::ExitStatusExt;
+    let mut slot = server().lock().unwrap();
+    let Some(status) = slot.as_mut().and_then(|c| c.try_wait().ok().flatten()) else {
+        return;
+    };
+    *slot = None;
+    let crashed = matches!(
+        status.signal(),
+        Some(libc::SIGSEGV | libc::SIGBUS | libc::SIGILL | libc::SIGABRT | libc::SIGFPE)
+    );
+    if crashed && crate::android_engine::use_gpu() {
+        crate::android_engine::mark_gpu_failed();
+    }
+}
+
+/// Starts the engine and waits for it to answer. `gpu` is Android's choice;
+/// elsewhere the engine takes the best device it finds.
+#[cfg(not(in_process_engine))]
+fn start(gpu: bool) -> Result<(), String> {
     kill();
     let dir = tts_dir()?;
     let exe = find_engine(dir).ok_or("朗读引擎未安装")?;
@@ -374,6 +424,29 @@ fn ensure() -> Result<(), String> {
         // Normal priority, unlike the summarizer: someone is listening.
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
+    #[cfg(target_os = "android")]
+    {
+        // It ends itself when the app is gone (parent_main.cpp).
+        cmd.env("EDGE_PARENT_PID", std::process::id().to_string());
+        if gpu {
+            // Sentences spoken at once, as the reader chose in the 听书 panel
+            // (`lanes`, written by TtsPrepare), as on iPhone.
+            let lanes = std::fs::read_to_string(dir.join("lanes"))
+                .ok()
+                .and_then(|t| t.trim().parse::<usize>().ok())
+                .unwrap_or(1)
+                .clamp(1, 4);
+            cmd.args(["--max-batch", &lanes.to_string()]);
+        } else {
+            cmd.args(["--device", "CPU"]);
+        }
+        // Startup diagnostics only, beside the chat engine's.
+        if let Ok(log) = std::fs::File::create(dir.join(".novel-tts-engine.log")) {
+            cmd.stderr(Stdio::from(log));
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = gpu;
     let child = cmd.spawn().map_err(|e| format!("启动朗读引擎失败: {e}"))?;
     crate::job::adopt(&child);
     *server().lock().unwrap() = Some(child);

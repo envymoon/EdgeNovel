@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
+import 'package:flutter/services.dart';
 
 import 'platform_services.dart';
 
@@ -9,13 +12,23 @@ import 'platform_services.dart';
 /// Work that goes on there with 锁屏/后台运行 on — 提前合成, the AI queue —
 /// plays silence for as long as it runs, starting while the app is still on
 /// screen: iOS does not let it start from behind.
+///
+/// Android keeps it running as a foreground service with a notification
+/// instead (KeepService in Native.kt), held for [reason]; it too starts only
+/// on screen.
 class SilentKeepAlive {
   /// Under other apps' sound rather than in place of it (the AI queue, which
   /// is not listened to); back to the usual when it stops. iOS has one sound
   /// setting for the whole app.
   final bool mix;
 
-  SilentKeepAlive({this.mix = false});
+  /// What Android's notification says it is for: `listen` (听书), `download`,
+  /// or AI work.
+  final String reason;
+
+  SilentKeepAlive({this.mix = false, this.reason = 'ai'});
+
+  static const _keep = MethodChannel('novel/keep');
 
   AudioPlayer? _player;
   bool _on = false;
@@ -27,6 +40,18 @@ class SilentKeepAlive {
   Future<bool> set(bool wanted) async {
     if (wanted == _on) return false;
     _on = wanted;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final held = await _keep.invokeMethod<bool>('set', {
+          'reason': reason,
+          'on': wanted,
+        });
+        if (wanted && held != true) _on = false;
+      } catch (_) {
+        if (wanted) _on = false;
+      }
+      return _on == wanted;
+    }
     try {
       if (!wanted) {
         await _player?.stop();

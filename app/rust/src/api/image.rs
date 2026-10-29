@@ -75,6 +75,7 @@ static DRAWING_FOR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 #[cfg(windows)]
 const ENGINE_EXE: &str = "sd-cli.exe";
 #[cfg(not(windows))]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 const ENGINE_EXE: &str = "sd-cli";
 
 /// The tiny decoder the model is paired with. Its own file, so it is found by
@@ -120,9 +121,16 @@ fn find_named(dir: &Path, name: &str, depth: u32) -> Option<PathBuf> {
         .find_map(|d| find_named(&d, name, depth - 1))
 }
 
-#[cfg(not(in_process_engine))]
+#[cfg(not(any(in_process_engine, target_os = "android")))]
 fn find_engine(dir: &Path) -> Option<PathBuf> {
     find_named(dir, ENGINE_EXE, 2)
+}
+
+/// In the APK, installed beside the app's own code: nothing to download or
+/// delete.
+#[cfg(target_os = "android")]
+fn find_engine(_: &Path) -> Option<PathBuf> {
+    crate::android_engine::bundled("libedge_sd_cli.so")
 }
 
 /// Compiled into the app: always there, and nothing to download or delete.
@@ -208,6 +216,9 @@ const ENGINE_FOLDER: &str = "sd-cli";
 
 /// Delete the engine. Covers already made are the reader's and stay.
 pub fn delete_image_engine() -> Result<(), String> {
+    if cfg!(target_os = "android") {
+        return Err("生图引擎内置于应用".into());
+    }
     let dir = image_dir()?;
     let exe = find_engine(dir).ok_or("生图引擎未安装")?;
     cancel_cover();
@@ -783,7 +794,15 @@ pub fn cancel_cover() {
 fn next_tmp() -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("novel_cover_{}_{n}.png", std::process::id()))
+    // Android gives an app no TMPDIR, and /data/local/tmp is not its own.
+    #[cfg(target_os = "android")]
+    let dir = image_dir()
+        .map(|d| d.join("tmp"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+    #[cfg(not(target_os = "android"))]
+    let dir = std::env::temp_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("novel_cover_{}_{n}.png", std::process::id()))
 }
 
 /// 2:3, the shape of a cover, and the size the model was measured at.
@@ -831,12 +850,37 @@ fn draw(
 
 /// Run the engine once, into a temp file. `slot` says whose run it is; a stop
 /// asked of it before or during the run ends it.
+///
+/// Android: on the GPU (Vulkan) unless the reader chose 仅 CPU; a picture the
+/// GPU fails is drawn again on the CPU, where every engine then stays this
+/// run ([`crate::android_engine::mark_gpu_failed`]).
 #[cfg(not(in_process_engine))]
 fn render(
     slot: &Slot,
     prompt: &str,
     seed: u32,
     report: &mut impl FnMut(CoverProgress),
+) -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    let gpu = crate::android_engine::use_gpu();
+    #[cfg(not(target_os = "android"))]
+    let gpu = !crate::api::ai::cpu_only();
+    let first = render_on(slot, prompt, seed, report, gpu);
+    #[cfg(target_os = "android")]
+    if gpu && !slot.stopped() && first.as_ref().is_err_and(|e| e.starts_with("生图失败")) {
+        crate::android_engine::mark_gpu_failed();
+        return render_on(slot, prompt, seed, report, false);
+    }
+    first
+}
+
+#[cfg(not(in_process_engine))]
+fn render_on(
+    slot: &Slot,
+    prompt: &str,
+    seed: u32,
+    report: &mut impl FnMut(CoverProgress),
+    gpu: bool,
 ) -> Result<PathBuf, String> {
     let dir = image_dir()?;
     let exe = find_engine(dir).ok_or("生图引擎未安装")?;
@@ -870,7 +914,7 @@ fn render(
         .arg("-o")
         .arg(&out);
     // Without a backend sd.cpp fits everything on the best GPU it finds.
-    if crate::api::ai::cpu_only() {
+    if !gpu {
         cmd.args(["--backend", "cpu"]);
     }
     cmd.current_dir(exe.parent().unwrap_or(dir))

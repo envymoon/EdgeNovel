@@ -697,8 +697,8 @@ class _AiPageState extends State<AiPage> {
                               )
                             : null,
                       ),
-                      // Pictures: covers and 章间立绘. On iOS the engine is in
-                      // the app and only the model is a download.
+                      // Pictures: covers and 章间立绘. On a phone the engine is
+                      // in the app and only the model is a download.
                       if (AppPlatformSupport.hasImageGen) ...[
                         if (!AppPlatformSupport.hasBundledImageEngine)
                           _item(
@@ -772,7 +772,7 @@ class _AiPageState extends State<AiPage> {
                             size: 20,
                             color: t.muted,
                           ),
-                          // On iPhone voice and pace are in the reader's
+                          // On a phone voice and pace are in the reader's
                           // 听书 panel; what was spoken is kept here.
                           title: Text(
                             AppPlatformSupport.speaksByChapter

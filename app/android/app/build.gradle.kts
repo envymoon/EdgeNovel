@@ -27,14 +27,17 @@ abstract class StageEdgeEngineTask : DefaultTask() {
 
     @TaskAction
     fun stage() {
-        for (abi in listOf("arm64-v8a", "x86_64")) {
-            check(nativeDirectory.file("$abi/libedge_llama_server.so").get().asFile.isFile) {
-                "Missing freshly built Android engine for $abi"
+        // The chat engine, the 听书 engine and the picture engine.
+        val engines = listOf("libedge_llama_server.so", "libedge_tts_server.so", "libedge_sd_cli.so")
+        val files = listOf("arm64-v8a", "x86_64").flatMap { abi -> engines.map { "$abi/$it" } }
+        for (file in files) {
+            check(nativeDirectory.file(file).get().asFile.isFile) {
+                "Missing freshly built Android engine $file"
             }
         }
         fileSystemOperations.sync {
             from(nativeDirectory)
-            include("arm64-v8a/libedge_llama_server.so", "x86_64/libedge_llama_server.so")
+            include(files)
             into(destinationDirectory)
         }
     }

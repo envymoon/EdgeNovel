@@ -45,6 +45,10 @@ set(GGML_CPU_ARM_ARCH armv8-a CACHE STRING "" FORCE)
 foreach(feature AVX AVX2 AVX512 AVX_VNNI FMA F16C BMI2)
     set(GGML_${feature} OFF CACHE BOOL "" FORCE)
 endforeach()
+# The GPU first, as on Windows and iPhone; the CPU is what Rust falls back to
+# when the phone's Vulkan cannot run it (android_engine.rs).
+include("${CMAKE_CURRENT_SOURCE_DIR}/edge_vulkan.cmake")
+edge_enable_vulkan()
 FetchContent_MakeAvailable(edge_llama)
 
 add_library(llama-ui INTERFACE)
@@ -67,3 +71,31 @@ string(TOLOWER "${CMAKE_BUILD_TYPE}" EDGE_BUILD_TYPE)
 set_target_properties(edge_llama_server PROPERTIES
     OUTPUT_NAME libedge_llama_server.so
     RUNTIME_OUTPUT_DIRECTORY "${EDGE_ENGINE_OUTPUT_DIR}/${EDGE_BUILD_TYPE}/${ANDROID_ABI}")
+
+# The 听书 engine (tts/) and the picture engine (sd/), each a project of its
+# own with its own ggml, built beside this one for the same phone and always
+# optimised: unoptimised they are unusably slow. Gradle builds only the chat
+# engine's target, so that target waits for them.
+get_filename_component(EDGE_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../.." ABSOLUTE)
+find_program(EDGE_PATCH patch HINTS "C:/Program Files/Git/usr/bin" REQUIRED)
+include(ExternalProject)
+foreach(engine tts sd)
+    ExternalProject_Add(edge_${engine}_engine
+        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${engine}"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/edge-${engine}"
+        CMAKE_ARGS
+            "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+            "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-DANDROID_ABI=${ANDROID_ABI}"
+            "-DANDROID_PLATFORM=${ANDROID_PLATFORM}"
+            "-DANDROID_STL=c++_static"
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DEDGE_REPO=${EDGE_REPO}"
+            "-DEDGE_CPP=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DEDGE_PATCH=${EDGE_PATCH}"
+            "-DEDGE_OUTPUT_DIR=${EDGE_ENGINE_OUTPUT_DIR}/${EDGE_BUILD_TYPE}/${ANDROID_ABI}"
+        BUILD_COMMAND "${CMAKE_COMMAND}" --build . --target edge_${engine} --parallel 4
+        BUILD_ALWAYS TRUE
+        INSTALL_COMMAND "")
+    add_dependencies(edge_llama_server edge_${engine}_engine)
+endforeach()

@@ -7,14 +7,17 @@ import 'package:novel/platform_services.dart';
 import 'package:novel/src/rust/api/ai.dart';
 
 void main() {
-  test('phones bundle the engine; mobile stays foreground-only', () {
+  test('phones bundle every engine; mobile stays foreground-only', () {
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     expect(AppPlatformSupport.hasBundledAiEngine, isTrue);
     expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     expect(AppPlatformSupport.supportsBackgroundAi, isFalse);
-    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isTrue);
+    expect(AppPlatformSupport.hasAiVoice, isTrue);
+    expect(AppPlatformSupport.hasBundledTtsEngine, isTrue);
+    expect(AppPlatformSupport.hasImageGen, isTrue);
+    expect(AppPlatformSupport.hasBundledImageEngine, isTrue);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     expect(AppPlatformSupport.hasAiEngine, isFalse);
     expect(AppPlatformSupport.hasReadAloud, isTrue);
@@ -25,7 +28,6 @@ void main() {
     expect(AppPlatformSupport.hasAiEngine, isTrue);
     expect(AppPlatformSupport.hasAiVoice, isTrue);
     expect(AppPlatformSupport.hasBundledTtsEngine, isTrue);
-    expect(AppPlatformSupport.bundledEngineIsCpuOnly, isFalse);
     expect(AppPlatformSupport.canDownloadAiEngine, isFalse);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     expect(AppPlatformSupport.hasBundledAiEngine, isFalse);

@@ -43,7 +43,13 @@ class AppearancePage extends StatelessWidget {
                   items: [
                     DropdownMenuItem(
                       value: '',
-                      child: Text(windows ? '微软雅黑（默认）' : '苹方（默认）'),
+                      child: Text(
+                        windows
+                            ? '微软雅黑（默认）'
+                            : defaultTargetPlatform == TargetPlatform.iOS
+                            ? '苹方（默认）'
+                            : '系统字体（默认）',
+                      ),
                     ),
                     // Fonts every Windows install carries.
                     if (windows) ...const [

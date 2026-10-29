@@ -27,51 +27,48 @@ abstract final class AppPlatformSupport {
   /// Set at startup from the engine's own answer.
   static bool iosEngineAvailable = false;
 
-  /// Android's bundled engine is CPU-only; iOS's runs on the GPU (Metal).
-  static bool get bundledEngineIsCpuOnly =>
-      defaultTargetPlatform == TargetPlatform.android;
-
   /// Mobile document pickers grant access to the selected files themselves;
   /// the app must never request permission to browse all user storage.
   static bool get usesScopedDocumentAccess => isMobile;
 
-  /// A native scheduler will replace this during platform integration. Until
-  /// then mobile AI is intentionally foreground-only.
+  /// The queue runs off screen by itself only on desktop; on a phone it does
+  /// with 锁屏/后台运行 on (main.dart).
   static bool get supportsBackgroundAi => isDesktop;
 
-  /// 听书: on Windows with the AI voice; on iPhone with the AI voice where
-  /// it is installed and the phone's own voice where not, so on every iOS.
+  /// 听书: on Windows with the AI voice; on a phone with the AI voice where
+  /// it is installed and the phone's own voice where not, so on every phone.
   /// Elsewhere every entry stays hidden.
   static bool get hasReadAloud =>
       defaultTargetPlatform == TargetPlatform.windows ||
-      defaultTargetPlatform == TargetPlatform.iOS;
+      isMobile;
 
-  /// The AI voice (Qwen3-TTS): a downloaded engine on Windows, one compiled
-  /// into the app on iOS, from the same 16.4 the AI engine needs.
+  /// The AI voice (Qwen3-TTS): a downloaded engine on Windows, one shipped in
+  /// the app on Android and iOS (there from the same 16.4 the AI engine
+  /// needs).
   static bool get hasAiVoice =>
       defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.android ||
       (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
 
   /// The 听书 engine ships inside the app, so only the voice is a download.
-  static bool get hasBundledTtsEngine =>
-      defaultTargetPlatform == TargetPlatform.iOS;
+  static bool get hasBundledTtsEngine => isMobile;
 
-  /// AI 封面 and 章间立绘: a downloaded engine on desktop, one compiled into
-  /// the app on iOS, from the same 16.4 the AI engine needs.
+  /// AI 封面 and 章间立绘: a downloaded engine on desktop, one shipped in the
+  /// app on Android and iOS (there from the same 16.4 the AI engine needs).
   static bool get hasImageGen =>
       isDesktop ||
+      defaultTargetPlatform == TargetPlatform.android ||
       (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
 
   /// The picture engine ships inside the app, so only the model is a
   /// download.
-  static bool get hasBundledImageEngine =>
-      defaultTargetPlatform == TargetPlatform.iOS;
+  static bool get hasBundledImageEngine => isMobile;
 
-  /// iPhone 听书 plays chapters spoken ahead into files (tts_chapters.dart)
-  /// and nothing else: listening is mostly with the screen locked, where iOS
-  /// lends no GPU to speak as the voice goes.
-  static bool get speaksByChapter =>
-      defaultTargetPlatform == TargetPlatform.iOS;
+  /// Phone 听书 plays chapters spoken ahead into files (tts_chapters.dart)
+  /// and nothing else: listening is mostly with the screen locked, and a
+  /// phone cannot speak as fast as it plays. With no AI voice installed the
+  /// phone's own voice reads instead.
+  static bool get speaksByChapter => isMobile;
 
   static bool isMobilePlatform(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.iOS;
