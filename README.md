@@ -79,9 +79,9 @@ Android 需要 64 位（ARM64）手机；iOS 任何版本都能装，16.4 起可
 
 | 平台 | 下载 |
 | --- | --- |
-| Windows | [挚阅 1.3.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.3.0)（解压后运行 `novel.exe`，整个文件夹一起保留） |
-| Android | [挚阅 1.3.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.3.0)（ARM64） |
-| iOS | [挚阅 1.3.0](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.3.0)（未签名，需自行签名后安装） |
+| Windows | [挚阅 1.3.1](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.3.1)（解压后运行 `novel.exe`，整个文件夹一起保留） |
+| Android | [挚阅 1.3.1](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.3.1)（ARM64） |
+| iOS | [挚阅 1.3.1](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.3.1)（未签名，需自行签名后安装） |
 
 ---
 
