@@ -302,6 +302,7 @@ const _english = <String, String>{
   '翻页方式': 'Page mode',
   '上下滚动': 'Vertical scroll',
   '左右翻页': 'Horizontal pages',
+  '仿真翻页': 'Page curl',
   '背景': 'Background',
   '字体': 'Font',
   '按需下载或导入本地字体': 'Download on demand or import a local font',

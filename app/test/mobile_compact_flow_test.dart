@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:novel/page_curl.dart';
 import 'package:novel/paged_reader.dart';
 import 'package:novel/platform_services.dart';
 import 'package:novel/reader_page.dart';
@@ -499,6 +500,91 @@ void main() {
     await tester.pumpAndSettle();
     expect((reader.nexts, reader.prevs), (1, 0));
     await tester.dragFrom(const Offset(90, 380), const Offset(200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('仿真 turns the page over by tap and by drag, and back', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final pageInfo = ValueNotifier<(int, int)>((1, 1));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: _LongParagraphReader(),
+          settings: ReadingSettings()..pageMode = PageMode.curl,
+          padding: const EdgeInsets.all(20),
+          pageInfo: pageInfo,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    bool curling() => find
+        .byWidgetPredicate(
+          (w) => w is CustomPaint && w.painter is PageCurlPainter,
+        )
+        .evaluate()
+        .isNotEmpty;
+    final first = pageInfo.value.$1;
+
+    await tester.tapAt(const Offset(370, 380));
+    await tester.pump();
+    expect(curling(), isTrue);
+    await tester.pumpAndSettle();
+    expect((curling(), pageInfo.value.$1), (false, first + 1));
+
+    // The page under the finger, let go while still going over.
+    final gesture = await tester.startGesture(const Offset(360, 700));
+    for (var i = 0; i < 10; i++) {
+      await gesture.moveBy(const Offset(-25, -8));
+      await tester.pump();
+    }
+    expect((curling(), pageInfo.value.$1), (true, first + 1));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(pageInfo.value.$1, first + 2);
+
+    // Pulled back a little, then let go: it falls back.
+    final back = await tester.startGesture(const Offset(40, 380));
+    for (var i = 0; i < 6; i++) {
+      await back.moveBy(const Offset(15, 0));
+      await tester.pump();
+    }
+    await back.moveBy(const Offset(-10, 0));
+    await back.up();
+    await tester.pumpAndSettle();
+    expect((curling(), pageInfo.value.$1), (false, first + 2));
+
+    await tester.dragFrom(const Offset(40, 380), const Offset(200, 0));
+    await tester.pumpAndSettle();
+    expect(pageInfo.value.$1, first + 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("仿真 off a chapter's edge goes on into the next one", (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final reader = _ShortChapterReader();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: reader,
+          settings: ReadingSettings()..pageMode = PageMode.curl,
+          padding: const EdgeInsets.all(20),
+          pageInfo: ValueNotifier((1, 1)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.dragFrom(const Offset(300, 380), const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.prevs), (1, 0));
+    await tester.tapAt(const Offset(20, 380));
     await tester.pumpAndSettle();
     expect((reader.nexts, reader.prevs), (1, 1));
     expect(tester.takeException(), isNull);
