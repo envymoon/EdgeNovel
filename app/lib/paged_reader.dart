@@ -1,9 +1,14 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart' show PointerScrollEvent, VelocityTracker;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'annotation_page.dart';
+import 'page_curl.dart';
 import 'reader_interaction.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
@@ -296,7 +301,8 @@ class PagedReader extends StatefulWidget {
   State<PagedReader> createState() => PagedReaderState();
 }
 
-class PagedReaderState extends State<PagedReader> {
+class PagedReaderState extends State<PagedReader>
+    with SingleTickerProviderStateMixin {
   PageController? _ctrl;
   List<BookPage> _pages = const [];
   String _signature = '';
@@ -335,10 +341,54 @@ class PagedReaderState extends State<PagedReader> {
   /// it moves on to the next one.
   (int, int) _spoken = (-1, -1);
 
+  /// 仿真翻页: the page turning over the one it uncovers, drawn over both
+  /// while it turns (page_curl.dart). Pictures of the two pages, taken from
+  /// the page on screen and the copies drawn under it ([_readyAround]).
+  PageCurl? _curl;
+
+  /// Which way [_curl] turns (1 on, -1 back), and whether, let go, it goes
+  /// all the way over or falls back.
+  int _curlDir = 0;
+  bool _curlCompletes = false;
+
+  /// Its turn once let go or tapped: from where to where, how, and how far it
+  /// lifts on the way (a tap lifts the corner a little as it goes over).
+  late final AnimationController _curlRun;
+  Offset _curlFrom = Offset.zero;
+  Offset _curlTo = Offset.zero;
+  double _curlRise = 0;
+  Curve _curlCurve = Curves.easeOut;
+
+  /// The finger turning [_curl]: 1 or -1 while it drags a page, 0 before a
+  /// drag has started one, null once a drag could not (the page then turns
+  /// at once when it is let go), 2 when the plate came instead.
+  int? _dragDir = 0;
+  Offset _downLocal = Offset.zero;
+  int _dragPointer = 0;
+
+  /// How far sideways that finger has come, and how fast it is going.
+  double _dragDx = 0;
+  VelocityTracker? _dragSpeed;
+
+  /// The whole box pages are drawn in, margins included.
+  Size _box = Size.zero;
+
+  final _currentKey = GlobalKey();
+  final _prevKey = GlobalKey();
+  final _nextKey = GlobalKey();
+
+  bool get _curlMode =>
+      widget.settings.pageMode == PageMode.curl && !widget.annotationMode;
+
   @override
   void initState() {
     super.initState();
     widget.tts?.addListener(_onSpeech);
+    _curlRun = AnimationController(vsync: this)
+      ..addListener(_onCurlRun)
+      ..addStatusListener((s) {
+        if (s == AnimationStatus.completed) _endCurl();
+      });
   }
 
   @override
@@ -357,7 +407,10 @@ class PagedReaderState extends State<PagedReader> {
     _spoken = now;
     if (now.$1 >= 0) {
       final page = _pageOf(now.$1, now.$2);
-      if (page != _page) _ctrl?.jumpToPage(page);
+      if (page != _page) {
+        _dropCurl();
+        _ctrl?.jumpToPage(page);
+      }
     }
     setState(() {});
   }
@@ -380,6 +433,22 @@ class PagedReaderState extends State<PagedReader> {
   /// [pastPlate]: back from the plate before this chapter, so on into the
   /// chapter before without showing it again.
   void turn(int dir, {bool pastPlate = false}) {
+    // A tap while a page is still turning: that one lands at once.
+    if (_curl != null && _dragDir != 1 && _dragDir != -1) _endCurl();
+    if (_curlMode && !pastPlate && _curl == null) {
+      final h = _box.height;
+      if (_startCurl(dir, h)) {
+        if (_curl != null) {
+          _runCurl(
+            dir > 0 ? _curl!.gone : _curl!.corner,
+            completes: true,
+            rise: h * 0.12,
+            curve: Curves.easeInOut,
+          );
+        }
+        return;
+      }
+    }
     final r = widget.reader;
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
@@ -393,6 +462,182 @@ class PagedReaderState extends State<PagedReader> {
       _landAtEnd = true;
       r.prev();
     }
+  }
+
+  /// Lifts the page that turns [dir] by its right edge at [y]: the page on
+  /// screen going on, the page before coming back over it. False when the
+  /// pages either side are not drawn yet; the page then turns at once. True
+  /// with no [_curl] when the plate before this chapter came instead.
+  bool _startCurl(int dir, double y) {
+    if (_shown != _page || _ctrl?.hasClients != true || _box.isEmpty) {
+      return false;
+    }
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final here = _snap(_currentKey, ratio);
+    final there = _snap(dir > 0 ? _nextKey : _prevKey, ratio);
+    if (here == null || there == null) {
+      here?.dispose();
+      there?.dispose();
+      return false;
+    }
+    if (dir < 0 && _page == 0 && (widget.onBackOffStart?.call() ?? false)) {
+      here.dispose();
+      there.dispose();
+      return true;
+    }
+    setState(() {
+      _curlDir = dir;
+      _curlCompletes = false;
+      _curl = PageCurl(
+        top: dir > 0 ? here : there,
+        under: dir > 0 ? there : here,
+        scale: ratio,
+        corner: Offset(_box.width, y.clamp(0, _box.height)),
+        size: _box,
+        turned: dir < 0,
+      );
+    });
+    return true;
+  }
+
+  /// A picture of what [key]'s boundary last drew, or null if it has not.
+  static ui.Image? _snap(GlobalKey key, double ratio) {
+    final box = key.currentContext?.findRenderObject();
+    if (box is! RenderRepaintBoundary || !box.hasSize) return null;
+    try {
+      return box.toImageSync(pixelRatio: ratio);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _runCurl(
+    Offset to, {
+    required bool completes,
+    double rise = 0,
+    Curve curve = Curves.easeOut,
+  }) {
+    final curl = _curl!;
+    _curlFrom = curl.at.value;
+    _curlTo = to;
+    _curlRise = rise;
+    _curlCurve = curve;
+    _curlCompletes = completes;
+    final way = (curl.gone - curl.corner).distance;
+    final left = way <= 0 ? 0.0 : ((to - _curlFrom).distance / way).clamp(0, 1);
+    _curlRun.duration = Duration(milliseconds: (120 + 300 * left).round());
+    _curlRun.forward(from: 0);
+  }
+
+  void _onCurlRun() {
+    final curl = _curl;
+    if (curl == null) return;
+    final t = _curlCurve.transform(_curlRun.value);
+    curl.at.value =
+        Offset.lerp(_curlFrom, _curlTo, t)! -
+        Offset(0, _curlRise * math.sin(math.pi * t));
+  }
+
+  /// The turn has landed: on the page uncovered, or back where it was.
+  void _endCurl() {
+    final curl = _curl;
+    if (curl == null) return;
+    _curlRun.stop();
+    final dir = _curlDir;
+    if (!_curlCompletes) {
+      _dropCurl();
+      return;
+    }
+    curl.at.value = dir > 0 ? curl.gone : curl.corner;
+    final target = _page + dir;
+    if (target >= 0 && target < _pages.length) {
+      _ctrl?.jumpToPage(target);
+      _dropCurl();
+      return;
+    }
+    // Into the chapter beside it, which opens a moment later: the picture of
+    // its page stays up until then ([_rebuild]).
+    _curlCompletes = false;
+    final r = widget.reader;
+    if (dir > 0) {
+      unawaited(r.next());
+    } else {
+      _landAtEnd = true;
+      unawaited(r.prev());
+    }
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted && identical(_curl, curl)) _dropCurl();
+    });
+  }
+
+  void _dropCurl() {
+    final curl = _curl;
+    if (curl == null) return;
+    _curlRun.stop();
+    _dragDir = 0;
+    if (mounted) setState(() => _curl = null);
+    curl.dispose();
+  }
+
+  /// The finger on a page in 仿真: once it has gone sideways, it holds the
+  /// page's right edge — going on, the page on screen's; going back, the page
+  /// before's, coming back over from the left.
+  void _dragCurl(PointerMoveEvent e) {
+    if (e.pointer != _dragPointer) return;
+    final moved = e.localPosition - _downLocal;
+    _dragDx = moved.dx;
+    _dragSpeed?.addPosition(e.timeStamp, e.localPosition);
+    if (_dragDir == 0) {
+      if (moved.dx.abs() < 10 || moved.dx.abs() <= moved.dy.abs()) return;
+      final dir = moved.dx < 0 ? 1 : -1;
+      // By a corner when taken near the top or the bottom, straight across
+      // in between.
+      final h = _box.height;
+      final y = _downLocal.dy < h / 3
+          ? 0.0
+          : _downLocal.dy > h * 2 / 3
+          ? h
+          : _downLocal.dy;
+      _dragDir = !_startCurl(dir, y)
+          ? null
+          : _curl != null
+          ? dir
+          : 2;
+    }
+    final curl = _curl;
+    final dir = _dragDir;
+    if (curl == null || dir == null || dir.abs() != 1) return;
+    final c = curl.corner;
+    final byCorner = c.dy <= 0 || c.dy >= _box.height;
+    // Going on, the edge stays under the finger; coming back, the page comes
+    // twice as fast, so one swipe across brings it all the way.
+    final x = dir > 0
+        ? c.dx + moved.dx
+        : math.min(curl.gone.dx + 2 * moved.dx, c.dx);
+    curl.at.value = Offset(x, c.dy + (byCorner ? moved.dy : 0));
+  }
+
+  /// Whether the finger, let go now, turns the page [dir]: drawn a third of
+  /// the way across, or flicked that way. Anything less, or drawn back, and
+  /// the page stays.
+  bool _dragTurns(int dir) {
+    final travel = -dir * _dragDx;
+    final speed = -dir * (_dragSpeed?.getVelocity().pixelsPerSecond.dx ?? 0);
+    if (speed <= -100) return false;
+    return travel >= _box.width / 3 || (travel >= 40 && speed >= 600);
+  }
+
+  /// The finger let go of a page it was turning: over, if it went far enough
+  /// ([_dragTurns]), else back. False when it was turning none.
+  bool _letGoCurl() {
+    final dir = _dragDir;
+    _dragDir = 0;
+    if (dir == 2) return true;
+    final curl = _curl;
+    if (curl == null || dir == null || dir.abs() != 1) return false;
+    final over = _dragTurns(dir);
+    _runCurl(over == (dir > 0) ? curl.gone : curl.corner, completes: over);
+    return true;
   }
 
   String _signatureOf(int chapter, int paragraphs, Size size) {
@@ -422,6 +667,14 @@ class PagedReaderState extends State<PagedReader> {
     _signature = sig;
     _size = size;
     _shown = -1;
+    // New pages: the pictures of the old ones go, a page turned into this
+    // chapter having landed.
+    if (_curl case final curl?) {
+      _curlRun.stop();
+      _curl = null;
+      _dragDir = 0;
+      curl.dispose();
+    }
 
     final ready = _laidOut[r.chapterIndex];
     _pages = ready?.$1 == sig
@@ -488,19 +741,20 @@ class PagedReaderState extends State<PagedReader> {
       ..ensureVisualUpdate();
   }
 
-  /// The pages one turn away from [_shown], in this chapter or the next.
-  List<BookPage> get _neighbours {
+  /// The pages one turn away from [_shown], in this chapter or the one beside
+  /// it, each with the key its copy is drawn under.
+  List<(BookPage, GlobalKey)> get _neighbours {
     if (_shown < 0 || _shown >= _pages.length) return const [];
     final c = widget.reader.chapterIndex;
     return [
       if (_shown > 0)
-        _pages[_shown - 1]
+        (_pages[_shown - 1], _prevKey)
       else if (_laidOut[c - 1]?.$2 case final prev?)
-        prev.last,
+        (prev.last, _prevKey),
       if (_shown < _pages.length - 1)
-        _pages[_shown + 1]
+        (_pages[_shown + 1], _nextKey)
       else if (_laidOut[c + 1]?.$2 case final next?)
-        next.first,
+        (next.first, _nextKey),
     ];
   }
 
@@ -513,6 +767,8 @@ class PagedReaderState extends State<PagedReader> {
   void dispose() {
     widget.tts?.removeListener(_onSpeech);
     _ctrl?.dispose();
+    _curlRun.dispose();
+    _curl?.dispose();
     super.dispose();
   }
 
@@ -526,6 +782,7 @@ class PagedReaderState extends State<PagedReader> {
           constraints.maxHeight - widget.padding.vertical,
         );
         _rebuild(inner);
+        _box = constraints.biggest;
         // Tap zones: left half of the page is back, right half is forward. Raw
         // pointer events, not a GestureDetector: a tap recognizer must wait out
         // the PageView's drag recognizer before it may fire, and that
@@ -539,16 +796,47 @@ class PagedReaderState extends State<PagedReader> {
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerDown: (e) {
+              // A second finger leaves a page being dragged alone; one still
+              // turning lands before the finger takes the next.
+              if (_dragDir == 1 || _dragDir == -1) return;
               _downAt = e.position;
+              _downLocal = e.localPosition;
               _downPage = _page;
+              if (_curl != null) _endCurl();
+              _dragDir = 0;
+              _dragPointer = e.pointer;
+              _dragDx = 0;
+              _dragSpeed = VelocityTracker.withKind(e.kind);
             },
+            onPointerMove: _curlMode ? _dragCurl : null,
+            // The pages do not scroll in 仿真: a notch of the wheel turns one,
+            // and the notches that come while it turns are let go by.
+            onPointerSignal: _curlMode
+                ? (e) {
+                    if (e is PointerScrollEvent &&
+                        e.scrollDelta.dy != 0 &&
+                        _curl == null) {
+                      turn(e.scrollDelta.dy > 0 ? 1 : -1);
+                    }
+                  }
+                : null,
+            onPointerCancel: (_) => _letGoCurl(),
             onPointerUp: (e) {
+              if (_letGoCurl()) return;
               final moved = e.position - _downAt;
               if (!widget.annotationMode &&
                   moved.dx.abs() > 40 &&
                   moved.dx.abs() > moved.dy.abs()) {
-                if (moved.dx < 0 && _downPage >= _pages.length - 1) turn(1);
-                if (moved.dx > 0 && _downPage <= 0) turn(-1);
+                // 仿真 has no sliding pages: a swipe the curl could not
+                // take turns the page at once, if it would have turned it.
+                if (_curlMode) {
+                  final dir = moved.dx < 0 ? 1 : -1;
+                  if (_dragTurns(dir)) turn(dir);
+                } else if (moved.dx < 0 && _downPage >= _pages.length - 1) {
+                  turn(1);
+                } else if (moved.dx > 0 && _downPage <= 0) {
+                  turn(-1);
+                }
                 return;
               }
               if (!widget.annotationMode && moved.distance < 12) {
@@ -572,25 +860,44 @@ class PagedReaderState extends State<PagedReader> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                for (final page in _neighbours)
+                for (final (page, key) in _neighbours)
                   IgnorePointer(
                     child: ExcludeSemantics(
                       child: RepaintBoundary(
-                        child: Padding(
-                          padding: widget.padding,
-                          child: _PageView(
-                            page: page,
-                            settings: widget.settings,
-                            theme: t,
-                            reader: widget.reader,
-                            annotationMode: false,
-                            plain: true,
+                        key: key,
+                        // On paper, for a picture of it to turn (_startCurl).
+                        child: ColoredBox(
+                          color: t.background,
+                          child: Padding(
+                            padding: widget.padding,
+                            child: _PageView(
+                              page: page,
+                              settings: widget.settings,
+                              theme: t,
+                              reader: widget.reader,
+                              annotationMode: false,
+                              plain: true,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ColoredBox(color: t.background, child: _pageView(context, t)),
+                RepaintBoundary(
+                  key: _currentKey,
+                  child: ColoredBox(
+                    color: t.background,
+                    child: _pageView(context, t),
+                  ),
+                ),
+                if (_curl case final curl?)
+                  IgnorePointer(
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: PageCurlPainter(curl, t.background),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -613,6 +920,8 @@ class PagedReaderState extends State<PagedReader> {
       child: PageView.builder(
         key: ValueKey(_signature),
         controller: _ctrl,
+        // 仿真: the finger turns the page over (_dragCurl), never slides it.
+        physics: _curlMode ? const NeverScrollableScrollPhysics() : null,
         itemCount: _pages.length,
         onPageChanged: (i) {
           _topPara = _pages[i].firstPara;

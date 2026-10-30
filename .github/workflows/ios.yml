@@ -9,6 +9,10 @@ name: iOS
 on:
   push:
     branches: [ios]
+    # A push that only touches Android has nothing to build here.
+    paths-ignore:
+      - 'app/android/**'
+      - 'app/docs/android-*'
   workflow_dispatch:
 
 jobs:

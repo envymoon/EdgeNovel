@@ -76,7 +76,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   late final TtsController _tts;
 
-  bool get _isPaged => widget.settings.pageMode == PageMode.paged;
+  bool get _isPaged => widget.settings.pageMode != PageMode.scroll;
 
   @override
   void initState() {
@@ -1814,6 +1814,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
                   for (final (mode, label) in [
                     (PageMode.scroll, '上下滚动'),
                     (PageMode.paged, '左右翻页'),
+                    (PageMode.curl, '仿真翻页'),
                   ])
                     ChoiceChip(
                       label: Text(label, style: const TextStyle(fontSize: 13)),

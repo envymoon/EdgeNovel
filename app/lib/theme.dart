@@ -211,7 +211,9 @@ ThemeData buildAppTheme(ReadingSettings settings) {
   );
 }
 
-enum PageMode { scroll, paged }
+/// Stored by index: new modes go on the end. [curl] is [paged] with the page
+/// rolling over as it turns (page_curl.dart).
+enum PageMode { scroll, paged, curl }
 
 class ReadingSettings extends ChangeNotifier {
   AppLanguage language = AppLanguage.simplifiedChinese;
