@@ -564,6 +564,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('仿真 keeps the page unless it was drawn far enough or flicked', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final pageInfo = ValueNotifier<(int, int)>((1, 1));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: _LongParagraphReader(),
+          settings: ReadingSettings()..pageMode = PageMode.curl,
+          padding: const EdgeInsets.all(20),
+          pageInfo: pageInfo,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final first = pageInfo.value.$1;
+
+    // Moves [steps] times by [by], 16 ms apart, then waits [rest] and lets go.
+    Future<void> drag(
+      Offset from,
+      Offset by,
+      int steps, {
+      Duration rest = Duration.zero,
+    }) async {
+      final finger = await tester.startGesture(from);
+      var now = Duration.zero;
+      for (var i = 0; i < steps; i++) {
+        now += const Duration(milliseconds: 16);
+        await finger.moveBy(by, timeStamp: now);
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(rest);
+      await finger.up(timeStamp: now + rest);
+      await tester.pumpAndSettle();
+    }
+
+    const pause = Duration(milliseconds: 100);
+    // A little, slowly, either way: the page stays.
+    await drag(const Offset(300, 380), const Offset(-3, 0), 20, rest: pause);
+    expect(pageInfo.value.$1, first);
+    await drag(const Offset(60, 380), const Offset(3, 0), 20, rest: pause);
+    expect(pageInfo.value.$1, first);
+
+    // A long way over and all the way back again: the page stays.
+    final there = await tester.startGesture(const Offset(350, 380));
+    for (var i = 0; i < 10; i++) {
+      await there.moveBy(const Offset(-25, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    for (var i = 0; i < 10; i++) {
+      await there.moveBy(const Offset(25, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(pause);
+    await there.up();
+    await tester.pumpAndSettle();
+    expect(pageInfo.value.$1, first);
+
+    // A third of the way across, held there: it turns.
+    await drag(const Offset(350, 380), const Offset(-15, 0), 10, rest: pause);
+    expect(pageInfo.value.$1, first + 1);
+
+    // Short and quick: it turns.
+    await drag(const Offset(350, 380), const Offset(-15, 0), 5);
+    expect(pageInfo.value.$1, first + 2);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("仿真 off a chapter's edge goes on into the next one", (
     tester,
   ) async {

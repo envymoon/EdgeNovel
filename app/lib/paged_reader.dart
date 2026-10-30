@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'dart:ui' as ui;
 
-import 'package:flutter/gestures.dart' show PointerScrollEvent;
+import 'package:flutter/gestures.dart' show PointerScrollEvent, VelocityTracker;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -364,7 +364,11 @@ class PagedReaderState extends State<PagedReader>
   /// at once when it is let go), 2 when the plate came instead.
   int? _dragDir = 0;
   Offset _downLocal = Offset.zero;
-  double _lastDx = 0;
+  int _dragPointer = 0;
+
+  /// How far sideways that finger has come, and how fast it is going.
+  double _dragDx = 0;
+  VelocityTracker? _dragSpeed;
 
   /// The whole box pages are drawn in, margins included.
   Size _box = Size.zero;
@@ -579,7 +583,10 @@ class PagedReaderState extends State<PagedReader>
   /// page's right edge — going on, the page on screen's; going back, the page
   /// before's, coming back over from the left.
   void _dragCurl(PointerMoveEvent e) {
+    if (e.pointer != _dragPointer) return;
     final moved = e.localPosition - _downLocal;
+    _dragDx = moved.dx;
+    _dragSpeed?.addPosition(e.timeStamp, e.localPosition);
     if (_dragDir == 0) {
       if (moved.dx.abs() < 10 || moved.dx.abs() <= moved.dy.abs()) return;
       final dir = moved.dx < 0 ? 1 : -1;
@@ -608,21 +615,27 @@ class PagedReaderState extends State<PagedReader>
         ? c.dx + moved.dx
         : math.min(curl.gone.dx + 2 * moved.dx, c.dx);
     curl.at.value = Offset(x, c.dy + (byCorner ? moved.dy : 0));
-    _lastDx = e.delta.dx;
   }
 
-  /// The finger let go of a page it was turning: over, if it was still
-  /// going that way, else back. False when it was turning none.
+  /// Whether the finger, let go now, turns the page [dir]: drawn a third of
+  /// the way across, or flicked that way. Anything less, or drawn back, and
+  /// the page stays.
+  bool _dragTurns(int dir) {
+    final travel = -dir * _dragDx;
+    final speed = -dir * (_dragSpeed?.getVelocity().pixelsPerSecond.dx ?? 0);
+    if (speed <= -100) return false;
+    return travel >= _box.width / 3 || (travel >= 40 && speed >= 600);
+  }
+
+  /// The finger let go of a page it was turning: over, if it went far enough
+  /// ([_dragTurns]), else back. False when it was turning none.
   bool _letGoCurl() {
     final dir = _dragDir;
     _dragDir = 0;
     if (dir == 2) return true;
     final curl = _curl;
     if (curl == null || dir == null || dir.abs() != 1) return false;
-    final moved = curl.at.value - (dir > 0 ? curl.corner : curl.gone);
-    final over = dir > 0
-        ? moved.dx < -24 && _lastDx <= 2
-        : moved.dx > 24 && _lastDx >= -2;
+    final over = _dragTurns(dir);
     _runCurl(over == (dir > 0) ? curl.gone : curl.corner, completes: over);
     return true;
   }
@@ -791,6 +804,9 @@ class PagedReaderState extends State<PagedReader>
               _downPage = _page;
               if (_curl != null) _endCurl();
               _dragDir = 0;
+              _dragPointer = e.pointer;
+              _dragDx = 0;
+              _dragSpeed = VelocityTracker.withKind(e.kind);
             },
             onPointerMove: _curlMode ? _dragCurl : null,
             // The pages do not scroll in 仿真: a notch of the wheel turns one,
@@ -812,9 +828,10 @@ class PagedReaderState extends State<PagedReader>
                   moved.dx.abs() > 40 &&
                   moved.dx.abs() > moved.dy.abs()) {
                 // 仿真 has no sliding pages: a swipe the curl could not
-                // take turns the page at once.
+                // take turns the page at once, if it would have turned it.
                 if (_curlMode) {
-                  turn(moved.dx < 0 ? 1 : -1);
+                  final dir = moved.dx < 0 ? 1 : -1;
+                  if (_dragTurns(dir)) turn(dir);
                 } else if (moved.dx < 0 && _downPage >= _pages.length - 1) {
                   turn(1);
                 } else if (moved.dx > 0 && _downPage <= 0) {
