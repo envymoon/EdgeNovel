@@ -158,22 +158,84 @@ fn virtual_book(text: &str, ls: &[Line]) -> Book {
 /// prose. The line stays where it is, at the end of the chapter before it.
 const EMPTY_BODY: usize = 120;
 
+/// This many empty titles in a row before a title may be a printed contents.
+const CONTENTS_RUN: usize = 3;
+
+/// Under this, what follows a printed contents is an epigraph, no chapter of its own.
+const EPIGRAPH: usize = 4 * 1024;
+
+/// What a book may really open with, once a printed contents has hidden its title.
+const OPENINGS: &[&str] = &["序幕", "序章", "序言", "前言", "楔子", "引子"];
+
+/// A contents that lists sections under each chapter: 第四章 寻羊冒险记Ⅰ, then
+/// 1. 奇妙来客·序, 2. 奇妙来客. Nothing but numbered short lines is no chapter's text.
+fn only_a_list(body: &str) -> bool {
+    let mut count = 0;
+    for l in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let numbered = l.starts_with('第') || l.starts_with(|c: char| c.is_ascii_digit() || ('０'..='９').contains(&c));
+        if !numbered || l.chars().count() > 60 {
+            return false;
+        }
+        count += 1;
+    }
+    count >= 3
+}
+
+/// 九州缥缈录 ends each volume on a link back to the chapter it just finished:
+/// 第五章 斩狼(四)>>. 夏至未至's 第十章 …短松冈>> is a chapter, and follows 第九章.
+fn is_link_to(before: &str, title: &str) -> bool {
+    title.strip_suffix(">>") == Some(before)
+}
+
 fn without_empty_chapters(text: &str, ls: &[Line], chapters: &mut Vec<Candidate>) {
     let start = |c: &Candidate| ls[c.line_idx].start + c.in_line;
-    let empty: std::collections::HashSet<usize> = chapters
+    let empty: Vec<bool> = chapters
         .iter()
         .enumerate()
-        .filter(|(i, c)| {
+        .map(|(i, c)| {
             let end = chapters.get(i + 1).map_or(text.len(), |n| start(n));
             let body = ls[c.line_idx].end.min(end);
-            text[body..end].trim().len() < EMPTY_BODY
+            let link = i > 0 && is_link_to(&chapters[i - 1].text, &c.text);
+            text[body..end].trim().len() < EMPTY_BODY || link || only_a_list(&text[body..end])
         })
-        .map(|(_, c)| c.line_idx)
         .collect();
     // Mostly this short is how the book is written: a collection of poems.
-    if empty.len() * 2 <= chapters.len() {
-        chapters.retain(|c| !empty.contains(&c.line_idx));
+    if empty.iter().filter(|e| **e).count() * 2 > chapters.len() {
+        return;
     }
+    let mut kept = Vec::with_capacity(chapters.len());
+    for (i, c) in chapters.iter().enumerate() {
+        if empty[i] {
+            continue;
+        }
+        let run = empty[..i].iter().rev().take_while(|e| **e).count();
+        let next = (i + 1..chapters.len()).find(|&n| !empty[n]).map(|n| &chapters[n]);
+        let contents_end = run >= CONTENTS_RUN
+            && next.is_some_and(|n| !matches!((c.number, n.number), (Some(a), Some(b)) if b > a));
+        let Some(next) = next.filter(|_| contents_end) else {
+            kept.push(c.clone());
+            continue;
+        };
+        // The last line of a printed contents: all it holds is what the book prints
+        // before its first title. 冬日重现's 375, after four empty chapters, goes on to
+        // 376 and stays. 龙族's 第十九幕 is followed by 第一幕.
+        let (from, to) = (ls[c.line_idx].end, start(next));
+        let opening = ls[c.line_idx + 1..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, l)| l.start < to && l.start < from + EPIGRAPH)
+            .find(|(_, l)| {
+                let name: String = l.text.split_whitespace().collect();
+                OPENINGS.contains(&name.as_str())
+            });
+        if let Some((at, l)) = opening {
+            let name: String = l.text.split_whitespace().collect();
+            kept.push(Candidate { line_idx: c.line_idx + 1 + at, text: name, number: None, in_line: 0, ..c.clone() });
+        } else if to - from >= EPIGRAPH {
+            kept.push(Candidate { text: FRONT_MATTER.to_string(), number: None, ..c.clone() });
+        }
+    }
+    *chapters = kept;
 }
 
 pub fn build(text: &str, fp: &Fingerprint) -> Book {
@@ -378,6 +440,96 @@ mod tests {
         assert_eq!(b.chapters[0].span.start, 0);
         assert_eq!(b.chapters[0].title, "第1章 标题");
         assert_eq!(b.volumes[0].first_chapter, 0);
+    }
+
+    fn book_with_contents(between: &str) -> String {
+        let mut text = String::from("第一章 上一本\n");
+        text.push_str(&"上一本的正文，写了一些字。\n".repeat(100));
+        for i in 2..=6 {
+            text.push_str(&format!("第{i}章 上一本\n"));
+            text.push_str(&"上一本的正文，写了一些字。\n".repeat(100));
+        }
+        for i in 1..=6 {
+            text.push_str(&format!("第{i}章 下一本\n"));
+        }
+        text.push_str(between);
+        for i in 1..=6 {
+            text.push_str(&format!("第{i}章 下一本\n"));
+            text.push_str(&"下一本的正文，写了一些字。\n".repeat(100));
+        }
+        text
+    }
+
+    /// The last line of a printed contents names no chapter, whatever follows it.
+    #[test]
+    fn the_last_line_of_a_contents_is_no_title() {
+        let tiles = |b: &Book, text: &str| {
+            let mut cursor = 0;
+            for (i, c) in b.chapters.iter().enumerate() {
+                assert_eq!(c.index, i);
+                assert_eq!(c.span.start, cursor, "chapters must tile the text");
+                cursor = c.span.end;
+            }
+            assert_eq!(cursor, text.len());
+        };
+
+        // A real opening under it: named for what it is.
+        let mut between = "每个人年少的时候，心中都有一个孤独的少年。\n".repeat(10);
+        between.push_str("序 幕\n");
+        between.push_str(&"序幕的正文，写了一些字。\n".repeat(400));
+        let text = book_with_contents(&between);
+        let b = build(&text, &fingerprint("UTF-8", &text));
+        let names: Vec<&str> = b.chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(names.iter().filter(|t| **t == "第6章 下一本").count(), 1, "{names:?}");
+        assert_eq!(names[6], "序幕", "{names:?}");
+        assert!(text[b.chapters[6].body_start..].starts_with("\n序幕的正文") || text[b.chapters[6].body_start..].starts_with("序幕的正文"));
+        tiles(&b, &text);
+
+        // A long preface with no name of its own.
+        let between = "译者的话，写了一些字。\n".repeat(400);
+        let text = book_with_contents(&between);
+        let b = build(&text, &fingerprint("UTF-8", &text));
+        let names: Vec<&str> = b.chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(names[6], "开篇", "{names:?}");
+        assert_eq!(names[7], "第1章 下一本", "{names:?}");
+        tiles(&b, &text);
+
+        // An epigraph: not worth a chapter.
+        let between = "命运这种东西，生来就是要被踏于足下的。\n".repeat(10);
+        let text = book_with_contents(&between);
+        let b = build(&text, &fingerprint("UTF-8", &text));
+        let names: Vec<&str> = b.chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(names.len(), 12, "{names:?}");
+        assert_eq!(names[6], "第1章 下一本", "{names:?}");
+        tiles(&b, &text);
+    }
+
+    /// A contents with sections under each line, and a link at the end of a volume.
+    #[test]
+    fn section_lists_and_links_are_no_chapters() {
+        assert!(only_a_list("1. 奇妙来客·序\n2. 奇妙来客\n\n3. “先生”\n"));
+        assert!(!only_a_list("1. 奇妙来客\n2. 奇妙来客\n"));
+        assert!(!only_a_list("1. 奇妙来客\n他走进房间，坐了下来。\n3. “先生”\n"));
+
+        assert!(is_link_to("第五章 斩狼(四)", "第五章 斩狼(四)>>"));
+        assert!(!is_link_to("第九章 旋涡", "第十章 短松冈>>"));
+        assert!(!is_link_to("第五章 斩狼(四)", "第五章 斩狼(四)"));
+    }
+
+    /// Chapters the source lost are no contents: the numbering goes on after them.
+    #[test]
+    fn a_chapter_after_lost_chapters_keeps_its_title() {
+        let mut text = String::new();
+        for i in 1..=12 {
+            text.push_str(&format!("第{i}章 标题\n"));
+            if !(5..=8).contains(&i) {
+                text.push_str(&"正文段落，写了一些字。\n".repeat(100));
+            }
+        }
+        let b = build(&text, &fingerprint("UTF-8", &text));
+        let names: Vec<&str> = b.chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(names.len(), 8, "{names:?}");
+        assert_eq!(names[4], "第9章 标题", "{names:?}");
     }
 
     /// Long, and no title to be found inside: that is the chapter the book has.
