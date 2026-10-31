@@ -418,7 +418,8 @@ pub fn open_book(path: String) -> Result<BookInfo, String> {
         genre_tags: None,
     };
 
-    let id = with_store!(s => s.upsert_book(&record, &chapter_records))?;
+    let (id, moved) = with_store!(s => s.upsert_book_moved(&record, &chapter_records))?;
+    crate::api::image::follow_split(id, &moved);
 
     // Tag the book the first time we ever decode it, and never again: the
     // lexicon reads the whole text, which is fast but not free, and the text
@@ -1367,7 +1368,10 @@ pub(crate) fn scan_cached(
         // A graph built by an older scan (fewer people, thinner evidence) is
         // wrong to reuse — the version guards against a new binary serving it.
         if let Ok(cast) = serde_json::from_str::<novel_core::cast::Cast>(&json) {
-            if cast.version == novel_core::cast::SCAN_VERSION {
+            let romance = cast.relationship.as_ref().map(|r| r.version);
+            if cast.version == novel_core::cast::SCAN_VERSION
+                && romance == Some(novel_core::romance::RELATIONSHIP_VERSION)
+            {
                 return Ok((cast, upto));
             }
         }

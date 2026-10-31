@@ -162,7 +162,7 @@ pub fn build(text: &str, fp: &Fingerprint) -> Book {
     let mut starts: Vec<(usize, Option<&Candidate>)> = v
         .chapters
         .iter()
-        .map(|c| (ls[c.line_idx].start, Some(c)))
+        .map(|c| (ls[c.line_idx].start + c.in_line, Some(c)))
         .collect();
     if starts.first().map_or(true, |(s, _)| *s > 0) {
         starts.insert(0, (0, None));
@@ -277,6 +277,29 @@ mod tests {
         let b = build(&text, &fp);
         assert_eq!(b.chapters.len(), 1);
         assert_eq!(b.chapters[0].title, FRONT_MATTER);
+    }
+
+    /// A title glued to the sentence before it opens its chapter at the title; the
+    /// sentence stays at the end of the chapter it finishes, and nothing is lost.
+    #[test]
+    fn a_glued_title_leaves_the_sentence_behind() {
+        let mut text = String::from("第一章 开始\n");
+        for i in 2..=60 {
+            text.push_str(&format!("他走了。第{i}章 标题\n正文。\n"));
+        }
+        let fp = fingerprint("UTF-8", &text);
+        let b = build(&text, &fp);
+        assert_eq!(b.chapters.len(), 60);
+        let c = &b.chapters[1];
+        assert_eq!(c.title, "第2章 标题");
+        assert!(text[c.span.start..c.body_start].starts_with("第2章"));
+        assert!(text[b.chapters[0].span.start..b.chapters[0].span.end].ends_with("他走了。"));
+        let mut cursor = 0;
+        for c in &b.chapters {
+            assert_eq!(c.span.start, cursor, "chapters must tile the text");
+            cursor = c.span.end;
+        }
+        assert_eq!(cursor, text.len());
     }
 
     /// A book with real titles must never fall into the virtual path.

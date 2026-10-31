@@ -1227,6 +1227,17 @@ fn plates_dir(book_id: i64) -> Result<PathBuf, String> {
         .join(book_id.to_string()))
 }
 
+/// A better split moved the chapters: a plate still follows the same text.
+/// Highest first, since everything moves up.
+pub(crate) fn follow_split(book_id: i64, moved: &[(i64, i64)]) {
+    let Ok(dir) = plates_dir(book_id) else {
+        return;
+    };
+    for (old, new) in moved.iter().rev() {
+        let _ = std::fs::rename(dir.join(format!("{old}.png")), dir.join(format!("{new}.png")));
+    }
+}
+
 /// The plate drawn to follow `chapter`, if there is one.
 pub fn plate_path(book_id: i64, chapter: u32) -> Option<String> {
     let p = plates_dir(book_id).ok()?.join(format!("{chapter}.png"));
