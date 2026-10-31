@@ -9,7 +9,7 @@
 use novel_core::book::{self, LineKind};
 use novel_core::fingerprint::ParagraphStyle;
 use novel_core::store::{self, BookRecord, ChapterRecord, Store};
-use novel_core::{chunk, decode, fingerprint, focus, genre, meta, pace, repair};
+use novel_core::{chapters, chunk, decode, fingerprint, focus, genre, meta, pace, repair};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -1093,7 +1093,8 @@ pub(crate) fn read_quietly<T>(
 /// chapter was no better still, so the rest is the model's own reach.
 ///
 /// Not the title: handed 「第81章 ……」 the model copied it into 29 of 502
-/// summaries, and the backgrounds read from them went chapter by chapter.
+/// summaries, and the backgrounds read from them went chapter by chapter. Nor a
+/// title left after the chapter's last words ([without_closing_title]).
 pub(crate) fn summary_excerpt(path: &str, index: u32) -> Result<String, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
@@ -1113,8 +1114,34 @@ const PLOT_CUES: [&str; 31] = [
     "消失", "出现", "离开", "回溯", "报警", "警察", "受伤",
 ];
 
+/// How far from the end a title still means what follows it is not the chapter.
+const CLOSING_TITLE_REACH: usize = 3;
+
+/// The chapter up to a title among its last lines, and what follows that title:
+/// 陈二狗's 第4卷 那一束狗尾巴草 closing a chapter became its whole summary, and
+/// 九州's next volume comes with its 内容简介 under it. A chapter that is nothing
+/// but such lines stays as it is.
+fn without_closing_title(body: &str) -> &str {
+    let (mut end, mut cursor, mut past) = (body.len(), body.len(), 0);
+    while past < CLOSING_TITLE_REACH && cursor > 0 {
+        let start = body[..cursor].trim_end().rfind('\n').map_or(0, |i| i + 1);
+        if chapters::is_title_line(&body[start..cursor]) {
+            end = start;
+            past = 0;
+        } else {
+            past += 1;
+        }
+        cursor = start;
+    }
+    if body[..end].trim().is_empty() {
+        body
+    } else {
+        &body[..end]
+    }
+}
+
 pub(crate) fn digest(body: &str) -> String {
-    let body = body.trim();
+    let body = without_closing_title(body).trim();
     let paras: Vec<&str> = body
         .split('\n')
         .map(str::trim)
@@ -1826,6 +1853,21 @@ pub fn forget_cast(book_id: i64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_title_closing_a_chapter_is_not_handed_to_the_model() {
+        // 陈二狗, and 九州 with the next volume's blurb under its title.
+        assert_eq!(without_closing_title("他走了。\n谁拿谁的流年？\n第4卷 那一束狗尾巴草\n"), "他走了。\n谁拿谁的流年？\n");
+        assert_eq!(without_closing_title("他走了。\n第六章 狂奴之血(6)>>\n内容简介：\n大幕拉开。"), "他走了。\n");
+        assert_eq!(without_closing_title("他走了。\n（本卷终）\n第十二卷 出神记"), "他走了。\n（本卷终）\n");
+        assert_eq!(without_closing_title("他走了。\n第三卷\n第一章"), "他走了。\n");
+        // A sentence, a title too far back to close anything, a chapter of nothing else.
+        let sentence = "他走了。\n第二回合，他退了。";
+        assert_eq!(without_closing_title(sentence), sentence);
+        let far = "第一节\n甲。\n乙。\n丙。\n丁。";
+        assert_eq!(without_closing_title(far), far);
+        assert_eq!(without_closing_title("第八百一十一节：无更"), "第八百一十一节：无更");
+    }
 
     fn cast(people: &[(&str, &[&str])], lines: &[&str]) -> novel_core::cast::Cast {
         let people: Vec<serde_json::Value> = people

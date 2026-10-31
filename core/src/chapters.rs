@@ -321,6 +321,13 @@ fn classify(line: &str) -> Option<(Template, Level, Option<u64>)> {
     None
 }
 
+/// A title and not a sentence that opens like one: 第4卷 那一束狗尾巴草, but not
+/// 第二回合，他退了。 A bare number or 3 个月后 says too little to tell.
+pub fn is_title_line(line: &str) -> bool {
+    !line.contains(['，', '。', '！', '？', '；'])
+        && matches!(classify(line), Some((Template::Ordinal | Template::Named, _, _)))
+}
+
 pub fn candidates(text: &str, fp: &Fingerprint) -> Vec<Candidate> {
     let mut found: Vec<Candidate> = structural_lines(text, fp)
         .into_iter()

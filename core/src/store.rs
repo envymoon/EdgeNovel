@@ -577,7 +577,9 @@ impl Store {
     /// produced them may have improved.
     /// Enrichment results (summaries etc.) survive the wholesale replacement by
     /// riding on `text_hash`: a chapter whose opening text is unchanged keeps
-    /// what the model wrote for it, whatever its new index or offsets are.
+    /// what the model wrote for it, whatever its new index or offsets are. But
+    /// not when a re-split of the same text cut it to under three quarters: what
+    /// was written describes the whole of what it was, and starts it over.
     pub fn upsert_book(&mut self, b: &BookRecord, chapters: &[ChapterRecord]) -> Result<i64> {
         self.upsert_book_moved(b, chapters).map(|(id, _)| id)
     }
@@ -621,13 +623,14 @@ impl Store {
             Option<String>,
             Option<String>,
             Option<String>,
+            i64,
         )> = {
             let mut st = tx.prepare(
-                "SELECT text_hash, summary, mood, entities, model_tag FROM chapters
+                "SELECT text_hash, summary, mood, entities, model_tag, end - body_start FROM chapters
                  WHERE book_id = ?1 AND (summary IS NOT NULL OR mood IS NOT NULL)",
             )?;
             let rows = st.query_map([id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
             })?;
             rows.collect::<Result<_>>()?
         };
@@ -654,10 +657,13 @@ impl Store {
         {
             let mut st = tx.prepare(
                 "UPDATE chapters SET summary = ?3, mood = ?4, entities = ?5, model_tag = ?6
-                 WHERE book_id = ?1 AND text_hash = ?2 AND summary IS NULL",
+                 WHERE book_id = ?1 AND text_hash = ?2 AND summary IS NULL
+                   AND (end - body_start) * 4 >= ?7 * 3",
             )?;
-            for (hash, summary, mood, entities, tag) in &enriched {
-                st.execute(params![id, hash, summary, mood, entities, tag])?;
+            // Another edition's lengths say nothing: only the same text is compared.
+            for (hash, summary, mood, entities, tag, len) in &enriched {
+                let was_len = if was.is_empty() { 0 } else { *len };
+                st.execute(params![id, hash, summary, mood, entities, tag, was_len])?;
             }
         }
         let moved = follow_split(&tx, id, &was, chapters)?;
@@ -1742,6 +1748,51 @@ mod tests {
         assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2]);
         assert_eq!(s.windows_since(0).unwrap()[0].chapter, 2);
         assert_eq!(s.annotations(id).unwrap()[0].chapter, 2);
+    }
+
+    /// 冬日重现's 53 KB chapter cut to 10 KB kept the sentence written about all of
+    /// it, and with a summary there nothing would ever write another.
+    #[test]
+    fn a_summary_does_not_stay_on_a_chapter_cut_short() {
+        let span = |index: i64, start: i64, end: i64| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{index}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let summary = |s: &Store, id: i64, idx: i64| -> Option<String> {
+            s.conn
+                .query_row(
+                    "SELECT summary FROM chapters WHERE book_id = ?1 AND idx = ?2",
+                    params![id, idx],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let mut s = mem();
+        let old = [span(0, 0, 100), span(1, 100, 200), span(2, 200, 300)];
+        let id = s.upsert_book(&book("/a.txt"), &old).unwrap();
+        for idx in 0..3 {
+            s.set_chapter_ai(id, idx, Some("概览"), None, "m").unwrap();
+        }
+
+        // The first is cut to a fifth, the second loses a little, the third stays.
+        let new = [span(0, 0, 20), span(1, 20, 100), span(2, 100, 180), span(3, 200, 300)];
+        s.upsert_book(&book("/a.txt"), &new).unwrap();
+        assert_eq!(summary(&s, id, 0), None);
+        assert_eq!(summary(&s, id, 2).as_deref(), Some("概览"));
+        assert_eq!(summary(&s, id, 3).as_deref(), Some("概览"));
+        assert_eq!(s.chapters_needing_enrich(id, false).unwrap().len(), 2);
+
+        // Another edition: lengths differ for no reason to do with the chapter.
+        let mut other = book("/a.txt");
+        other.total_bytes += 1;
+        let shorter = [span(0, 0, 20), span(1, 20, 50), span(2, 100, 110), span(3, 200, 210)];
+        s.upsert_book(&other, &shorter).unwrap();
+        assert_eq!(summary(&s, id, 2).as_deref(), Some("概览"));
     }
 
     /// A chapter merged away and a chapter split in the same re-split, with a
