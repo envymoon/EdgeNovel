@@ -320,6 +320,126 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 "#;
 
+/// When the same text is split differently, keep what is stored by chapter number
+/// on the text it was about. `was` only holds chapters of a file of the same path
+/// and size, so a byte still means the same byte. Chapters can merge as well as
+/// divide, so two rows can want one chapter; none is dropped for that.
+fn follow_split(
+    tx: &rusqlite::Transaction,
+    id: i64,
+    was: &[(i64, i64, i64)],
+    now: &[ChapterRecord],
+) -> Result<Vec<(i64, i64)>> {
+    let starts: Vec<i64> = now.iter().map(|c| c.start).collect();
+    if was.is_empty()
+        || (was.len() == now.len() && was.iter().zip(&starts).all(|((_, s, _), n)| s == n))
+    {
+        return Ok(Vec::new());
+    }
+    // The chapter holding a byte: the last one starting at or before it.
+    let at = |offset: i64| starts.partition_point(|s| *s <= offset).saturating_sub(1) as i64;
+    let shifted = |old: i64| (old + now.len() as i64 - was.len() as i64).max(0);
+    let holding = |offset: i64, old: i64| {
+        let span = was.iter().find(|(idx, _, _)| *idx == old);
+        match span {
+            Some((_, start, end)) if offset >= *start && offset < *end => at(offset),
+            Some((_, start, _)) => at(*start),
+            None => shifted(old),
+        }
+    };
+
+    // Set aside first: rows move both ways now, and could land on one not yet moved.
+    let mut marks: Vec<(i64, i64)> = {
+        let mut st = tx.prepare("SELECT chapter, offset FROM bookmarks WHERE book_id = ?1")?;
+        let rows = st.query_map([id], |r| {
+            let (chapter, offset): (i64, i64) = (r.get(0)?, r.get(1)?);
+            Ok((holding(offset, chapter), chapter))
+        })?;
+        rows.collect::<Result<_>>()?
+    };
+    tx.execute(
+        "UPDATE bookmarks SET chapter = -1 - chapter WHERE book_id = ?1",
+        [id],
+    )?;
+    marks.sort_unstable();
+    // One bookmark to a chapter: a second one wanting it takes the next free one.
+    // It still opens at its own offset.
+    let mut taken = -1;
+    for (wanted, old) in marks {
+        taken = wanted.max(taken + 1);
+        tx.execute(
+            "UPDATE bookmarks SET chapter = ?3 WHERE book_id = ?1 AND chapter = -1 - ?2",
+            params![id, old, taken],
+        )?;
+    }
+
+    // A note and a chunk say which bytes they are about.
+    for table in ["annotations", "chunks"] {
+        tx.execute(
+            &format!(
+                "UPDATE {table} SET chapter = COALESCE(
+                     (SELECT MAX(c.idx) FROM chapters c
+                      WHERE c.book_id = ?1 AND c.start <= {table}.start), chapter)
+                 WHERE book_id = ?1"
+            ),
+            [id],
+        )?;
+    }
+
+    // A finished chapter is finished in all its parts.
+    let done: Vec<(i64, i64)> = {
+        let mut st = tx.prepare(
+            "SELECT chapter, completed_at FROM completed_chapters WHERE book_id = ?1",
+        )?;
+        let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<Result<_>>()?
+    };
+    tx.execute("DELETE FROM completed_chapters WHERE book_id = ?1", [id])?;
+    for (old, when) in done {
+        let parts: Vec<i64> = match was.iter().find(|(idx, _, _)| *idx == old) {
+            Some((_, start, end)) => {
+                let inside = starts.partition_point(|s| s < start)..starts.partition_point(|s| s < end);
+                // Merged into the chapter before it: nothing of its own to mark.
+                if inside.is_empty() {
+                    vec![at(*start)]
+                } else {
+                    inside.map(|i| i as i64).collect()
+                }
+            }
+            None => vec![shifted(old)],
+        };
+        for chapter in parts {
+            tx.execute(
+                "INSERT OR IGNORE INTO completed_chapters (book_id, chapter, completed_at)
+                 VALUES (?1, ?2, ?3)",
+                params![id, chapter, when],
+            )?;
+        }
+    }
+
+    // Reading stats keep their chapter by where the old one began.
+    tx.execute(
+        "UPDATE reading_windows SET chapter = -1 - chapter WHERE book_id = ?1",
+        [id],
+    )?;
+    for (old, start, _) in was {
+        tx.execute(
+            "UPDATE reading_windows SET chapter = ?3 WHERE book_id = ?1 AND chapter = -1 - ?2",
+            params![id, old, at(*start)],
+        )?;
+    }
+    tx.execute(
+        "UPDATE reading_windows SET chapter = -1 - chapter WHERE book_id = ?1 AND chapter < 0",
+        [id],
+    )?;
+
+    Ok(was
+        .iter()
+        .map(|(old, _, end)| (*old, at(end - 1)))
+        .filter(|(old, new)| old != new)
+        .collect())
+}
+
 /// FNV-1a over the letters of a chapter's opening, ignoring punctuation and
 /// whitespace so that a re-typeset edition of the same book still matches.
 pub fn text_hash(body: &str) -> i64 {
@@ -457,9 +577,33 @@ impl Store {
     /// produced them may have improved.
     /// Enrichment results (summaries etc.) survive the wholesale replacement by
     /// riding on `text_hash`: a chapter whose opening text is unchanged keeps
-    /// what the model wrote for it, whatever its new index or offsets are.
+    /// what the model wrote for it, whatever its new index or offsets are. But
+    /// not when a re-split of the same text cut it to under three quarters: what
+    /// was written describes the whole of what it was, and starts it over.
     pub fn upsert_book(&mut self, b: &BookRecord, chapters: &[ChapterRecord]) -> Result<i64> {
+        self.upsert_book_moved(b, chapters).map(|(id, _)| id)
+    }
+
+    /// [`Self::upsert_book`], also saying which chapter each old chapter's end
+    /// now falls in when a better split cut old chapters up: (old, new), empty
+    /// when the chapters did not move. What is stored by chapter number moves
+    /// with them here; the caller moves what lives outside the database.
+    pub fn upsert_book_moved(
+        &mut self,
+        b: &BookRecord,
+        chapters: &[ChapterRecord],
+    ) -> Result<(i64, Vec<(i64, i64)>)> {
         let tx = self.conn.transaction()?;
+        let was: Vec<(i64, i64, i64)> = {
+            let mut st = tx.prepare(
+                "SELECT c.idx, c.start, c.end FROM chapters c JOIN books k ON k.id = c.book_id
+                 WHERE k.path = ?1 AND k.total_bytes = ?2 ORDER BY c.idx",
+            )?;
+            let rows = st.query_map(params![b.path, b.total_bytes], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+            rows.collect::<Result<_>>()?
+        };
         tx.execute(
             "INSERT INTO books (path, title, author, encoding, style, total_bytes, chapter_count, added_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -479,13 +623,14 @@ impl Store {
             Option<String>,
             Option<String>,
             Option<String>,
+            i64,
         )> = {
             let mut st = tx.prepare(
-                "SELECT text_hash, summary, mood, entities, model_tag FROM chapters
+                "SELECT text_hash, summary, mood, entities, model_tag, end - body_start FROM chapters
                  WHERE book_id = ?1 AND (summary IS NOT NULL OR mood IS NOT NULL)",
             )?;
             let rows = st.query_map([id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
             })?;
             rows.collect::<Result<_>>()?
         };
@@ -512,14 +657,18 @@ impl Store {
         {
             let mut st = tx.prepare(
                 "UPDATE chapters SET summary = ?3, mood = ?4, entities = ?5, model_tag = ?6
-                 WHERE book_id = ?1 AND text_hash = ?2 AND summary IS NULL",
+                 WHERE book_id = ?1 AND text_hash = ?2 AND summary IS NULL
+                   AND (end - body_start) * 4 >= ?7 * 3",
             )?;
-            for (hash, summary, mood, entities, tag) in &enriched {
-                st.execute(params![id, hash, summary, mood, entities, tag])?;
+            // Another edition's lengths say nothing: only the same text is compared.
+            for (hash, summary, mood, entities, tag, len) in &enriched {
+                let was_len = if was.is_empty() { 0 } else { *len };
+                st.execute(params![id, hash, summary, mood, entities, tag, was_len])?;
             }
         }
+        let moved = follow_split(&tx, id, &was, chapters)?;
         tx.commit()?;
-        Ok(id)
+        Ok((id, moved))
     }
 
     pub fn library(&self) -> Result<Vec<BookRecord>> {
@@ -1523,6 +1672,163 @@ mod tests {
             body_start: idx * 10 + 2,
             text_hash: hash,
         }
+    }
+
+    /// 陈二狗's shape: chapter 1 turns out to hold five more. What was stored by
+    /// chapter number stays on the same text, and a later chapter's rows follow.
+    #[test]
+    fn a_finer_split_keeps_everything_on_the_same_text() {
+        let span = |index, start, end| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{start}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let mut s = mem();
+        let old = [span(0, 0, 10), span(1, 10, 70), span(2, 70, 100)];
+        let id = s.upsert_book(&book("/a.txt"), &old).unwrap();
+        s.save_bookmark(id, 1, 45, None).unwrap();
+        s.save_bookmark(id, 2, 75, None).unwrap();
+        s.mark_chapter_completed(id, 1).unwrap();
+        s.mark_chapter_completed(id, 2).unwrap();
+        s.log_window(id, 2, 100, 30, 300).unwrap();
+        let note = s.save_annotation(None, id, 2, 80, 85, "原文", "批注").unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO chunks (book_id, chapter, start, end, vec) VALUES (?1, 1, 50, 60, x'00')",
+                [id],
+            )
+            .unwrap();
+
+        let new = [
+            span(0, 0, 10),
+            span(1, 10, 30),
+            span(2, 30, 40),
+            span(3, 40, 60),
+            span(4, 60, 70),
+            span(5, 70, 100),
+        ];
+        let (same, moved) = s.upsert_book_moved(&book("/a.txt"), &new).unwrap();
+        assert_eq!(same, id);
+        assert_eq!(moved, vec![(1, 4), (2, 5)]);
+
+        let marks: Vec<(i64, i64)> = s
+            .bookmarks(id)
+            .unwrap()
+            .iter()
+            .map(|b| (b.chapter, b.offset))
+            .collect();
+        assert_eq!(marks, vec![(3, 45), (5, 75)]);
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2, 3, 4, 5]);
+        assert_eq!(s.windows_since(0).unwrap()[0].chapter, 5);
+        let notes = s.annotations(id).unwrap();
+        assert_eq!((notes[0].id, notes[0].chapter), (note, 5));
+        let chunk: i64 = s
+            .conn
+            .query_row("SELECT chapter FROM chunks WHERE book_id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(chunk, 3);
+
+        // Opening it again changes nothing.
+        assert!(s.upsert_book_moved(&book("/a.txt"), &new).unwrap().1.is_empty());
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2, 3, 4, 5]);
+
+        // The other way, chapters merging, everything comes back.
+        s.upsert_book_moved(&book("/a.txt"), &old).unwrap();
+        let marks: Vec<(i64, i64)> = s
+            .bookmarks(id)
+            .unwrap()
+            .iter()
+            .map(|b| (b.chapter, b.offset))
+            .collect();
+        assert_eq!(marks, vec![(1, 45), (2, 75)]);
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2]);
+        assert_eq!(s.windows_since(0).unwrap()[0].chapter, 2);
+        assert_eq!(s.annotations(id).unwrap()[0].chapter, 2);
+    }
+
+    /// 冬日重现's 53 KB chapter cut to 10 KB kept the sentence written about all of
+    /// it, and with a summary there nothing would ever write another.
+    #[test]
+    fn a_summary_does_not_stay_on_a_chapter_cut_short() {
+        let span = |index: i64, start: i64, end: i64| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{index}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let summary = |s: &Store, id: i64, idx: i64| -> Option<String> {
+            s.conn
+                .query_row(
+                    "SELECT summary FROM chapters WHERE book_id = ?1 AND idx = ?2",
+                    params![id, idx],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let mut s = mem();
+        let old = [span(0, 0, 100), span(1, 100, 200), span(2, 200, 300)];
+        let id = s.upsert_book(&book("/a.txt"), &old).unwrap();
+        for idx in 0..3 {
+            s.set_chapter_ai(id, idx, Some("概览"), None, "m").unwrap();
+        }
+
+        // The first is cut to a fifth, the second loses a little, the third stays.
+        let new = [span(0, 0, 20), span(1, 20, 100), span(2, 100, 180), span(3, 200, 300)];
+        s.upsert_book(&book("/a.txt"), &new).unwrap();
+        assert_eq!(summary(&s, id, 0), None);
+        assert_eq!(summary(&s, id, 2).as_deref(), Some("概览"));
+        assert_eq!(summary(&s, id, 3).as_deref(), Some("概览"));
+        assert_eq!(s.chapters_needing_enrich(id, false).unwrap().len(), 2);
+
+        // Another edition: lengths differ for no reason to do with the chapter.
+        let mut other = book("/a.txt");
+        other.total_bytes += 1;
+        let shorter = [span(0, 0, 20), span(1, 20, 50), span(2, 100, 110), span(3, 200, 210)];
+        s.upsert_book(&other, &shorter).unwrap();
+        assert_eq!(summary(&s, id, 2).as_deref(), Some("概览"));
+    }
+
+    /// A chapter merged away and a chapter split in the same re-split, with a
+    /// bookmark on each of the two that become one. Neither may be lost.
+    #[test]
+    fn a_split_that_is_no_refinement_keeps_every_row() {
+        let span = |index: i64, start: i64, end: i64| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{index}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let mut s = mem();
+        let old = [span(0, 0, 50), span(1, 50, 60), span(2, 60, 100)];
+        let id = s.upsert_book(&book("/a.txt"), &old).unwrap();
+        s.save_bookmark(id, 0, 20, None).unwrap();
+        s.save_bookmark(id, 1, 55, None).unwrap();
+        s.save_bookmark(id, 2, 90, None).unwrap();
+        s.mark_chapter_completed(id, 1).unwrap();
+        s.mark_chapter_completed(id, 2).unwrap();
+
+        // 1 merges into 0; 2 is cut in two.
+        let new = [span(0, 0, 60), span(1, 60, 80), span(2, 80, 100)];
+        let (_, moved) = s.upsert_book_moved(&book("/a.txt"), &new).unwrap();
+        assert_eq!(moved, vec![(1, 0)]);
+        let marks: Vec<(i64, i64)> = s
+            .bookmarks(id)
+            .unwrap()
+            .iter()
+            .map(|b| (b.chapter, b.offset))
+            .collect();
+        assert_eq!(marks, vec![(0, 20), (1, 55), (2, 90)]);
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![0, 1, 2]);
     }
 
     #[test]

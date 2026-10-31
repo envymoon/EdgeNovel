@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 18;
+pub const SCAN_VERSION: u32 = 21;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -231,6 +231,9 @@ const KIN_SUFFIXES: &[&str] = &["哥哥", "姐姐", "哥", "兄", "姐", "弟", 
 /// rather than a nickname cut from someone's given name.
 const NOT_A_GIVEN_CHAR: &str = "大小老阿表堂师学二三四五六七八九十";
 
+/// Characters that doubled make a kinship word, not a pet name (姑姑, 婆婆, 娃娃).
+const KIN_DOUBLED: &str = "姑婆爷奶公爹妈娘爸叔舅姨伯哥姐弟妹娃";
+
 /// 苏如雪 is shaped like a full name; 请继续 is not — and only something
 /// shaped like a full name may claim a shorter candidate's occurrences.
 fn full_name_shaped(name: &str) -> bool {
@@ -289,6 +292,43 @@ fn middle_in_full_name(s: &str) -> bool {
 /// and neither was 闻人牧月, whose surname carries 人 — nor 陈二狗 (5046
 /// mentions), the name his book is called by.
 const GIVEN_NAME_ONLY: &str = "有一二三五七九千万";
+
+/// The part of a full name after the surname: 慕婉 of 李慕婉, 如月 of 纳兰如月.
+pub(crate) fn given_name(name: &str) -> Option<&str> {
+    match COMPOUND_SURNAMES.iter().find(|c| name.starts_with(*c)) {
+        Some(c) if name.chars().count() == 4 => Some(&name[c.len()..]),
+        Some(_) => None,
+        None => {
+            let mut cs = name.chars();
+            match (cs.next(), cs.clone().count()) {
+                (Some(c), 2) if SURNAMES.contains(c) => Some(cs.as_str()),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// 安姐姐, 苏姑娘, 王老师: a surname and what people call her, not a given name.
+pub(crate) fn titled(name: &str) -> bool {
+    TITLES.iter().chain(ROLE_TAILS).chain(&["小姐", "仙子"]).any(|t| name.ends_with(t))
+}
+
+/// 异世之凤流大法师's lead 龙一 (25333 mentions) never became a candidate. Two
+/// characters ending in a numeral are mostly words, so these are the ones a
+/// surname can also start: 周一, 高三, 万一, 单一.
+const NUMERAL_WORDS: &[&str] = &[
+    "周一", "周二", "周三", "周五", "周七", "高一", "高二", "高三", "万一", "万三", "万五", "万七",
+    "万九", "万千", "单一", "任一", "于一", "方一", "同一", "专一", "时一", "金一", "千万", "百万",
+    "安一", "童一",
+];
+
+fn numeral_given_name(s: &str) -> bool {
+    let mut cs = s.chars();
+    matches!(
+        (cs.next(), cs.next(), cs.next()),
+        (Some(a), Some(b), None) if SURNAMES.contains(a) && "一二三七九".contains(b)
+    ) && !NUMERAL_WORDS.contains(&s)
+}
 
 fn given_in_full_name(s: &str) -> bool {
     let given = match COMPOUND_SURNAMES.iter().find(|c| s.starts_with(*c)) {
@@ -663,6 +703,7 @@ const NOT_A_NAME: &[&str] = &[
     "爷爷",
     "奶奶",
     "叔叔",
+    "阿姨",
     "舅舅",
     "老爸",
     "老妈",
@@ -720,6 +761,8 @@ const NOT_A_NAME: &[&str] = &[
     "赶快",
     "尤其",
     "年长",
+    "无限",
+    "秋雨",
 ];
 
 /// Appellations worth carrying as relationship hints. The word itself is the
@@ -1584,7 +1627,8 @@ fn candidates(paras: &[(usize, &str)]) -> Vec<(String, Stat)> {
         (!s.chars().any(|c| NEVER_IN_A_NAME.contains(c))
             || allowed_numeric_name(s)
             || middle_in_full_name(s)
-            || given_in_full_name(s))
+            || given_in_full_name(s)
+            || numeral_given_name(s))
             && !NOT_A_NAME.contains(&s.as_str())
     });
 
@@ -2102,6 +2146,13 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
             if speaks_as(paras, name, &cands[f].0) {
                 titled.entry(f).or_default().push(t);
                 taken.insert(t);
+                // The surname is now known to be this man's, so his class's 宋老师
+                // is too. Unvouched it stays apart: 徐老师 is 徐芷若's mother.
+                let teacher = format!("{surname}老师");
+                if let Some(&m) = alive.iter().find(|&&i| cands[i].0 == teacher) {
+                    titled.entry(f).or_default().push(m);
+                    taken.insert(m);
+                }
             }
         }
     }
@@ -2148,6 +2199,27 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
         }
     }
 
+    // The same character twice is a pet name cut from a given name: 桐桐 is
+    // 张述桐, when he is the one full name ending in it. Not a kinship word: 姑姑
+    // is not 孙大姑.
+    for &t in &alive {
+        if taken.contains(&t) {
+            continue;
+        }
+        let mut cs = cands[t].0.chars();
+        let x = match (cs.next(), cs.next(), cs.next()) {
+            (Some(a), Some(b), None) if a == b && !KIN_DOUBLED.contains(a) => a,
+            _ => continue,
+        };
+        let mut hosts = alive.iter().copied().filter(|&f| {
+            !taken.contains(&f) && full_name_shaped(&cands[f].0) && cands[f].0.ends_with(x)
+        });
+        if let (Some(f), None) = (hosts.next(), hosts.next()) {
+            titled.entry(f).or_default().push(t);
+            taken.insert(t);
+        }
+    }
+
     let mut members: Vec<Member> = alive
         .iter()
         .copied()
@@ -2173,6 +2245,10 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
         })
         .collect();
     members.sort_by(|x, y| y.mentions.cmp(&x.mentions).then(x.name.cmp(&y.name)));
+    // A numeral name is believed of the lead and no one else: 极品家丁's 林三 is
+    // 林晚荣 under another name, and as a second man he took 洛凝's scenes from him.
+    let lead = members.first().map(|m| m.name.clone());
+    members.retain(|m| !numeral_given_name(&m.name) || Some(&m.name) == lead.as_ref());
     members.truncate(MAX_CAST);
     members
 }
@@ -2524,6 +2600,10 @@ mod tests {
         for junk in ["有容乃", "林有了", "我有容"] {
             assert!(!given_in_full_name(junk), "{junk}");
         }
+        assert!(numeral_given_name("龙一"));
+        for word in ["周一", "高三", "万一", "第一", "一二", "龙一号"] {
+            assert!(!numeral_given_name(word), "{word}");
+        }
     }
 
     fn story() -> String {
@@ -2667,6 +2747,28 @@ mod tests {
 
     fn by_name<'a>(members: &'a [Member], name: &str) -> Option<&'a Member> {
         members.iter().find(|m| m.name == name)
+    }
+
+    #[test]
+    fn an_aunt_is_whoever_the_scene_calls_one() {
+        let paras = [(0, "他对阿姨说，他也对陈平安说。"), (0, "他看着阿姨，又看着陈平安。")];
+        let names: Vec<String> = candidates(&paras).into_iter().map(|(n, _)| n).collect();
+        assert!(names.iter().any(|n| n == "陈平安"), "{names:?}");
+        assert!(!names.iter().any(|n| n == "阿姨"), "{names:?}");
+    }
+
+    #[test]
+    fn a_doubled_character_is_the_pet_name_of_the_one_who_ends_in_it() {
+        let members = select(&[
+            cand("张述桐", 500, 0.8, 0.2, 0.2),
+            cand("桐桐", 60, 0.8, 0.2, 0.2),
+            cand("孙大姑", 500, 0.8, 0.2, 0.2),
+            cand("姑姑", 60, 0.8, 0.2, 0.2),
+        ]);
+        let zhang = by_name(&members, "张述桐").expect("张述桐 should be a person");
+        assert!(zhang.aliases.contains(&"桐桐".to_string()), "{:?}", zhang.aliases);
+        assert!(by_name(&members, "桐桐").is_none());
+        assert!(by_name(&members, "姑姑").is_some());
     }
 
     #[test]

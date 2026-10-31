@@ -9,7 +9,7 @@ use crate::cast::{Edge, Person};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
-pub const RELATIONSHIP_VERSION: u32 = 5;
+pub const RELATIONSHIP_VERSION: u32 = 6;
 
 const ROMANTIC_ROLES: &[&str] = &[
     "妻子",
@@ -53,6 +53,7 @@ const LOVE_ACTIONS: &[&str] = &[
 const INTIMATE_ACTIONS: &[&str] = &[
     "搂住",
     "搂入怀",
+    "搂在怀",
     "抱在怀",
     "牵起",
     "牵住",
@@ -61,7 +62,7 @@ const INTIMATE_ACTIONS: &[&str] = &[
     "云雨",
     "双修",
 ];
-const ROMANTIC_INTIMATE_ACTIONS: &[&str] = &["亲吻", "接吻", "吻住", "吻了", "拥吻", "十指相扣"];
+const ROMANTIC_INTIMATE_ACTIONS: &[&str] = &["亲吻", "接吻", "吻住", "吻了", "吻在", "拥吻", "十指相扣"];
 const SEXUAL_ACTIONS: &[&str] = &[
     "入洞房",
     "洞房",
@@ -374,6 +375,13 @@ fn relation_rules(a: &Person, b: &Person) -> Vec<Rule> {
             "A→B",
         ),
         (
+            // 女人 alone says nothing, but 虞凤已是龙一的女人 does.
+            format!("{bb}(?:已经|早已|早就|已)?(?:是|成了|成为){aa}的女人"),
+            10,
+            Kind::Explicit,
+            "B→A",
+        ),
+        (
             // 陈浮生老婆曹蒹葭: the 的 is often left out before the role.
             format!("{aa}的?{role}(?:是|叫|名叫)?{bb}"),
             10,
@@ -601,7 +609,7 @@ fn has_romance_cue(text: &str) -> bool {
     .flatten()
     .any(|word| text.contains(word))
         || [
-            "表白", "告白", "情意", "醋意", "吃醋", "暧昧", "婚约", "婚事",
+            "表白", "告白", "情意", "醋意", "吃醋", "暧昧", "婚约", "婚事", "的女人",
         ]
         .iter()
         .any(|word| text.contains(word))
@@ -859,28 +867,43 @@ fn add_dialogue_evidence(paras: &[(usize, &str)], all_people: &[&Person], ledger
     let you_love_me =
         Regex::new(r"你[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?我").unwrap();
 
-    let role = alt(ROMANTIC_ROLES);
+    let role = format!("(?:{}|女人)", alt(ROMANTIC_ROLES));
+    let already = "(?:已经|早已|早就|已)?";
+    let mine = |speaker: usize| format!("我(?:{})?的?{role}", person_alt(all_people[speaker]));
     for (candidate_position, ledger) in ledgers.iter_mut().enumerate() {
         let candidate = candidate_position + 1;
         // 将夜's 宁缺 never says it in the narration: “桑桑是我妻子”, “正式
-        // 介绍，我妻子桑桑”. One of the pair, speaking, names the other as
-        // their spouse — no need to work out whom they are talking to.
-        let claim = |other: usize| {
+        // 介绍，我妻子桑桑”. 仙逆's 王林: “婉儿，是我的妻子”. One of the pair,
+        // speaking, names the other as their spouse — no need to work out whom
+        // they are talking to.
+        let claim = |speaker: usize, other: usize| {
             let names = person_alt(all_people[other]);
+            let mine = mine(speaker);
             Regex::new(&format!(
-                "(?:{names})(?:是|就是|便是)?我的?{role}|我的?{role}(?:是|叫)?(?:{names})"
+                "(?:{names})[，,]?{already}(?:是|就是|便是)?{mine}|{mine}(?:是|叫)?(?:{names})"
             ))
             .ok()
         };
-        let claims = [claim(candidate), claim(0)];
+        let claims = [claim(0, candidate), claim(candidate, 0)];
+        // “你是我王林的女人”: this one does need to know whom they are talking to.
+        let to_you = |speaker: usize| {
+            let mine = mine(speaker);
+            Regex::new(&format!("你{already}(?:是|就是|便是){mine}")).ok()
+        };
+        let to_yous = [to_you(0), to_you(candidate)];
         for turn in &turns {
             if turn.speaker != 0 && turn.speaker != candidate {
                 continue;
             }
             let other = if turn.speaker == 0 { candidate } else { 0 };
-            let said = claims[if turn.speaker == 0 { 0 } else { 1 }]
-                .as_ref()
-                .and_then(|re| re.find(&turn.quote));
+            let which = if turn.speaker == 0 { 0 } else { 1 };
+            let named = claims[which].as_ref().and_then(|re| re.find(&turn.quote));
+            let bound = dialogue_pair_is_bound(turn, other, &turns, paras, all_people);
+            let said = named.or_else(|| {
+                bound
+                    .then(|| to_yous[which].as_ref().and_then(|re| re.find(&turn.quote)))
+                    .flatten()
+            });
             if let Some(found) = said {
                 let before = tail_chars(&turn.quote[..found.start()], 6);
                 let after = head_chars(&turn.quote[found.end()..], 3);
@@ -902,7 +925,7 @@ fn add_dialogue_evidence(paras: &[(usize, &str)], all_people: &[&Person], ledger
                     ));
                 }
             }
-            if !dialogue_pair_is_bound(turn, other, &turns, paras, all_people) {
+            if !bound {
                 continue;
             }
             if dialogue_dating_fact(&turn.quote) {
@@ -963,6 +986,107 @@ fn add_dialogue_evidence(paras: &[(usize, &str)], all_people: &[&Person], ledger
             }
         }
     }
+}
+
+/// 仙逆: 王林……他的妻子，是李慕婉. The narration says 他, so the sentence counts
+/// only where the lead is named beside it and no one else who could be 他 is.
+fn add_pronoun_evidence(
+    paras: &[(usize, &str)],
+    all_people: &[&Person],
+    lead_she: bool,
+    same_sex: &[&Person],
+    ledgers: &mut [Ledger],
+) {
+    let pronoun = if lead_she { "她" } else { "他" };
+    let role = alt(ROMANTIC_ROLES);
+    let lead = variants(all_people[0]);
+    let rules: Vec<Option<Regex>> = all_people[1..]
+        .iter()
+        .map(|candidate| {
+            let names = person_alt(candidate);
+            Regex::new(&format!(
+                "{pronoun}的{role}[，,]?(?:是|叫|名叫|就是|便是)(?:{names})"
+            ))
+            .ok()
+        })
+        .collect();
+    let mut previous: Option<(usize, String)> = None;
+    for &(chapter, line) in paras {
+        let told = compact(&narration(line));
+        if told.contains(pronoun) && has_any(&told, ROMANTIC_ROLES) {
+            let around = match &previous {
+                Some((c, text)) if *c == chapter => format!("{text}{told}"),
+                _ => told.clone(),
+            };
+            if lead.iter().any(|name| around.contains(name))
+                && !same_sex
+                    .iter()
+                    .any(|p| variants(p).iter().any(|name| around.contains(name)))
+            {
+                for (position, rule) in rules.iter().enumerate() {
+                    let Some(found) = rule.as_ref().and_then(|re| re.find(&told)) else {
+                        continue;
+                    };
+                    let start = tail_chars(&told[..found.start()], 12);
+                    let rest = &told[found.end()..];
+                    if has_any(&format!("{start}{}", found.as_str()), TRAP_CUES)
+                        || has_any(&start, BELIEF_CUES)
+                        || rest.starts_with(['？', '?', '吗', '么'])
+                    {
+                        continue;
+                    }
+                    let ledger = &mut ledgers[position];
+                    let matched = format!("代词称配偶：{}", found.as_str());
+                    if ledger.seen.insert((chapter, Kind::Explicit, matched)) {
+                        ledger.evidence.push((
+                            Kind::Explicit,
+                            "双向",
+                            RelationshipEvidence {
+                                chapter,
+                                person: all_people[position + 1].name.clone(),
+                                kind: Kind::Explicit.zh().to_string(),
+                                strength: 10,
+                                text: clip(&told, 300),
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        previous = Some((chapter, told));
+    }
+}
+
+/// Words that only look like the 儿 form of a name: 徐长今 is not 今儿.
+const NOT_A_PET_NAME: &[&str] = &[
+    "今儿", "明儿", "昨儿", "这儿", "那儿", "哪儿", "会儿", "点儿", "事儿", "味儿", "个儿", "天儿",
+    "孩儿", "女儿", "婴儿", "鸟儿", "花儿", "人儿",
+];
+
+/// What a heroine is also called once she is close: 李慕婉 is 婉儿 228 times in
+/// 仙逆 and 冷幽幽 is 幽幽. The given name and the 儿 form, where the book really
+/// uses them and they could be no one else in the cast.
+fn pet_names(person: &Person, people: &[Person], paras: &[(usize, &str)]) -> Vec<String> {
+    // 极品家丁's 安姐姐 is not called 姐姐: everyone's sister is.
+    let given = crate::cast::given_name(&person.name).filter(|_| !crate::cast::titled(&person.name));
+    let Some(given) = given else {
+        return Vec::new();
+    };
+    let mut forms = vec![given.to_string()];
+    if let Some(last) = given.chars().last().filter(|c| *c != '儿') {
+        forms.push(format!("{last}儿"));
+    }
+    forms.retain(|form| {
+        !NOT_A_PET_NAME.contains(&form.as_str()) && !people.iter().any(|other| {
+            !std::ptr::eq(other, person)
+                && variants(other).iter().any(|name| name.contains(form.as_str()))
+        }) && paras
+            .iter()
+            .map(|(_, line)| line.matches(form.as_str()).count())
+            .sum::<usize>()
+            >= 20
+    });
+    forms
 }
 
 fn cast_context(edges: &[Edge], protagonist: usize, candidate: usize) -> (Option<&str>, u32) {
@@ -1105,9 +1229,16 @@ fn merge_same_identity(
                     ]
                 })
                 .collect();
-            let same = identity_windows
-                .iter()
-                .any(|window| phrases.iter().any(|phrase| window.contains(phrase)));
+            // 异世之凤流大法师 writes 南宫香芸 and, as often, drops the last character.
+            let (long, short) = if rows[a].name.len() > rows[b].name.len() {
+                (&rows[a].name, &rows[b].name)
+            } else {
+                (&rows[b].name, &rows[a].name)
+            };
+            let same = (short.chars().count() >= 3 && long.starts_with(short.as_str()))
+                || identity_windows
+                    .iter()
+                    .any(|window| phrases.iter().any(|phrase| window.contains(phrase)));
             if same {
                 let ra = root(&mut parent, a);
                 let rb = root(&mut parent, b);
@@ -1598,7 +1729,27 @@ pub fn analyze(
         (Some(a), Some(b)) => a != b,
         _ => true,
     };
-    let candidates: Vec<(usize, &Person)> = people
+    // Only someone known to be the other sex: 极品家丁's 林兄弟 is not called 兄弟.
+    let heroine = |i: usize| matches!((lead_gender, gender[i]), (Some(a), Some(b)) if a != b);
+    let called: Vec<Person> = people
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Person {
+            name: p.name.clone(),
+            aliases: p
+                .aliases
+                .iter()
+                .cloned()
+                .chain(if heroine(i) { pet_names(p, people, paras) } else { Vec::new() })
+                .collect(),
+            mentions: p.mentions,
+            chapters: p.chapters,
+            first_chapter: p.first_chapter,
+            uncertain: p.uncertain,
+            evidence: Vec::new(),
+        })
+        .collect();
+    let candidates: Vec<(usize, &Person)> = called
         .iter()
         .enumerate()
         .filter(|&(i, person)| {
@@ -1635,8 +1786,10 @@ pub fn analyze(
         {
             continue;
         }
-        let present: HashSet<usize> = all_people
-            .iter()
+        // By their proper names: a pet name finds a heroine's own scenes, it must
+        // not take 洛凝's from her because 巧巧 is mentioned beside them.
+        let present: HashSet<usize> = std::iter::once(protagonist)
+            .chain(candidates.iter().map(|(i, _)| &people[*i]))
             .enumerate()
             .filter(|(_, person)| variants(person).iter().any(|name| window.contains(name)))
             .map(|(index, _)| index)
@@ -1760,6 +1913,15 @@ pub fn analyze(
         }
     }
     add_dialogue_evidence(paras, &all_people, &mut ledgers);
+    if let (Some(she), None) = (lead_gender, told) {
+        let same_sex: Vec<&Person> = people
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != lead && !also.contains(&i) && gender[i] != Some(!she))
+            .map(|(_, p)| p)
+            .collect();
+        add_pronoun_evidence(paras, &all_people, she, &same_sex, &mut ledgers);
+    }
 
     let rows: Vec<RelationshipPerson> = candidates
         .iter()
