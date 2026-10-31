@@ -99,6 +99,22 @@ const FRONT_MATTER: &str = "开篇";
 /// characters — a normal web-novel chapter).
 const VIRTUAL_SPAN: usize = 24 * 1024;
 
+/// Whether a part `len` bytes long may end at this line. It holds out for a clean
+/// break, but not forever: a wall of text with no punctuation still has to be cut
+/// somewhere.
+fn clean_break(l: &Line, len: usize) -> bool {
+    if len < VIRTUAL_SPAN {
+        return false;
+    }
+    let clean = l.text.trim().is_empty()
+        || l.text
+            .trim_end()
+            .chars()
+            .last()
+            .is_some_and(|c| crate::repair::STRONG_END.contains(&c));
+    clean || len >= VIRTUAL_SPAN * 3 / 2
+}
+
 /// No chapter markers at all. Renderers assume a chapter fits in memory and in
 /// a layout pass; one 15 MB "chapter" breaks both. Slice the book into parts by
 /// length, cutting at paragraph ends so no part opens mid-sentence.
@@ -116,26 +132,17 @@ fn virtual_book(text: &str, ls: &[Line]) -> Book {
     let mut chapters: Vec<Chapter> = Vec::new();
     let mut start = 0usize;
     for l in ls {
-        let len = l.end - start;
-        if len < VIRTUAL_SPAN {
-            continue;
-        }
-        let clean = l.text.trim().is_empty()
-            || l.text
-                .trim_end()
-                .chars()
-                .last()
-                .is_some_and(|c| crate::repair::STRONG_END.contains(&c));
-        // Hold out for a clean break, but not forever: a wall of text with no
-        // punctuation still has to be cut somewhere.
-        if clean || len >= VIRTUAL_SPAN * 3 / 2 {
+        if clean_break(l, l.end - start) {
             let end = (l.end + 1).min(text.len());
             chapters.push(part(chapters.len(), start, end));
             start = end;
         }
     }
     if start < text.len() {
-        chapters.push(part(chapters.len(), start, text.len()));
+        match chapters.last_mut() {
+            Some(last) if text[start..].trim().len() < EMPTY_BODY => last.span.end = text.len(),
+            _ => chapters.push(part(chapters.len(), start, text.len())),
+        }
     }
 
     Book {
@@ -146,10 +153,75 @@ fn virtual_book(text: &str, ls: &[Line]) -> Book {
     }
 }
 
+/// Under this many bytes below its title, a title has nothing to open: a printed
+/// table of contents, a heading whose text the source lost, 第二节课，睡觉。 in the
+/// prose. The line stays where it is, at the end of the chapter before it.
+const EMPTY_BODY: usize = 120;
+
+fn without_empty_chapters(text: &str, ls: &[Line], chapters: &mut Vec<Candidate>) {
+    let start = |c: &Candidate| ls[c.line_idx].start + c.in_line;
+    let empty: std::collections::HashSet<usize> = chapters
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            let end = chapters.get(i + 1).map_or(text.len(), |n| start(n));
+            let body = ls[c.line_idx].end.min(end);
+            text[body..end].trim().len() < EMPTY_BODY
+        })
+        .map(|(_, c)| c.line_idx)
+        .collect();
+    // Mostly this short is how the book is written: a collection of poems.
+    if empty.len() * 2 <= chapters.len() {
+        chapters.retain(|c| !empty.contains(&c.line_idx));
+    }
+}
+
+/// A chapter with no title left to find inside it (天才医生 has none for 49
+/// chapters) still has to fit a layout pass, so it is cut by length like a book
+/// with no titles at all.
+fn cut_oversized(ls: &[Line], chapters: Vec<Chapter>) -> Vec<Chapter> {
+    let mut out: Vec<Chapter> = Vec::with_capacity(chapters.len());
+    for c in chapters {
+        if c.span.end - c.span.start < chapters::OVERSIZE {
+            out.push(Chapter { index: out.len(), ..c });
+            continue;
+        }
+        let (title, end) = (c.title.clone(), c.span.end);
+        let mut from = c.span.start;
+        let mut part = 1;
+        let first = ls.partition_point(|l| l.end < c.body_start);
+        for l in &ls[first..] {
+            if l.end >= end || !clean_break(l, l.end - from) {
+                continue;
+            }
+            let to = (l.end + 1).min(end);
+            push_part(&mut out, &c, &title, part, from, to);
+            from = to;
+            part += 1;
+        }
+        if from < end {
+            push_part(&mut out, &c, &title, part, from, end);
+        }
+    }
+    out
+}
+
+fn push_part(out: &mut Vec<Chapter>, c: &Chapter, title: &str, part: usize, from: usize, to: usize) {
+    out.push(Chapter {
+        index: out.len(),
+        number: if part == 1 { c.number } else { None },
+        title: if part == 1 { title.to_string() } else { format!("{title}（{part}）") },
+        span: Span { start: from, end: to },
+        body_start: if part == 1 { c.body_start } else { from },
+    });
+}
+
 pub fn build(text: &str, fp: &Fingerprint) -> Book {
     let cands = chapters::candidates(text, fp);
-    let v = chapters::validate(&cands, fp);
+    let mut v = chapters::validate(&cands, fp);
     let ls = lines(text);
+    chapters::fill_lumps(text, &mut v.chapters);
+    without_empty_chapters(text, &ls, &mut v.chapters);
 
     if v.chapters.is_empty() && text.len() > VIRTUAL_SPAN * 2 {
         return virtual_book(text, &ls);
@@ -164,8 +236,11 @@ pub fn build(text: &str, fp: &Fingerprint) -> Book {
         .iter()
         .map(|c| (ls[c.line_idx].start + c.in_line, Some(c)))
         .collect();
-    if starts.first().map_or(true, |(s, _)| *s > 0) {
-        starts.insert(0, (0, None));
+    match starts.first_mut() {
+        Some((s, _)) if *s == 0 => {}
+        // A line or two before the first title is no chapter of its own.
+        Some((s, _)) if text[..*s].trim().len() < EMPTY_BODY => *s = 0,
+        _ => starts.insert(0, (0, None)),
     }
 
     let mut chapters = Vec::with_capacity(starts.len());
@@ -183,6 +258,7 @@ pub fn build(text: &str, fp: &Fingerprint) -> Book {
             body_start,
         });
     }
+    let chapters = cut_oversized(&ls, chapters);
 
     // A volume header opens the first chapter that starts after it.
     let volumes: Vec<Volume> = v
@@ -198,7 +274,7 @@ pub fn build(text: &str, fp: &Fingerprint) -> Book {
                 },
                 first_chapter: chapters
                     .iter()
-                    .position(|c| c.span.start >= l.end)
+                    .position(|c| c.body_start >= l.end)
                     .unwrap_or(chapters.len().saturating_sub(1)),
             }
         })
@@ -296,6 +372,74 @@ mod tests {
         assert!(text[b.chapters[0].span.start..b.chapters[0].span.end].ends_with("他走了。"));
         let mut cursor = 0;
         for c in &b.chapters {
+            assert_eq!(c.span.start, cursor, "chapters must tile the text");
+            cursor = c.span.end;
+        }
+        assert_eq!(cursor, text.len());
+    }
+
+    /// A printed table of contents opens nothing. Its lines stay in the text, and
+    /// the chapters they name open where the text does.
+    #[test]
+    fn a_table_of_contents_is_not_chapters() {
+        let mut text = String::from("前言\n");
+        for i in 1..=8 {
+            text.push_str(&format!("第{i}章 标题{i}\n"));
+        }
+        for i in 1..=8 {
+            text.push_str(&format!("第{i}章 标题{i}\n"));
+            text.push_str(&"正文段落，写了一些字。\n".repeat(30));
+        }
+        let fp = fingerprint("UTF-8", &text);
+        let b = build(&text, &fp);
+        assert_eq!(b.chapters.len(), 9);
+        assert_eq!(b.chapters[0].title, FRONT_MATTER);
+        assert!(text[b.chapters[0].span.start..b.chapters[0].span.end].contains("第8章 标题8"));
+        let mut cursor = 0;
+        for c in &b.chapters {
+            assert_eq!(c.span.start, cursor, "chapters must tile the text");
+            assert!(c.span.end - c.body_start >= 120, "{}", c.title);
+            cursor = c.span.end;
+        }
+        assert_eq!(cursor, text.len());
+    }
+
+    /// A volume header and a line of blurb are no 开篇. The first chapter takes them,
+    /// and is still the one the volume opens.
+    #[test]
+    fn a_line_before_the_first_title_is_not_a_chapter() {
+        let mut text = String::from("第一卷 风起\n\n");
+        for i in 1..=8 {
+            text.push_str(&format!("第{i}章 标题\n"));
+            text.push_str(&"正文段落，写了一些字。\n".repeat(30));
+        }
+        let fp = fingerprint("UTF-8", &text);
+        let b = build(&text, &fp);
+        assert_eq!(b.chapters.len(), 8);
+        assert_eq!(b.chapters[0].span.start, 0);
+        assert_eq!(b.chapters[0].title, "第1章 标题");
+        assert_eq!(b.volumes[0].first_chapter, 0);
+    }
+
+    /// Too long, and no title to be found inside: cut by length, keeping the title.
+    #[test]
+    fn an_oversized_chapter_is_cut() {
+        let mut text = String::from("第一章 开始\n");
+        text.push_str(&"正文段落，写了一些字，又写了一些字。\n".repeat(8000));
+        for i in 2..=8 {
+            text.push_str(&format!("第{i}章 标题\n"));
+            text.push_str(&"正文段落，写了一些字。\n".repeat(100));
+        }
+        let fp = fingerprint("UTF-8", &text);
+        let b = build(&text, &fp);
+        assert!(b.chapters.iter().all(|c| c.span.end - c.span.start < chapters::OVERSIZE));
+        assert_eq!(b.chapters[0].title, "第一章 开始");
+        assert_eq!(b.chapters[1].title, "第一章 开始（2）");
+        assert_eq!(b.chapters[1].body_start, b.chapters[1].span.start);
+        assert!(b.chapters.iter().any(|c| c.title == "第2章 标题"));
+        let mut cursor = 0;
+        for (i, c) in b.chapters.iter().enumerate() {
+            assert_eq!(c.index, i);
             assert_eq!(c.span.start, cursor, "chapters must tile the text");
             cursor = c.span.end;
         }

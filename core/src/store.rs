@@ -320,11 +320,10 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 "#;
 
-/// When the same text is split into more chapters, keep what is stored by
-/// chapter number on the chapter it was about. Only a pure refinement — every
-/// old chapter start still a start — so each old chapter's rows land inside
-/// their own old span, in order, and nothing can collide or be lost. Anything
-/// else (the file changed under its name) is left as it always was.
+/// When the same text is split differently, keep what is stored by chapter number
+/// on the text it was about. `was` only holds chapters of a file of the same path
+/// and size, so a byte still means the same byte. Chapters can merge as well as
+/// divide, so two rows can want one chapter; none is dropped for that.
 fn follow_split(
     tx: &rusqlite::Transaction,
     id: i64,
@@ -333,34 +332,44 @@ fn follow_split(
 ) -> Result<Vec<(i64, i64)>> {
     let starts: Vec<i64> = now.iter().map(|c| c.start).collect();
     if was.is_empty()
-        || was.len() >= now.len()
-        || !was.iter().all(|(_, start, _)| starts.binary_search(start).is_ok())
+        || (was.len() == now.len() && was.iter().zip(&starts).all(|((_, s, _), n)| s == n))
     {
         return Ok(Vec::new());
     }
     // The chapter holding a byte: the last one starting at or before it.
     let at = |offset: i64| starts.partition_point(|s| *s <= offset).saturating_sub(1) as i64;
+    let shifted = |old: i64| (old + now.len() as i64 - was.len() as i64).max(0);
     let holding = |offset: i64, old: i64| {
         let span = was.iter().find(|(idx, _, _)| *idx == old);
         match span {
             Some((_, start, end)) if offset >= *start && offset < *end => at(offset),
             Some((_, start, _)) => at(*start),
-            None => old + now.len() as i64 - was.len() as i64,
+            None => shifted(old),
         }
     };
 
-    // Highest first: everything moves up, so nothing lands on a row not yet moved.
-    let marks: Vec<(i64, i64)> = {
-        let mut st = tx.prepare(
-            "SELECT chapter, offset FROM bookmarks WHERE book_id = ?1 ORDER BY chapter DESC",
-        )?;
-        let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    // Set aside first: rows move both ways now, and could land on one not yet moved.
+    let mut marks: Vec<(i64, i64)> = {
+        let mut st = tx.prepare("SELECT chapter, offset FROM bookmarks WHERE book_id = ?1")?;
+        let rows = st.query_map([id], |r| {
+            let (chapter, offset): (i64, i64) = (r.get(0)?, r.get(1)?);
+            Ok((holding(offset, chapter), chapter))
+        })?;
         rows.collect::<Result<_>>()?
     };
-    for (old, offset) in marks {
+    tx.execute(
+        "UPDATE bookmarks SET chapter = -1 - chapter WHERE book_id = ?1",
+        [id],
+    )?;
+    marks.sort_unstable();
+    // One bookmark to a chapter: a second one wanting it takes the next free one.
+    // It still opens at its own offset.
+    let mut taken = -1;
+    for (wanted, old) in marks {
+        taken = wanted.max(taken + 1);
         tx.execute(
-            "UPDATE bookmarks SET chapter = ?3 WHERE book_id = ?1 AND chapter = ?2",
-            params![id, old, holding(offset, old)],
+            "UPDATE bookmarks SET chapter = ?3 WHERE book_id = ?1 AND chapter = -1 - ?2",
+            params![id, old, taken],
         )?;
     }
 
@@ -387,12 +396,17 @@ fn follow_split(
     };
     tx.execute("DELETE FROM completed_chapters WHERE book_id = ?1", [id])?;
     for (old, when) in done {
-        let parts = match was.iter().find(|(idx, _, _)| *idx == old) {
-            Some((_, start, end)) => at(*start)..=at(end - 1),
-            None => {
-                let shifted = old + now.len() as i64 - was.len() as i64;
-                shifted..=shifted
+        let parts: Vec<i64> = match was.iter().find(|(idx, _, _)| *idx == old) {
+            Some((_, start, end)) => {
+                let inside = starts.partition_point(|s| s < start)..starts.partition_point(|s| s < end);
+                // Merged into the chapter before it: nothing of its own to mark.
+                if inside.is_empty() {
+                    vec![at(*start)]
+                } else {
+                    inside.map(|i| i as i64).collect()
+                }
             }
+            None => vec![shifted(old)],
         };
         for chapter in parts {
             tx.execute(
@@ -403,14 +417,21 @@ fn follow_split(
         }
     }
 
-    // Reading stats keep their chapter by where the old one began. One pass per
-    // old chapter, highest first, for the same reason as the bookmarks.
-    for (old, start, _) in was.iter().rev() {
+    // Reading stats keep their chapter by where the old one began.
+    tx.execute(
+        "UPDATE reading_windows SET chapter = -1 - chapter WHERE book_id = ?1",
+        [id],
+    )?;
+    for (old, start, _) in was {
         tx.execute(
-            "UPDATE reading_windows SET chapter = ?3 WHERE book_id = ?1 AND chapter = ?2",
+            "UPDATE reading_windows SET chapter = ?3 WHERE book_id = ?1 AND chapter = -1 - ?2",
             params![id, old, at(*start)],
         )?;
     }
+    tx.execute(
+        "UPDATE reading_windows SET chapter = -1 - chapter WHERE book_id = ?1 AND chapter < 0",
+        [id],
+    )?;
 
     Ok(was
         .iter()
@@ -1705,11 +1726,58 @@ mod tests {
             .unwrap();
         assert_eq!(chunk, 3);
 
-        // Opening it again changes nothing, and a coarser split moves nothing.
+        // Opening it again changes nothing.
         assert!(s.upsert_book_moved(&book("/a.txt"), &new).unwrap().1.is_empty());
         assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2, 3, 4, 5]);
-        assert!(s.upsert_book_moved(&book("/a.txt"), &old).unwrap().1.is_empty());
-        assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2, 3, 4, 5]);
+
+        // The other way, chapters merging, everything comes back.
+        s.upsert_book_moved(&book("/a.txt"), &old).unwrap();
+        let marks: Vec<(i64, i64)> = s
+            .bookmarks(id)
+            .unwrap()
+            .iter()
+            .map(|b| (b.chapter, b.offset))
+            .collect();
+        assert_eq!(marks, vec![(1, 45), (2, 75)]);
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2]);
+        assert_eq!(s.windows_since(0).unwrap()[0].chapter, 2);
+        assert_eq!(s.annotations(id).unwrap()[0].chapter, 2);
+    }
+
+    /// A chapter merged away and a chapter split in the same re-split, with a
+    /// bookmark on each of the two that become one. Neither may be lost.
+    #[test]
+    fn a_split_that_is_no_refinement_keeps_every_row() {
+        let span = |index: i64, start: i64, end: i64| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{index}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let mut s = mem();
+        let old = [span(0, 0, 50), span(1, 50, 60), span(2, 60, 100)];
+        let id = s.upsert_book(&book("/a.txt"), &old).unwrap();
+        s.save_bookmark(id, 0, 20, None).unwrap();
+        s.save_bookmark(id, 1, 55, None).unwrap();
+        s.save_bookmark(id, 2, 90, None).unwrap();
+        s.mark_chapter_completed(id, 1).unwrap();
+        s.mark_chapter_completed(id, 2).unwrap();
+
+        // 1 merges into 0; 2 is cut in two.
+        let new = [span(0, 0, 60), span(1, 60, 80), span(2, 80, 100)];
+        let (_, moved) = s.upsert_book_moved(&book("/a.txt"), &new).unwrap();
+        assert_eq!(moved, vec![(1, 0)]);
+        let marks: Vec<(i64, i64)> = s
+            .bookmarks(id)
+            .unwrap()
+            .iter()
+            .map(|b| (b.chapter, b.offset))
+            .collect();
+        assert_eq!(marks, vec![(0, 20), (1, 55), (2, 90)]);
+        assert_eq!(s.completed_chapters(id).unwrap(), vec![0, 1, 2]);
     }
 
     #[test]

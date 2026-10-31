@@ -66,6 +66,11 @@ fn cn_numeral(s: &str) -> Option<u64> {
     ];
     let digit = |c: char| DIGITS.iter().find(|(d, _)| *d == c).map(|(_, v)| *v);
 
+    // 第一零二章 is written digit by digit, and is not chapter 2.
+    if s.chars().count() > 1 && !s.contains(['十', '百', '千', '万']) {
+        return s.chars().try_fold(0u64, |n, c| Some(n * 10 + digit(c)?));
+    }
+
     let (mut total, mut section, mut current, mut saw) = (0u64, 0u64, 0u64, false);
     for c in s.chars() {
         match c {
@@ -169,7 +174,9 @@ fn chapter_after_volume(chars: &[char]) -> Option<(Template, Level, Option<u64>)
         return Some((Template::Ordinal, Level::Chapter, parse_number(&num)));
     }
     let digits = chars[at..].iter().take_while(|c| c.is_ascii_digit()).count();
-    if name_len == 0 || !(1..=4).contains(&digits) || at + digits >= chars.len() {
+    // 超神机械师's 第四卷 1.0降临者 is a volume with a version number in its name.
+    let version = chars[at + digits..].len() > 1 && chars[at + digits] == '.' && chars[at + digits + 1].is_ascii_digit();
+    if name_len == 0 || !(1..=4).contains(&digits) || at + digits >= chars.len() || version {
         return None;
     }
     let num: String = chars[at..at + digits].iter().collect();
@@ -413,6 +420,140 @@ fn titles_at_line_ends(text: &str, found: &[Candidate]) -> Vec<Candidate> {
         return Vec::new();
     }
     glued.into_iter().filter(|c| keep.contains(&c.line_idx)).collect()
+}
+
+/// Longer than any chapter an author meant: look inside for the titles that were
+/// passed over. 大秦帝国's chapters run to 280 KB with sections inside them, so
+/// its 一、 sections are only read as chapters from [`OVERSIZE`] up.
+const LUMP: usize = 150 * 1024;
+pub const OVERSIZE: usize = 300 * 1024;
+/// A title and the next this close are a table of contents or a list.
+const MIN_CHAPTER: usize = 2 * 1024;
+
+/// A title the first pass may not take: indented, or glued to a sentence, or out of
+/// order, or wearing a book's name. On its own such a line could be prose, so it
+/// only counts inside a lump, and only with others climbing after it.
+fn title_in_lump(line: &str, loose: bool) -> Option<(Option<u64>, usize, usize)> {
+    let s = line.trim();
+    if s.ends_with(['。', '！', '？', '…', '”', '"', '；', '：', '，', '、', '.', '!', '?']) {
+        return None;
+    }
+    if loose {
+        return numeral_title(s).map(|n| (Some(n), 0, 0));
+    }
+    let from = line.find(s).unwrap_or(0);
+    if let Some((_, Level::Chapter, number @ Some(_))) = classify(s) {
+        // 第三节课, 第二回合.
+        let chars: Vec<char> = s.chars().collect();
+        let unit = chars.iter().position(|c| CHAPTER_UNITS.contains(*c));
+        return match unit.and_then(|u| chars.get(u + 1)) {
+            Some('课' | '合') => None,
+            _ => Some((number, from, 0)),
+        };
+    }
+    // Whatever is in front stays with the chapter before: 草房子's 杜小康也朝桑桑摇了摇手第六章细马.
+    let (at, number) = title_at_line_end(line).or_else(|| title_after_short_head(s).map(|(at, n)| (from + at, n)))?;
+    Some((number, at, at))
+}
+
+/// 雪中悍刀行16第一章万里剑叩关北凉，徐凤年凌虚御敌: a head in front, and a comma
+/// that would make any other line a sentence.
+fn title_after_short_head(s: &str) -> Option<(usize, Option<u64>)> {
+    let at = s.find('第')?;
+    let rest = &s[at + '第'.len_utf8()..];
+    let digits = rest.find(|c| !is_numeral_char(c)).unwrap_or(rest.len());
+    if digits == 0 || !rest[digits..].starts_with('章') || s.chars().count() > 40 {
+        return None;
+    }
+    if s[..at].contains(['，', '。', '！', '？', '；', '：', '“', '”', ',', '!', '?', ';', ':']) {
+        return None;
+    }
+    Some((at, parse_number(&rest[..digits])))
+}
+
+/// 十五 on its own line, 一、伊娃•西京城. Nothing says these are titles but the count.
+fn numeral_title(s: &str) -> Option<u64> {
+    let digits = s.find(|c| !is_numeral_char(c)).unwrap_or(s.len());
+    let (num, rest) = s.split_at(digits);
+    if num.is_empty() || num.chars().count() > 6 || num.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if !rest.is_empty() && (!rest.starts_with('、') || rest.chars().count() > 30) {
+        return None;
+    }
+    cn_numeral(num)
+}
+
+/// Runs of numbers that climb in small steps, far enough apart to be chapters.
+/// Word counts printed after each chapter (小时代's 3666, 3195) never make a run.
+fn climbing_titles(found: &[(Candidate, usize)]) -> Vec<usize> {
+    let cands: Vec<Candidate> = found.iter().map(|(c, _)| c.clone()).collect();
+    let keep = increasing_run(&cands);
+    let kept: Vec<usize> = (0..found.len()).filter(|i| keep.contains(&found[*i].0.line_idx)).collect();
+
+    let mut runs: Vec<Vec<usize>> = Vec::new();
+    for i in kept {
+        let (n, last) = (found[i].0.number, runs.last().and_then(|r| r.last()));
+        let near = last.is_some_and(|j| {
+            let (a, b) = (found[*j].0.number.unwrap_or(0), n.unwrap_or(0));
+            b <= 3 || (b > a && b <= a + 5)
+        });
+        match (near, runs.last_mut()) {
+            (true, Some(run)) => run.push(i),
+            _ => runs.push(vec![i]),
+        }
+    }
+    let mut out: Vec<usize> = Vec::new();
+    for run in runs.into_iter().filter(|r| r.len() >= 3) {
+        let mut next: Option<usize> = None;
+        let mut part: Vec<usize> = Vec::new();
+        for &i in run.iter().rev() {
+            if next.map_or(true, |n| n >= found[i].1 + MIN_CHAPTER) {
+                next = Some(found[i].1);
+                part.push(i);
+            }
+        }
+        if part.len() >= 3 {
+            out.extend(part);
+        }
+    }
+    out
+}
+
+/// Find the chapters inside any span too long to be one. Everything already a
+/// chapter stays one, so this only ever adds.
+pub fn fill_lumps(text: &str, chapters: &mut Vec<Candidate>) {
+    for (loose, size) in [(false, LUMP), (true, OVERSIZE)] {
+        let mut starts = Vec::new();
+        let mut at = 0;
+        for l in text.split('\n') {
+            starts.push(at);
+            at += l.len() + 1;
+        }
+        let mut edges: Vec<(usize, usize)> = vec![(0, 0)];
+        edges.extend(chapters.iter().map(|c| (c.line_idx + 1, starts[c.line_idx] + c.in_line)));
+        edges.push((starts.len(), text.len()));
+
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut added = Vec::new();
+        for pair in edges.windows(2) {
+            let ((first, from), (_, to)) = (pair[0], pair[1]);
+            if to.saturating_sub(from) < size {
+                continue;
+            }
+            let last = pair[1].0.saturating_sub(if to == text.len() { 0 } else { 1 });
+            let found: Vec<(Candidate, usize)> = (first..last)
+                .filter_map(|i| {
+                    let (number, title_at, in_line) = title_in_lump(lines[i], loose)?;
+                    let c = title_in_line(i, lines[i], title_at, number, in_line);
+                    Some((c, starts[i] + in_line))
+                })
+                .collect();
+            added.extend(climbing_titles(&found).into_iter().map(|i| found[i].0.clone()));
+        }
+        chapters.extend(added);
+        chapters.sort_by_key(|c| c.line_idx);
+    }
 }
 
 pub struct Validation {
@@ -832,6 +973,11 @@ mod tests {
             classify("哈里.萊特篇 豪奢的单人旅行 第十二章"),
             Some((Template::Ordinal, Level::Chapter, Some(12)))
         );
+        assert_eq!(
+            classify("第一卷蝴蝶扇了一下翅膀的那个夏天4.Reset的那个下午"),
+            Some((Template::Ordinal, Level::Chapter, Some(4)))
+        );
+        assert!(matches!(classify("第四卷 1.0降临者！崛起海蓝星"), Some((_, Level::Volume, _))));
         assert_eq!(classify("他翻开书，看到了 第一章"), None);
         for volume in ["第三卷", "第三卷 风起", "第一部分", "第二集，第三天"] {
             assert!(
@@ -916,6 +1062,66 @@ mod tests {
         assert_eq!(v.chapters.len(), 6);
     }
 
+    fn filled(t: &str) -> Vec<Candidate> {
+        let fp = fp_of(t);
+        let mut chapters = validate(&candidates(t, &fp), &fp).chapters;
+        fill_lumps(t, &mut chapters);
+        chapters
+    }
+
+    /// 雪中悍刀行: the first title flush, the rest indented like the prose.
+    #[test]
+    fn a_lump_gives_up_its_indented_titles() {
+        let body = "\u{3000}\u{3000}正文段落，写了一些字，又写了一些字，还写了一些字。\n".repeat(150);
+        let mut t = String::from("第一章 开始\n");
+        t.push_str(&body);
+        for i in 2..=30 {
+            t.push_str(&format!("\u{3000}\u{3000}第{i}章 标题，还有后半句\n"));
+            t.push_str(&body);
+        }
+        assert_eq!(filled(&t).len(), 30);
+    }
+
+    /// The same lines in a book of ordinary chapters are prose.
+    #[test]
+    fn indented_titles_outside_a_lump_are_prose() {
+        let mut t = String::new();
+        for i in 1..=30 {
+            t.push_str(&format!("第{i}章 标题\n\u{3000}\u{3000}他翻开书。\n\u{3000}\u{3000}第{i}章 讲义\n"));
+        }
+        assert_eq!(filled(&t).len(), 30);
+    }
+
+    /// A list and a table of contents climb too, but too close together.
+    #[test]
+    fn a_list_inside_a_lump_is_not_chapters() {
+        let body = "\u{3000}\u{3000}正文段落，写了一些字，又写了一些字，还写了一些字。\n".repeat(4000);
+        let mut t = String::from("第一章 开始\n");
+        t.push_str(&body);
+        t.push_str("\u{3000}\u{3000}第1节 活动时间\n\u{3000}\u{3000}第2节 活动地点\n\u{3000}\u{3000}第3节 活动流程\n");
+        t.push_str(&body);
+        assert!(filled(&t).iter().all(|c| !c.text.contains("活动")));
+    }
+
+    /// Only an oversized span is read for bare numerals, and word counts stay out.
+    #[test]
+    fn bare_numerals_only_in_an_oversized_span() {
+        let body = "\u{3000}\u{3000}正文段落，写了一些字，又写了一些字，还写了一些字。\n".repeat(400);
+        let mut t = String::new();
+        for n in ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五"] {
+            t.push_str(&format!("{n}\n{body}"));
+        }
+        assert!(t.len() > OVERSIZE);
+        assert_eq!(filled(&t).len(), 15);
+
+        let mut counts = String::new();
+        for n in [3666, 3195, 4058, 4145, 3976, 3277, 3285, 3669, 4012, 3923, 3213, 3940] {
+            counts.push_str(&format!("{body}{body}{n}\n"));
+        }
+        assert!(counts.len() > OVERSIZE);
+        assert_eq!(filled(&counts).len(), 0);
+    }
+
     /// Titles run on from the sentence before them only count in bulk, and the
     /// sentence is not part of the title.
     #[test]
@@ -944,5 +1150,8 @@ mod tests {
         assert_eq!(cn_numeral("二十一"), Some(21));
         assert_eq!(cn_numeral("一万零五"), Some(10005));
         assert_eq!(cn_numeral("abc"), None);
+        assert_eq!(cn_numeral("一零二"), Some(102));
+        assert_eq!(cn_numeral("一八六"), Some(186));
+        assert_eq!(cn_numeral("二零"), Some(20));
     }
 }
