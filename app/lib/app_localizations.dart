@@ -578,7 +578,8 @@ const _english = <String, String>{
   '还没总结': 'Not summarized yet',
   '未总结': 'Not summarized',
   '没有可供判断的候选原文': 'No candidate passages available',
-  '可能包含未读内容。': 'May include unread content.',
+  '可能包含未读内容。仅供参考，内容可能不准确。':
+      'May include unread content. For reference only; it may be inaccurate.',
   '排雷仅展示相关嫌疑片段，仅作参考。':
       'Content warnings show potentially relevant passages for reference only.',
   '氛围标签': 'Mood labels',

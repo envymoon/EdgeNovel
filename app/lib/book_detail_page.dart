@@ -394,7 +394,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       ),
       const SizedBox(height: 6),
       Text(
-        '可能包含未读内容。',
+        '可能包含未读内容。仅供参考，内容可能不准确。',
         style: TextStyle(color: t.muted, fontSize: 12, height: 1.6),
       ),
     ],

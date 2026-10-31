@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 20;
+pub const SCAN_VERSION: u32 = 21;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -230,6 +230,9 @@ const KIN_SUFFIXES: &[&str] = &["哥哥", "姐姐", "哥", "兄", "姐", "弟", 
 /// Characters that make X哥/X姐 a kinship or rank word (大哥, 表姐, 师兄)
 /// rather than a nickname cut from someone's given name.
 const NOT_A_GIVEN_CHAR: &str = "大小老阿表堂师学二三四五六七八九十";
+
+/// Characters that doubled make a kinship word, not a pet name (姑姑, 婆婆, 娃娃).
+const KIN_DOUBLED: &str = "姑婆爷奶公爹妈娘爸叔舅姨伯哥姐弟妹娃";
 
 /// 苏如雪 is shaped like a full name; 请继续 is not — and only something
 /// shaped like a full name may claim a shorter candidate's occurrences.
@@ -700,6 +703,7 @@ const NOT_A_NAME: &[&str] = &[
     "爷爷",
     "奶奶",
     "叔叔",
+    "阿姨",
     "舅舅",
     "老爸",
     "老妈",
@@ -757,6 +761,8 @@ const NOT_A_NAME: &[&str] = &[
     "赶快",
     "尤其",
     "年长",
+    "无限",
+    "秋雨",
 ];
 
 /// Appellations worth carrying as relationship hints. The word itself is the
@@ -2140,6 +2146,13 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
             if speaks_as(paras, name, &cands[f].0) {
                 titled.entry(f).or_default().push(t);
                 taken.insert(t);
+                // The surname is now known to be this man's, so his class's 宋老师
+                // is too. Unvouched it stays apart: 徐老师 is 徐芷若's mother.
+                let teacher = format!("{surname}老师");
+                if let Some(&m) = alive.iter().find(|&&i| cands[i].0 == teacher) {
+                    titled.entry(f).or_default().push(m);
+                    taken.insert(m);
+                }
             }
         }
     }
@@ -2179,6 +2192,27 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
                 && n <= 4
                 && !KIN_SUFFIXES.iter().any(|k| host.ends_with(k))
                 && !TITLES.iter().any(|k| host.ends_with(k))
+        });
+        if let (Some(f), None) = (hosts.next(), hosts.next()) {
+            titled.entry(f).or_default().push(t);
+            taken.insert(t);
+        }
+    }
+
+    // The same character twice is a pet name cut from a given name: 桐桐 is
+    // 张述桐, when he is the one full name ending in it. Not a kinship word: 姑姑
+    // is not 孙大姑.
+    for &t in &alive {
+        if taken.contains(&t) {
+            continue;
+        }
+        let mut cs = cands[t].0.chars();
+        let x = match (cs.next(), cs.next(), cs.next()) {
+            (Some(a), Some(b), None) if a == b && !KIN_DOUBLED.contains(a) => a,
+            _ => continue,
+        };
+        let mut hosts = alive.iter().copied().filter(|&f| {
+            !taken.contains(&f) && full_name_shaped(&cands[f].0) && cands[f].0.ends_with(x)
         });
         if let (Some(f), None) = (hosts.next(), hosts.next()) {
             titled.entry(f).or_default().push(t);
@@ -2713,6 +2747,28 @@ mod tests {
 
     fn by_name<'a>(members: &'a [Member], name: &str) -> Option<&'a Member> {
         members.iter().find(|m| m.name == name)
+    }
+
+    #[test]
+    fn an_aunt_is_whoever_the_scene_calls_one() {
+        let paras = [(0, "他对阿姨说，他也对陈平安说。"), (0, "他看着阿姨，又看着陈平安。")];
+        let names: Vec<String> = candidates(&paras).into_iter().map(|(n, _)| n).collect();
+        assert!(names.iter().any(|n| n == "陈平安"), "{names:?}");
+        assert!(!names.iter().any(|n| n == "阿姨"), "{names:?}");
+    }
+
+    #[test]
+    fn a_doubled_character_is_the_pet_name_of_the_one_who_ends_in_it() {
+        let members = select(&[
+            cand("张述桐", 500, 0.8, 0.2, 0.2),
+            cand("桐桐", 60, 0.8, 0.2, 0.2),
+            cand("孙大姑", 500, 0.8, 0.2, 0.2),
+            cand("姑姑", 60, 0.8, 0.2, 0.2),
+        ]);
+        let zhang = by_name(&members, "张述桐").expect("张述桐 should be a person");
+        assert!(zhang.aliases.contains(&"桐桐".to_string()), "{:?}", zhang.aliases);
+        assert!(by_name(&members, "桐桐").is_none());
+        assert!(by_name(&members, "姑姑").is_some());
     }
 
     #[test]
