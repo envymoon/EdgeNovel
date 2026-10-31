@@ -426,7 +426,7 @@ fn titles_at_line_ends(text: &str, found: &[Candidate]) -> Vec<Candidate> {
 /// passed over. 大秦帝国's chapters run to 280 KB with sections inside them, so
 /// its 一、 sections are only read as chapters from [`OVERSIZE`] up.
 const LUMP: usize = 150 * 1024;
-pub const OVERSIZE: usize = 300 * 1024;
+const OVERSIZE: usize = 300 * 1024;
 /// A title and the next this close are a table of contents or a list.
 const MIN_CHAPTER: usize = 2 * 1024;
 

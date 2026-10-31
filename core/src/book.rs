@@ -176,46 +176,6 @@ fn without_empty_chapters(text: &str, ls: &[Line], chapters: &mut Vec<Candidate>
     }
 }
 
-/// A chapter with no title left to find inside it (天才医生 has none for 49
-/// chapters) still has to fit a layout pass, so it is cut by length like a book
-/// with no titles at all.
-fn cut_oversized(ls: &[Line], chapters: Vec<Chapter>) -> Vec<Chapter> {
-    let mut out: Vec<Chapter> = Vec::with_capacity(chapters.len());
-    for c in chapters {
-        if c.span.end - c.span.start < chapters::OVERSIZE {
-            out.push(Chapter { index: out.len(), ..c });
-            continue;
-        }
-        let (title, end) = (c.title.clone(), c.span.end);
-        let mut from = c.span.start;
-        let mut part = 1;
-        let first = ls.partition_point(|l| l.end < c.body_start);
-        for l in &ls[first..] {
-            if l.end >= end || !clean_break(l, l.end - from) {
-                continue;
-            }
-            let to = (l.end + 1).min(end);
-            push_part(&mut out, &c, &title, part, from, to);
-            from = to;
-            part += 1;
-        }
-        if from < end {
-            push_part(&mut out, &c, &title, part, from, end);
-        }
-    }
-    out
-}
-
-fn push_part(out: &mut Vec<Chapter>, c: &Chapter, title: &str, part: usize, from: usize, to: usize) {
-    out.push(Chapter {
-        index: out.len(),
-        number: if part == 1 { c.number } else { None },
-        title: if part == 1 { title.to_string() } else { format!("{title}（{part}）") },
-        span: Span { start: from, end: to },
-        body_start: if part == 1 { c.body_start } else { from },
-    });
-}
-
 pub fn build(text: &str, fp: &Fingerprint) -> Book {
     let cands = chapters::candidates(text, fp);
     let mut v = chapters::validate(&cands, fp);
@@ -258,7 +218,6 @@ pub fn build(text: &str, fp: &Fingerprint) -> Book {
             body_start,
         });
     }
-    let chapters = cut_oversized(&ls, chapters);
 
     // A volume header opens the first chapter that starts after it.
     let volumes: Vec<Volume> = v
@@ -421,9 +380,9 @@ mod tests {
         assert_eq!(b.volumes[0].first_chapter, 0);
     }
 
-    /// Too long, and no title to be found inside: cut by length, keeping the title.
+    /// Long, and no title to be found inside: that is the chapter the book has.
     #[test]
-    fn an_oversized_chapter_is_cut() {
+    fn a_long_chapter_stays_whole() {
         let mut text = String::from("第一章 开始\n");
         text.push_str(&"正文段落，写了一些字，又写了一些字。\n".repeat(8000));
         for i in 2..=8 {
@@ -432,11 +391,9 @@ mod tests {
         }
         let fp = fingerprint("UTF-8", &text);
         let b = build(&text, &fp);
-        assert!(b.chapters.iter().all(|c| c.span.end - c.span.start < chapters::OVERSIZE));
+        assert_eq!(b.chapters.len(), 8);
         assert_eq!(b.chapters[0].title, "第一章 开始");
-        assert_eq!(b.chapters[1].title, "第一章 开始（2）");
-        assert_eq!(b.chapters[1].body_start, b.chapters[1].span.start);
-        assert!(b.chapters.iter().any(|c| c.title == "第2章 标题"));
+        assert_eq!(b.chapters[1].title, "第2章 标题");
         let mut cursor = 0;
         for (i, c) in b.chapters.iter().enumerate() {
             assert_eq!(c.index, i);
