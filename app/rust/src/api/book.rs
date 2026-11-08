@@ -9,7 +9,7 @@
 use novel_core::book::{self, LineKind};
 use novel_core::fingerprint::ParagraphStyle;
 use novel_core::store::{self, BookRecord, ChapterRecord, Store};
-use novel_core::{chapters, chunk, decode, fingerprint, focus, genre, meta, pace, repair};
+use novel_core::{chapters, chunk, cleanup, decode, fingerprint, focus, genre, meta, pace, repair};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -375,31 +375,13 @@ pub fn open_book(path: String) -> Result<BookInfo, String> {
         return Ok(info);
     }
 
-    let raw = std::fs::read(&path).map_err(|e| format!("读取失败: {e}"))?;
-    let forced = with_store!(s => s.encoding_override(&path))?;
-    let d = match forced {
-        Some(label) => {
-            decode::decode_as(&raw, &label).ok_or_else(|| format!("未知编码: {label}"))?
-        }
-        None => decode::decode(&raw),
-    };
+    let d = decode_file(&path)?;
+    // Title and author from the head of the file as it is, whatever was cut.
+    let m = meta::extract(&path, &d.text);
+    let d = cut_text(&path, d)?;
     let fp = fingerprint::fingerprint(d.encoding, &d.text);
     let b = book::build(&d.text, &fp);
-    let m = meta::extract(&path, &d.text);
-
-    let chapter_records: Vec<ChapterRecord> = b
-        .chapters
-        .iter()
-        .map(|c| ChapterRecord {
-            index: c.index as i64,
-            number: c.number.map(|n| n as i64),
-            title: c.title.clone(),
-            start: c.span.start as i64,
-            end: c.span.end as i64,
-            body_start: c.body_start as i64,
-            text_hash: store::text_hash(&d.text[c.body_start..c.span.end]),
-        })
-        .collect();
+    let chapter_records = chapter_records(&d.text, &b.chapters);
 
     let record = BookRecord {
         id: 0,
@@ -528,6 +510,95 @@ pub fn open_book(path: String) -> Result<BookInfo, String> {
     Ok(info)
 }
 
+/// The book's file decoded the way the reader chose, or detected.
+pub(crate) fn decode_file(path: &str) -> Result<decode::Decoded, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
+    match with_store!(s => s.encoding_override(path))? {
+        Some(label) => decode::decode_as(&raw, &label).ok_or_else(|| format!("未知编码: {label}")),
+        None => Ok(decode::decode(&raw)),
+    }
+}
+
+/// What 文本整理 took out of the book, when it was taken out of this text: cuts
+/// made on a file that has since changed are not laid over the new one.
+pub(crate) fn cuts_for(path: &str, original: &str) -> Result<cleanup::Cuts, String> {
+    let Some((base, ranges)) = with_store!(s => s.text_cuts(path))? else {
+        return Ok(cleanup::Cuts::default());
+    };
+    let cuts = cleanup::Cuts::new(ranges.into_iter().map(|(a, b)| a as usize..b as usize).collect());
+    Ok(if base == original.len() as i64 && cuts.fits(original) {
+        cuts
+    } else {
+        cleanup::Cuts::default()
+    })
+}
+
+/// The decoded file with what 文本整理 took out of it gone: the text every part
+/// of the app reads.
+fn cut_text(path: &str, d: decode::Decoded) -> Result<decode::Decoded, String> {
+    let cuts = cuts_for(path, &d.text)?;
+    Ok(if cuts.is_empty() {
+        d
+    } else {
+        decode::Decoded {
+            text: cuts.apply(&d.text),
+            ..d
+        }
+    })
+}
+
+/// Whether 文本整理 has taken anything out of the book.
+pub(crate) fn is_cut(path: &str) -> Result<bool, String> {
+    Ok(with_store!(s => s.text_cuts(path))?.is_some())
+}
+
+fn chapter_records(text: &str, chapters: &[book::Chapter]) -> Vec<ChapterRecord> {
+    chapters
+        .iter()
+        .map(|c| ChapterRecord {
+            index: c.index as i64,
+            number: c.number.map(|n| n as i64),
+            title: c.title.clone(),
+            start: c.span.start as i64,
+            end: c.span.end as i64,
+            body_start: c.body_start as i64,
+            text_hash: store::text_hash(&text[c.body_start..c.span.end]),
+        })
+        .collect()
+}
+
+/// Lay other cuts over the book's file — `next` decides them from the file and
+/// the cuts it has now — and move everything stored about the book onto the
+/// text they leave. The book is closed after, so the next read opens the new
+/// text.
+pub(crate) fn recut_book(
+    path: &str,
+    book_id: i64,
+    next: impl FnOnce(&str, &cleanup::Cuts) -> Result<cleanup::Cuts, String>,
+) -> Result<(), String> {
+    let d = decode_file(path)?;
+    let old = cuts_for(path, &d.text)?;
+    let new = next(&d.text, &old)?;
+    if !new.fits(&d.text) {
+        return Err("要删除的位置不对，请重新查找".into());
+    }
+    let text = new.apply(&d.text);
+    let fp = fingerprint::fingerprint(d.encoding, &text);
+    let b = book::build(&text, &fp);
+    let records = chapter_records(&text, &b.chapters);
+    let cuts: Vec<(i64, i64)> = new
+        .ranges()
+        .iter()
+        .map(|r| (r.start as i64, r.end as i64))
+        .collect();
+    let base = (!new.is_empty()).then_some(d.text.len() as i64);
+    let moved = |y: i64| new.forward(old.back(y.max(0) as usize)) as i64;
+    let moved = with_store!(s => s.recut(book_id, text.len() as i64, &records, &moved, base, &cuts))?;
+    crate::api::image::follow_split(book_id, &moved);
+    close_book(path.to_string());
+    Ok(())
+}
+
 /// Re-parse a book with a user-chosen encoding (`None` returns to detection).
 /// The choice persists, so the book decodes correctly on every future open.
 pub fn set_book_encoding(
@@ -536,6 +607,8 @@ pub fn set_book_encoding(
     encoding: Option<String>,
 ) -> Result<BookInfo, String> {
     with_store!(s => s.set_encoding_override(book_id, encoding.as_deref()))?;
+    // Cuts were made on the text as it decoded before.
+    with_store!(s => s.clear_cuts(book_id))?;
     close_book(path.clone());
     // The old tags were computed from the old decoding — which, if the user is
     // here, was mojibake. Clear them so the re-open re-tags from the real text.
@@ -614,16 +687,8 @@ pub fn backfill_genres() -> Result<u32, String> {
     for (id, path) in todo {
         // A file that has moved or gone is not an error here — it will report
         // itself the moment the reader taps it. Skip and carry on.
-        let Ok(raw) = std::fs::read(&path) else {
+        let Ok(d) = decode_file(&path) else {
             continue;
-        };
-        let forced = with_store!(s => s.encoding_override(&path))?;
-        let d = match forced {
-            Some(label) => match decode::decode_as(&raw, &label) {
-                Some(d) => d,
-                None => continue,
-            },
-            None => decode::decode(&raw),
         };
         let tags = genre::tags(&d.text).join("、");
         with_store!(s => s.set_genre_tags(id, &tags))?;
@@ -1072,14 +1137,7 @@ pub(crate) fn read_quietly<T>(
     if let Some(l) = cache().read().unwrap().get(path) {
         return Ok(f(&l.text, &l.chapters));
     }
-    let raw = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
-    let forced = with_store!(s => s.encoding_override(path))?;
-    let d = match forced {
-        Some(label) => {
-            decode::decode_as(&raw, &label).ok_or_else(|| format!("未知编码: {label}"))?
-        }
-        None => decode::decode(&raw),
-    };
+    let d = cut_text(path, decode_file(path)?)?;
     let fp = fingerprint::fingerprint(d.encoding, &d.text);
     let b = book::build(&d.text, &fp);
     Ok(f(&d.text, &b.chapters))

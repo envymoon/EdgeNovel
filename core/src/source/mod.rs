@@ -17,7 +17,7 @@
 //! any of those is simply not usable here, and the manager greys it out.
 
 mod rule;
-mod tidy;
+pub(crate) mod tidy;
 
 pub use rule::{html_to_text, Unsupported};
 pub use tidy::{chapter_name, chapter_number, pair_chapters, scrub, tidy_toc};
@@ -588,13 +588,22 @@ pub fn chapter_with(
     if !text.trim().is_empty() && !readable(&text) {
         return Err("正文是加密的，本机引擎读不了（这个站要浏览器解密）".into());
     }
-    let (mut text, cut) = tidy::scrub(&text);
+    // Whether the site sent all of the chapter is judged on it without the
+    // site's furniture. The furniture itself goes into the book as sent: 文本整理
+    // shows it to the reader, who removes it there.
+    let (clean, cut) = tidy::scrub(&text);
     // A site's 「转码失败，请换源」 in the chapter's place is no text at all, and
     // must not reach the book as if it were the chapter.
-    if tidy::is_notice(&text) {
-        text.clear();
+    if tidy::is_notice(&clean) {
+        return Ok(Chapter { text: String::new(), whole: false });
     }
-    let whole = !text.is_empty() && !cut && !tidy::is_preview(&text);
+    let whole = !clean.is_empty() && !cut && !tidy::is_preview(&clean);
+    let text = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     Ok(Chapter { text, whole })
 }
 

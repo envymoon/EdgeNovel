@@ -286,6 +286,24 @@ const _english = <String, String>{
   '已经是最后一章': 'This is the last chapter',
   '标注': 'Annotations',
   '添加标注': 'Add annotation',
+  '文本整理': 'Text cleanup',
+  '还原原文': 'Restore original',
+  '还原原文？': 'Restore the original text?',
+  '还原': 'Restore',
+  '已还原': 'Restored',
+  '添加': 'Add',
+  '查找': 'Find',
+  '没有找到': 'Nothing found',
+  '全选': 'Select all',
+  '全不选': 'Select none',
+  '标为广告': 'Mark as ad',
+  '网址': 'Web addresses',
+  '网站提示': 'Site notices',
+  '站名水印': 'Site watermarks',
+  '网页代码': 'Web page code',
+  '作者的话': 'Author’s notes',
+  '反复出现': 'Repeated lines',
+  '自定义': 'Custom',
   '编辑标注': 'Edit annotation',
   '写下你的想法': 'Write a note',
   '标注已删除': 'Annotation deleted',
@@ -761,6 +779,14 @@ String translateUi(String source, material.Locale locale) {
         : ' · ${readUpTo.group(2)}/${readUpTo.group(3)} indexed';
     return '${readUpTo.group(1)} chapters read$indexed';
   }
+  final spots = RegExp(r'^(\d+) 处$').firstMatch(source);
+  if (spots != null) return spots.group(1)!;
+  final removeSpots = RegExp(r'^删除 (\d+) 处？$').firstMatch(source);
+  if (removeSpots != null) return 'Remove ${removeSpots.group(1)}?';
+  final removed = RegExp(r'^已删除 (\d+) 处$').firstMatch(source);
+  if (removed != null) return 'Removed ${removed.group(1)}';
+  final removeTicked = RegExp(r'^删除所选（(\d+) 处）$').firstMatch(source);
+  if (removeTicked != null) return 'Remove selected (${removeTicked.group(1)})';
   final drawn = RegExp(r'^已画 (\d+) 张$').firstMatch(source);
   if (drawn != null) return '${drawn.group(1)} drawn';
   final numberedChapter = RegExp(r'^第 (\d+) 章$').firstMatch(source);

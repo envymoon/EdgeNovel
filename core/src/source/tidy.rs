@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// A web address, or a bare domain on one of the endings these sites live on.
-static ADDR: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static ADDR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)https?://|www\.|\b[a-z0-9][a-z0-9-]*\.(com|net|org|cc|la|info|pw|me|xyz|top|vip|cn|tw|io|co|so|biz|site|club|tv|cx|in|us|wang|ink|link|online|live|app|work|fun|icu|cyou|lol)\b",
     )
@@ -22,27 +22,27 @@ static ADDR: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Words that turn a long line with an address in it into an advert.
-static AD_WORDS: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static AD_WORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"网址|域名|地址|网站|本站|书签|收藏|手机版|最新章节|最快更新|首发|访问|浏览器").unwrap()
 });
 
 /// Lines every site of a kind prints the same way: page furniture, not prose.
-static FURNITURE: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static FURNITURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"加入书签|方向键.{0,12}翻页|上一章.{0,10}下一章|章节报错|章节错误|一秒记住|记住本站|收藏本站|本站地址|最新网址|首发域名|最新域名|最快更新|无弹窗|请记住本书|手机用户请|手机版阅读|扫描二维码|二维码访问|最新章节[！!]?$|最新章节全网首发|^未完待续\W*$|^[（(]本章完[)）]$|^[A-Za-z_][A-Za-z0-9_]*\(.*\);?$",
+        r"加入书签|方向键.{0,12}翻页|上一章[^，。！？,]{0,10}下一章|章节报错|章节错误|一秒记住|记住本站|收藏本站|本站地址|最新网址|首发域名|最新域名|最快更新|无弹窗|请记住本书|手机用户请|手机版阅读|扫描二维码访问|二维码访问|扫码阅读|最新章节[！!]?$|最新章节全网首发|^未完待续\W*$|^[（(]本章完[)）]$|^[A-Za-z_][A-Za-z0-9_]*\([^()]*\);$|^[A-Za-z_][A-Za-z0-9_]*\(\)$",
     )
     .unwrap()
 });
 
 /// "There is a next page" — said by a page whose next page we did not read.
-static CUT: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static CUT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[（(]?\s*(本章未完|本章没完)[^）)\n]{0,12}[）)]?|[（(]?\s*(请)?点击下一页继续阅读[）)]?|-->>")
         .unwrap()
 });
 
 /// The site's own notice spliced into the text where a piece of it failed:
 /// 「转码失败！请您使用右上换源切换源站阅读」 between two scenes.
-static GAP: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static GAP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"转码失败|正在手打中|内容更新后[，,]?\s*请重新刷新|请重新刷新页面").unwrap()
 });
 
@@ -84,30 +84,30 @@ pub fn scrub(text: &str) -> (String, bool) {
 }
 
 /// A bracketed aside, short enough to be a signature.
-static ASIDE: LazyLock<Regex> =
+pub(crate) static ASIDE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[（(【\[][^（()）【】\[\]]{1,60}[)）】\]]").unwrap());
 
 /// Markup the text came wrapped in: 「<font color=red>」, a stray 「br />」.
-static MARKUP: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static MARKUP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]{0,80})?\s*/?>|^\s*[A-Za-z]+\s*/>\s*$").unwrap()
 });
 
 /// The old platform sign-off glued to the last sentence: 「(未完待续，如欲知后事
 /// 如何，请登陆…」. Not a page we missed: the chapter ends there.
-static SIGN_OFF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[（(]\s*未完待续.*$").unwrap());
+pub(crate) static SIGN_OFF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[（(]\s*未完待续.*$").unwrap());
 
 /// The site's address header glued to the front of a paragraph, its address
 /// already gone: 「笔趣阁已启用最新域名：萧炎蝎山等人皆是连忙抬头」.
-static GLUED: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static GLUED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[^，。！？“”\s]{0,10}?(已启用)?最新(域名|网址)[:：]\s*").unwrap()
 });
 
 /// A site's header line: the book and its author, or just the author.
-static BYLINE: LazyLock<Regex> =
+pub(crate) static BYLINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\S{0,20}\s*作者[:：]\s*\S{0,12}$").unwrap());
 
 /// A site's mark in brackets: 「(三七中文et)」.
-static WATERMARK: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static WATERMARK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(小说|中文|文学|书屋|书库|书吧|书城)[网站]?\s*[A-Za-z]{1,8}\s*[)）】\]]$").unwrap()
 });
 
@@ -127,7 +127,7 @@ fn strip_asides(line: &str) -> String {
         .to_string()
 }
 
-fn is_furniture(line: &str) -> bool {
+pub(crate) fn is_furniture(line: &str) -> bool {
     let n = line.chars().count();
     // An address inside a sentence of the story stays; an address that is the
     // whole line, or comes with "网址"/"收藏" around it, is the site talking.
