@@ -2,6 +2,7 @@ pub mod book;
 pub mod cast;
 pub mod chapters;
 pub mod chunk;
+pub mod cleanup;
 pub mod cover;
 pub mod decode;
 pub mod fingerprint;

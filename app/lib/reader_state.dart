@@ -1251,6 +1251,18 @@ class ReaderState extends ChangeNotifier {
     return info.encoding;
   }
 
+  /// Before 文本整理 moves a book onto other text: the place being read in it
+  /// is written down first, so it moves with everything else.
+  Future<void> settleBefore(String path) async {
+    if (info?.path == path) await endSession();
+  }
+
+  /// After: the book, if open, is read again from the new text at its moved
+  /// place.
+  Future<void> reopenAfterRecut(String path) async {
+    if (info?.path == path) await open(path);
+  }
+
   Future<void> open(String path) async {
     loading = true;
     error = null;

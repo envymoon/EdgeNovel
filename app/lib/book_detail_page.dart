@@ -15,6 +15,7 @@ import 'reader_state.dart';
 import 'search_index_page.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/book.dart';
+import 'text_cleanup_page.dart';
 import 'theme.dart';
 import 'youshu_reviews.dart';
 
@@ -202,6 +203,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                           const SizedBox(height: 12),
                           _backgroundEntry(t),
                         ],
+                        const SizedBox(height: 12),
+                        _cleanupEntry(t),
                       ],
                     ),
                   ),
@@ -746,6 +749,29 @@ class _BookDetailPageState extends State<BookDetailPage> {
     indent: 52,
     endIndent: 14,
     color: t.muted.withValues(alpha: 0.13),
+  );
+
+  /// 文本整理: the site's adverts and furniture, found by rule and removed on
+  /// the reader's say.
+  Widget _cleanupEntry(ReadingTheme t) => Material(
+    clipBehavior: Clip.antiAlias,
+    color: t.surface,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: t.outline),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: _entry(
+      t,
+      icon: Icons.cleaning_services_outlined,
+      title: '文本整理',
+      onTap: () => _open(
+        TextCleanupPage(
+          book: widget.book,
+          reader: widget.reader,
+          settings: widget.settings,
+        ),
+      ),
+    ),
   );
 
   /// The one way into pace and device policy from here. Starting a pass is

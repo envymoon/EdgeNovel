@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cache_files`, `cached`, `ensure`, `file_bytes`, `find_engine`, `find_model`, `has_engine`, `health`, `kill`, `last_used`, `max_frames`, `new`, `one_line`, `server`, `speak`, `trim_cache`, `tts_dir`, `watch_idle`, `wav`
+// These functions are ignored because they are not marked as `pub`: `cache_files`, `cached`, `ensure`, `file_bytes`, `find_engine`, `find_model`, `has_engine`, `health`, `kill`, `last_used`, `max_frames`, `new`, `one_line`, `server`, `speak`, `start`, `trim_cache`, `tts_dir`, `watch_idle`, `wav`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `InFlight`, `Sampling`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `drop`, `fmt`
 

@@ -26,6 +26,7 @@ import 'search_page.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart' as stats;
+import 'text_cleanup_page.dart';
 import 'theme.dart';
 import 'toc_drawer.dart';
 import 'tts_chapters_page.dart';
@@ -409,6 +410,23 @@ class _ReaderPageState extends State<ReaderPage> {
       draft: draft,
     );
     if (mounted) setState(() => _annotationDraft = null);
+  }
+
+  /// The selection is the site's, not the book's: 文本整理 finds it, and the
+  /// lines like it, everywhere in the book.
+  void _markAsAd() {
+    final draft = _annotationDraft;
+    final book = _currentBook;
+    if (draft == null || book == null) return;
+    setState(() => _annotationDraft = null);
+    _openPage(
+      TextCleanupPage(
+        book: book,
+        reader: widget.reader,
+        settings: widget.settings,
+        phrase: draft.quote,
+      ),
+    );
   }
 
   void _openBookDetail() {
@@ -1162,6 +1180,10 @@ class _ReaderPageState extends State<ReaderPage> {
               TextButton(
                 onPressed: _exitAnnotationMode,
                 child: const Text('退出'),
+              ),
+              TextButton(
+                onPressed: selected ? _markAsAd : null,
+                child: const Text('标为广告'),
               ),
               const SizedBox(width: 4),
               FilledButton.tonal(

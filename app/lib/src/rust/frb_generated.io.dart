@@ -5,6 +5,7 @@
 
 import 'api/ai.dart';
 import 'api/book.dart';
+import 'api/cleanup.dart';
 import 'api/image.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
@@ -154,6 +155,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo dco_decode_chapter_info(dynamic raw);
 
   @protected
+  CleanupGroup dco_decode_cleanup_group(dynamic raw);
+
+  @protected
+  CleanupItem dco_decode_cleanup_item(dynamic raw);
+
+  @protected
+  CleanupPiece dco_decode_cleanup_piece(dynamic raw);
+
+  @protected
+  CleanupReport dco_decode_cleanup_report(dynamic raw);
+
+  @protected
   CoverChoices dco_decode_cover_choices(dynamic raw);
 
   @protected
@@ -223,6 +236,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChapterInfo> dco_decode_list_chapter_info(dynamic raw);
 
   @protected
+  List<CleanupGroup> dco_decode_list_cleanup_group(dynamic raw);
+
+  @protected
+  List<CleanupItem> dco_decode_list_cleanup_item(dynamic raw);
+
+  @protected
+  List<CleanupPiece> dco_decode_list_cleanup_piece(dynamic raw);
+
+  @protected
   List<CoverTagGroup> dco_decode_list_cover_tag_group(dynamic raw);
 
   @protected
@@ -273,6 +295,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceItem> dco_decode_list_source_item(dynamic raw);
+
+  @protected
+  List<TextCut> dco_decode_list_text_cut(dynamic raw);
 
   @protected
   List<VolumeInfo> dco_decode_list_volume_info(dynamic raw);
@@ -369,6 +394,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TestFeed dco_decode_test_feed(dynamic raw);
+
+  @protected
+  TextCut dco_decode_text_cut(dynamic raw);
 
   @protected
   TtsStatus dco_decode_tts_status(dynamic raw);
@@ -527,6 +555,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo sse_decode_chapter_info(SseDeserializer deserializer);
 
   @protected
+  CleanupGroup sse_decode_cleanup_group(SseDeserializer deserializer);
+
+  @protected
+  CleanupItem sse_decode_cleanup_item(SseDeserializer deserializer);
+
+  @protected
+  CleanupPiece sse_decode_cleanup_piece(SseDeserializer deserializer);
+
+  @protected
+  CleanupReport sse_decode_cleanup_report(SseDeserializer deserializer);
+
+  @protected
   CoverChoices sse_decode_cover_choices(SseDeserializer deserializer);
 
   @protected
@@ -600,6 +640,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ChapterInfo> sse_decode_list_chapter_info(SseDeserializer deserializer);
 
   @protected
+  List<CleanupGroup> sse_decode_list_cleanup_group(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CleanupItem> sse_decode_list_cleanup_item(SseDeserializer deserializer);
+
+  @protected
+  List<CleanupPiece> sse_decode_list_cleanup_piece(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<CoverTagGroup> sse_decode_list_cover_tag_group(
     SseDeserializer deserializer,
   );
@@ -658,6 +711,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceItem> sse_decode_list_source_item(SseDeserializer deserializer);
+
+  @protected
+  List<TextCut> sse_decode_list_text_cut(SseDeserializer deserializer);
 
   @protected
   List<VolumeInfo> sse_decode_list_volume_info(SseDeserializer deserializer);
@@ -766,6 +822,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TestFeed sse_decode_test_feed(SseDeserializer deserializer);
+
+  @protected
+  TextCut sse_decode_text_cut(SseDeserializer deserializer);
 
   @protected
   TtsStatus sse_decode_tts_status(SseDeserializer deserializer);
@@ -957,6 +1016,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_chapter_info(ChapterInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cleanup_group(CleanupGroup self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cleanup_item(CleanupItem self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cleanup_piece(CleanupPiece self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cleanup_report(CleanupReport self, SseSerializer serializer);
+
+  @protected
   void sse_encode_cover_choices(CoverChoices self, SseSerializer serializer);
 
   @protected
@@ -1050,6 +1121,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_cleanup_group(
+    List<CleanupGroup> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cleanup_item(
+    List<CleanupItem> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cleanup_piece(
+    List<CleanupPiece> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_cover_tag_group(
     List<CoverTagGroup> self,
     SseSerializer serializer,
@@ -1138,6 +1227,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<SourceItem> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_text_cut(List<TextCut> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_volume_info(
@@ -1267,6 +1359,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_test_feed(TestFeed self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_text_cut(TextCut self, SseSerializer serializer);
 
   @protected
   void sse_encode_tts_status(TtsStatus self, SseSerializer serializer);

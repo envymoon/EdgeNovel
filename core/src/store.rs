@@ -307,6 +307,17 @@ CREATE TABLE IF NOT EXISTS person_summaries (
     PRIMARY KEY (book_id, name)
 );
 
+-- 文本整理: what the reader took out of a book, as byte ranges of the file
+-- as decoded, which was `books.cuts_base` bytes long when they were made. Laid
+-- over the text every time the book is opened; the file is never written, so
+-- deleting the rows is going back to the original.
+CREATE TABLE IF NOT EXISTS text_cuts (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    start   INTEGER NOT NULL,
+    end     INTEGER NOT NULL,
+    PRIMARY KEY (book_id, start)
+);
+
 CREATE TABLE IF NOT EXISTS sources (
     url        TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
@@ -483,6 +494,7 @@ impl Store {
         // background could now be written from better material.
         let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN source TEXT", []);
         let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN basis INTEGER", []);
+        let _ = conn.execute("ALTER TABLE books ADD COLUMN cuts_base INTEGER", []);
         // 前情提要 was removed from the product. Its old generated paragraphs
         // lived in settings as recap:<book>:<chapter>; discard that unreachable
         // cache during migration instead of leaving stale AI text behind.
@@ -1157,6 +1169,158 @@ impl Store {
             .flatten())
     }
 
+    /// What 文本整理 took out of the book at `path`, and how long the decoded
+    /// file was when it did. `None` when nothing was.
+    pub fn text_cuts(&self, path: &str) -> Result<Option<(i64, Vec<(i64, i64)>)>> {
+        let found: Option<(i64, Option<i64>)> = self
+            .conn
+            .query_row("SELECT id, cuts_base FROM books WHERE path = ?1", [path], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        let Some((id, Some(base))) = found else {
+            return Ok(None);
+        };
+        let mut st = self
+            .conn
+            .prepare("SELECT start, end FROM text_cuts WHERE book_id = ?1 ORDER BY start")?;
+        let cuts = st
+            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<(i64, i64)>>>()?;
+        Ok((!cuts.is_empty()).then_some((base, cuts)))
+    }
+
+    /// The book with other cuts over its file: a text `total_bytes` long that
+    /// splits into `chapters`, where `moved` says where each byte of the text
+    /// before now is. Everything that points into the text moves with it in
+    /// one transaction — progress, bookmarks, notes, the reading log, the
+    /// semantic index — and the chapter overviews stay on their chapters. The
+    /// cached 人物图谱 holds offsets too and is built again; what the model wrote
+    /// about people is keyed by name and stays. Returns what `upsert_book_moved`
+    /// does, for the files kept by chapter.
+    pub fn recut(
+        &mut self,
+        id: i64,
+        total_bytes: i64,
+        chapters: &[ChapterRecord],
+        moved: &dyn Fn(i64) -> i64,
+        base: Option<i64>,
+        cuts: &[(i64, i64)],
+    ) -> Result<Vec<(i64, i64)>> {
+        let tx = self.conn.transaction()?;
+        let was: Vec<(i64, i64, i64)> = {
+            let mut st =
+                tx.prepare("SELECT idx, start, end FROM chapters WHERE book_id = ?1 ORDER BY idx")?;
+            let rows =
+                st.query_map([id], |r| Ok((r.get(0)?, moved(r.get(1)?), moved(r.get(2)?))))?;
+            rows.collect::<Result<_>>()?
+        };
+        type Enriched = (i64, Option<String>, Option<String>, Option<String>, Option<String>);
+        let enriched: Vec<Enriched> = {
+            let mut st = tx.prepare(
+                "SELECT body_start, summary, mood, entities, model_tag FROM chapters
+                 WHERE book_id = ?1 AND (summary IS NOT NULL OR mood IS NOT NULL)",
+            )?;
+            let rows = st.query_map([id], |r| {
+                Ok((moved(r.get(0)?), r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?;
+            rows.collect::<Result<_>>()?
+        };
+
+        let last: i64 =
+            tx.query_row("SELECT last_offset FROM books WHERE id = ?1", [id], |r| r.get(0))?;
+        tx.execute(
+            "UPDATE books SET last_offset = ?2, total_bytes = ?3, chapter_count = ?4, cuts_base = ?5
+             WHERE id = ?1",
+            params![id, moved(last), total_bytes, chapters.len() as i64, base],
+        )?;
+        let marks: Vec<(i64, i64)> = {
+            let mut st = tx.prepare("SELECT chapter, offset FROM bookmarks WHERE book_id = ?1")?;
+            let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_>>()?
+        };
+        for (chapter, offset) in marks {
+            tx.execute(
+                "UPDATE bookmarks SET offset = ?3 WHERE book_id = ?1 AND chapter = ?2",
+                params![id, chapter, moved(offset)],
+            )?;
+        }
+        for (table, start, end) in [
+            ("annotations", "start", "end"),
+            ("chunks", "start", "end"),
+            ("reading_events", "start_offset", "end_offset"),
+        ] {
+            let spans: Vec<(i64, i64, i64)> = {
+                let mut st = tx.prepare(&format!(
+                    "SELECT rowid, {start}, {end} FROM {table} WHERE book_id = ?1"
+                ))?;
+                let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+                rows.collect::<Result<_>>()?
+            };
+            let mut st = tx.prepare(&format!(
+                "UPDATE {table} SET {start} = ?2, {end} = ?3 WHERE rowid = ?1"
+            ))?;
+            for (row, a, b) in spans {
+                st.execute(params![row, moved(a), moved(b)])?;
+            }
+        }
+
+        tx.execute("DELETE FROM chapters WHERE book_id = ?1", [id])?;
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO chapters (book_id, idx, number, title, start, end, body_start, text_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for c in chapters {
+                st.execute(params![
+                    id,
+                    c.index,
+                    c.number,
+                    c.title,
+                    c.start,
+                    c.end,
+                    c.body_start,
+                    c.text_hash
+                ])?;
+            }
+        }
+        // An overview stays with the chapter its body now starts in.
+        {
+            let starts: Vec<i64> = chapters.iter().map(|c| c.start).collect();
+            let mut st = tx.prepare(
+                "UPDATE chapters SET summary = ?3, mood = ?4, entities = ?5, model_tag = ?6
+                 WHERE book_id = ?1 AND idx = ?2 AND summary IS NULL AND mood IS NULL",
+            )?;
+            for (at, summary, mood, entities, tag) in &enriched {
+                let idx = starts.partition_point(|s| s <= at).saturating_sub(1) as i64;
+                st.execute(params![id, idx, summary, mood, entities, tag])?;
+            }
+        }
+
+        tx.execute("DELETE FROM text_cuts WHERE book_id = ?1", [id])?;
+        {
+            let mut st =
+                tx.prepare("INSERT INTO text_cuts (book_id, start, end) VALUES (?1, ?2, ?3)")?;
+            for (start, end) in cuts {
+                st.execute(params![id, start, end])?;
+            }
+        }
+        tx.execute("DELETE FROM cast_cache WHERE book_id = ?1", [id])?;
+        let moved_chapters = follow_split(&tx, id, &was, chapters)?;
+        tx.commit()?;
+        Ok(moved_chapters)
+    }
+
+    /// Forget the cuts without moving anything: for when the text they were
+    /// made on is gone, as after decoding the file another way.
+    pub fn clear_cuts(&self, book_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM text_cuts WHERE book_id = ?1", [book_id])?;
+        self.conn
+            .execute("UPDATE books SET cuts_base = NULL WHERE id = ?1", [book_id])?;
+        Ok(())
+    }
+
     pub fn set_encoding_override(&self, book_id: i64, encoding: Option<&str>) -> Result<()> {
         self.conn.execute(
             "UPDATE books SET encoding_override = ?2 WHERE id = ?1",
@@ -1748,6 +1912,53 @@ mod tests {
         assert_eq!(s.completed_chapters(id).unwrap(), vec![1, 2]);
         assert_eq!(s.windows_since(0).unwrap()[0].chapter, 2);
         assert_eq!(s.annotations(id).unwrap()[0].chapter, 2);
+    }
+
+    /// Lines taken out of the text: everything that points into it moves with
+    /// it, the overviews stay, and taking the cuts back moves it all back.
+    #[test]
+    fn a_cut_moves_everything_onto_the_shorter_text() {
+        let span = |index: i64, start: i64, end: i64| ChapterRecord {
+            index,
+            number: None,
+            title: format!("{index}"),
+            start,
+            end,
+            body_start: start,
+            text_hash: start,
+        };
+        let mut s = mem();
+        let id = s
+            .upsert_book(&book("/a.txt"), &[span(0, 0, 50), span(1, 50, 100)])
+            .unwrap();
+        s.set_chapter_ai(id, 1, Some("概览"), None, "m").unwrap();
+        s.save_progress(id, 1, 80).unwrap();
+        s.save_bookmark(id, 1, 60, None).unwrap();
+        let note = s.save_annotation(None, id, 1, 70, 75, "原文", "批注").unwrap();
+        s.set_cast_cache(id, 2, 2, "{}").unwrap();
+
+        // Ten bytes out of the first chapter.
+        let cut = |x: i64| if x >= 30 { (x - 10).max(20) } else { x };
+        let moved = s
+            .recut(id, 90, &[span(0, 0, 40), span(1, 40, 90)], &cut, Some(100), &[(20, 30)])
+            .unwrap();
+        assert!(moved.is_empty());
+        assert_eq!(s.progress(id).unwrap(), (1, 70));
+        assert_eq!(s.bookmarks(id).unwrap()[0].offset, 50);
+        let n = &s.annotations(id).unwrap()[0];
+        assert_eq!((n.id, n.start, n.end), (note, 60, 65));
+        assert_eq!(s.chapter_summary(id, 1).unwrap().as_deref(), Some("概览"));
+        assert_eq!(s.text_cuts("/a.txt").unwrap(), Some((100, vec![(20, 30)])));
+        assert_eq!(s.cast_cache(id, 2, 2).unwrap(), None);
+
+        // Back to the original.
+        let back = |y: i64| if y >= 20 { y + 10 } else { y };
+        s.recut(id, 100, &[span(0, 0, 50), span(1, 50, 100)], &back, None, &[])
+            .unwrap();
+        assert_eq!(s.progress(id).unwrap(), (1, 80));
+        assert_eq!(s.bookmarks(id).unwrap()[0].offset, 60);
+        assert_eq!(s.text_cuts("/a.txt").unwrap(), None);
+        assert_eq!(s.chapter_summary(id, 1).unwrap().as_deref(), Some("概览"));
     }
 
     /// 冬日重现's 53 KB chapter cut to 10 KB kept the sentence written about all of
