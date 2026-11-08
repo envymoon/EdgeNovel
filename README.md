@@ -79,9 +79,13 @@ Android 需要 64 位（ARM64）手机；iOS 任何版本都能装，16.4 起可
 
 | 平台 | 下载 |
 | --- | --- |
-| Windows | [挚阅 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.4.0)（解压后运行 `novel.exe`，整个文件夹一起保留） |
-| Android | [挚阅 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.4.0)（ARM64） |
-| iOS | [挚阅 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.4.0)（未签名，需自行签名后安装） |
+| Windows | [挚阅 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.0)（解压后运行 `novel.exe`，整个文件夹一起保留） |
+| Android | [挚阅 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.0)（ARM64） |
+| iOS | [挚阅 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.0)（未签名，需自行签名后安装） |
+
+## 版本更新
+
+**1.5.0**　新增「文本整理」：书里夹带的网址、网站提示等广告按类型归成一组，勾选后一键删除，随时可以还原原文。
 
 ---
 

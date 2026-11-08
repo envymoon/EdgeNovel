@@ -79,9 +79,13 @@ No. Your data is stored apart from the app, and each new version backs it up bef
 
 | Platform | Download |
 | --- | --- |
-| Windows | [Zhiyue 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.4.0) (unzip and run `novel.exe`; keep the whole folder together) |
-| Android | [Zhiyue 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.4.0) (ARM64) |
-| iOS | [Zhiyue 1.4.0](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.4.0) (unsigned; sign it yourself to install) |
+| Windows | [Zhiyue 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.0) (unzip and run `novel.exe`; keep the whole folder together) |
+| Android | [Zhiyue 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.0) (ARM64) |
+| iOS | [Zhiyue 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.0) (unsigned; sign it yourself to install) |
+
+## What's new
+
+**1.5.0** Adds Text Cleanup: adverts slipped into a book, such as site addresses and notices, are grouped by kind and removed in one tap, and the original can be restored at any time.
 
 ---
 
