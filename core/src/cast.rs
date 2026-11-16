@@ -131,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 22;
+pub const SCAN_VERSION: u32 = 23;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -710,7 +710,10 @@ const NOT_A_NAME: &[&str] = &[
     "老婆",
     "老公",
     "媳妇",
+    "妻子",
     "房东",
+    "渐渐",
+    "旁边",
     "夫人",
     "公子",
     "小姐",
