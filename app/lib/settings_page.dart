@@ -12,6 +12,7 @@ import 'src/rust/api/book.dart';
 import 'storage_page.dart';
 import 'theme.dart';
 import 'youshu_login_page.dart';
+import 'youshu_reviews.dart' show youshuOffered;
 
 /// Lightweight entry points for app-wide preferences and data controls.
 ///
@@ -134,17 +135,18 @@ class SettingsPage extends StatelessWidget {
                         onChanged: settings.setOpenBookToDetail,
                       ),
                     ),
-                    _entry(
-                      t,
-                      icon: Icons.rate_review_outlined,
-                      title: '优书网书评',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => YoushuLoginPage(settings: settings),
+                    if (youshuOffered)
+                      _entry(
+                        t,
+                        icon: Icons.rate_review_outlined,
+                        title: '优书网书评',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => YoushuLoginPage(settings: settings),
+                          ),
                         ),
                       ),
-                    ),
                     _entry(
                       t,
                       icon: Icons.language,

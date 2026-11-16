@@ -5,6 +5,10 @@ import 'youshu_login_page.dart';
 import 'youshu_service.dart';
 import 'youshu_parser.dart';
 
+/// 优书网 is not offered for now: its entries on the book page and in
+/// settings are hidden, and nothing here runs. The code stays, to come back.
+const youshuOffered = false;
+
 /// Reading a book detail only reads local metadata, never the network.
 class YoushuReviewEntry extends StatefulWidget {
   final String title;

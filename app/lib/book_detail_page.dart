@@ -186,11 +186,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         _bookHeader(t, info, compact: compact),
                         const SizedBox(height: 18),
                         _readButton(t),
-                        YoushuReviewEntry(
-                          title: widget.book.title,
-                          author: widget.book.author,
-                          settings: widget.settings,
-                        ),
+                        if (youshuOffered)
+                          YoushuReviewEntry(
+                            title: widget.book.title,
+                            author: widget.book.author,
+                            settings: widget.settings,
+                          ),
                         const SizedBox(height: 28),
                         _reportHeader(t),
                         const SizedBox(height: 12),
