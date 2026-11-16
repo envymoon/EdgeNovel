@@ -70,7 +70,7 @@ pub struct Group {
 /// uses too.
 static AUTHOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"求(?:月票|推荐票|红票|推荐|收藏|订阅|打赏|保底|票)|(?:投|砸|给).{0,4}(?:月票|推荐票|红票)|(?:月票|推荐票|红票).{0,4}(?:投|砸|给)|保底月票|加更(?:[^加多新]|$)|作者有话说|作者的话|书友群|^[（(【]?\s*(?:PS|ps|Ps|P\.S\.?)\s*[:：.，,]|^[（(【]?\s*第[一二三四五六七八九十0-9]{1,3}更",
+        r"求(?:月票|推荐票|红票|推荐|收藏|订阅|打赏|保底|票)|(?:投|砸|给).{0,4}(?:月票|推荐票|红票)|(?:月票|推荐票|红票).{0,4}(?:投|砸|给)|保底月票|(?:^|[^参施增添追附])加更(?:[^加多新大好]|$)|作者有话说|作者的话|书友群|^[（(【]?\s*(?:PS|ps|Ps|P\.S\.?)\s*[:：.，,]|^[（(【]?\s*第[一二三四五六七八九十0-9]{1,3}更",
     )
     .unwrap()
 });
@@ -425,7 +425,7 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
     let lead = v.text.len() - v.text.trim_start().len();
     let t = v.text.trim();
     // A line that is one tag of a page's own: 「<Book {"book_id":…} >」.
-    if t.is_empty() || (marks.is_empty() && MARKUP.find(t).is_some_and(|m| m.len() == t.len())) {
+    if t.is_empty() || (marks.is_empty() && MARKUP.find(t).is_some_and(|m| m.len() == t.len())) || garbled(t) {
         return vec![(Kind::Markup, true, Vec::new())];
     }
     let heading = HEADING.is_match(t);
@@ -441,7 +441,7 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
             cuts.push((m.range(), Kind::Address));
         } else if WATERMARK.is_match(a) {
             cuts.push((m.range(), Kind::Watermark));
-        } else if FURNITURE.is_match(a) || FURNITURE.is_match(inner) {
+        } else if FURNITURE.is_match(a) || FURNITURE.is_match(inner) || APP_ASIDE.is_match(inner) {
             cuts.push((m.range(), Kind::SiteNotice));
         }
     }
@@ -460,6 +460,9 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
     }
     for m in GLUED_AD.find_iter(t) {
         cuts.push((m.range(), Kind::SiteNotice));
+    }
+    if !quoted {
+        cuts.extend(app_ad(t).into_iter().map(|r| (r, Kind::SiteNotice)));
     }
     // The site's words, and whether each could be glued onto a sentence of the
     // story that should stay: 「……价值都尚可。浏览器搜索最快更新」.
@@ -532,6 +535,9 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
         Some(kind.unwrap_or(Kind::Markup))
     } else if heading {
         None
+    // What the cuts leave is no words at all: 「！」. 「“砰！”」 is the story's.
+    } else if !cuts.is_empty() && !rest.chars().any(char::is_alphanumeric) {
+        Some(kind.unwrap_or(Kind::SiteNotice))
     } else if n < 80 && GAP.is_match(rest) {
         Some(Kind::SiteNotice)
     } else if !quoted && n < 150 && SITE_LINE.is_match(rest) {
@@ -573,9 +579,54 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
 }
 
 /// Adverts sites glue onto the end of a sentence, word for word the same.
+/// And a site's name veiled by dots after an @, its address spelled out a
+/// letter at a time: 「浏*览*器*搜*索：@精华·书阁……最快更新……」,
+/// 「@精华·书阁…j·h·s·s·d·c·o」.
 static GLUED_AD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"自从知道用.{0,10}搜索.{0,30}?最快更新了?").unwrap()
+    Regex::new(
+        r"自从知道用.{0,10}搜索.{0,30}?最快更新了?|(?:浏\*览\*器\*搜\*索[:：]?)?@[\p{Han}·]{2,8}(?:…*最快更新…*|…*[A-Za-z](?:·[A-Za-z]){2,})",
+    )
+    .unwrap()
 });
+
+/// An app's advert spliced into the story, clause by clause: 「请下载爱阅app，
+/// 无广告免费阅读最新章节内容。」. Each piece goes, and what joins them; the
+/// story it was spliced into stays.
+static APP_AD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(?:想要)?看最新章节内容|请?下载[^，。！？“”]{0,6}(?:阅读?|小说)app|请下载|最新章节内容已在[^，。！？“”]{0,6}|网站(?:即将关闭|已经不更新最新章节内容|内容更新慢)|已经[^，。！？“”]{0,10}更新最新章节内容|无广告免费阅读(?:最新章节内容)?|(?:下载)?阅读最新章节内容(?:无广告免费)?|免费看最新内容|永久免费看书|为您提供大神[^，。！？“”]{0,24}",
+    )
+    .unwrap()
+});
+
+/// An app's advert in brackets of its own: 「【…在能换源的app上终于有了解决
+/// 之道，这里下载换源app,同时查看本书在多个站点的最新章节。】」.
+static APP_ASIDE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)app.*(?:最新章节|免费|换源)|(?:最新章节|免费|换源).*app").unwrap());
+
+/// The app advert's pieces in `t`, each run of them as one cut, with the
+/// stop after the last.
+fn app_ad(t: &str) -> Vec<Range<usize>> {
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    for m in APP_AD.find_iter(t) {
+        match runs.last_mut() {
+            Some(r) if t[r.end..m.start()].chars().all(|c| "，。！？,.!? ".contains(c)) => r.end = m.end(),
+            _ => runs.push(m.range()),
+        }
+    }
+    for r in &mut runs {
+        if let Some(c) = t[r.end..].chars().next().filter(|c| "，。！？,.!?".contains(*c)) {
+            r.end += c.len_utf8();
+        }
+    }
+    runs
+}
+
+/// A line of the site's in another encoding, read as this one: its brackets
+/// and commas come out as 銆 and 锛, which no story uses.
+fn garbled(t: &str) -> bool {
+    t.contains('銆') && t.contains('锛')
+}
 
 /// The old platform's sign-off without its bracket: 「…心里才踏实。未完待续。
 /// 如果您喜欢这部作品，欢迎您来…」, to the end of the line.
@@ -591,7 +642,7 @@ static NEXT_TITLE: LazyLock<Regex> = LazyLock::new(|| {
 /// Lines that are a site's or a download's own, all of them.
 static SITE_LINE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"欢迎广大书友光临阅读|本书由.{0,30}提供|更多电子书请访问|更多精校小说尽在|本书下载自",
+        r"欢迎广大书友光临阅读|本书由.{0,30}提供|更多电子书请访问|更多精校小说尽在|本书下载自|^[。，]?手机版[^，。！？\s]{0,8}[:：]$|^[（(]本章不全[)）]$",
     )
     .unwrap()
 });
@@ -818,6 +869,9 @@ mod tests {
             "坐电车用的是通勤月票。",
             "\"那有空带我去趟教堂，见识以下。\"陈浮生微笑道。<Wewillrockyou>",
             "ThreeThousandDollars(3,000.00)",
+            "有些演员火了以后，便会想尽办法把自己的名气变现，接代言，拍广告，或者主动去联系更好的导演，参加更大型的制作。",
+            "青山理哼着《前前前世》，开始下载东京迪士尼app，绑定门票。",
+            "刷完的手机，在苹果商店里下载所有app都是免费的，这就是利用了ios的系统bug。",
         ] {
             assert!(find(prose, &whole_book(prose)).is_empty(), "{prose}");
         }
@@ -877,6 +931,30 @@ mod tests {
             (
                 "肖艾将自己的手机和赵牧的手机靠在了一起，然后用扫描二维码的方式添加了赵牧的微信。",
                 "肖艾将自己的手机和赵牧的手机靠在了一起，然后用扫描二维码的方式添加了赵牧的微信。",
+            ),
+            (
+                "请下载爱阅app，无广告免费阅读最新章节内容。血色的雨水，带着悲凉，落下凡尘。",
+                "血色的雨水，带着悲凉，落下凡尘。",
+            ),
+            (
+                "无尽的昏迷过后，时宇猛地从床上起身。想要看最新章节内容，请下载星星阅读app，无广告免费阅读最新章节内容。网站已经不更新最新章节内容，已经星星阅读APP更新最新章节内容。",
+                "无尽的昏迷过后，时宇猛地从床上起身。",
+            ),
+            (
+                "韩非很是随意的推开了食味阁的门。@精华·书阁…j·h·s·s·d·c·o(本章未完！",
+                "韩非很是随意的推开了食味阁的门。",
+            ),
+            ("手机版：", ""),
+            ("为您提供大神耳根的《光阴之外》最快更新，！", ""),
+            ("下载阅读最新章节内容。", ""),
+            ("“你敢！”(未完待续~^~)", "“你敢！”"),
+            ("砰！(未完待续。)", "砰！"),
+            ("。手机版更新最快网址：", ""),
+            ("（本章不全）", ""),
+            ("銆愯璇嗗崄骞寸殑鑰佷功鍙嬬粰鎴戞帹鑽愮殑杩戒功app锛屽挭鍜槄璇伙紒/p>", ""),
+            (
+                "【新章节更新迟缓的问题，在能换源的app上终于有了解决之道，这里下载换源app,同时查看本书在多个站点的最新章节。】",
+                "",
             ),
             // The author's asking stays unless the reader ticks it too.
             (
