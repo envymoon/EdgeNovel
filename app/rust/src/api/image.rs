@@ -1702,6 +1702,7 @@ mod tests {
                 .map(|l| cover::word(l).or_else(|| sights::all().find(|w| w.label == *l)).unwrap())
                 .collect(),
             seed,
+            passage: None,
         };
         assert_eq!(
             plate_prompt("武侠", &plate(Who::Girl(0), &["白衣", "长发", "剑", "竹林"], 1)).unwrap(),

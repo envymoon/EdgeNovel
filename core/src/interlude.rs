@@ -43,6 +43,9 @@ pub struct Plate {
     /// the place and the light around it.
     pub cues: Vec<&'static Word>,
     pub seed: u32,
+    /// For a thing or a sight: where in the text the passage it is from
+    /// starts.
+    pub passage: Option<usize>,
 }
 
 /// Looks fall into groups, one of each per person: two hair colours on one
@@ -123,6 +126,8 @@ const UNUSUAL: f32 = 3.0;
 const PERSON_ONE_IN: u32 = 4;
 /// How many plates back a thing is not drawn again.
 const RECENT: usize = 5;
+/// The chapters just before a plate, whose things it draws first.
+const LATELY: usize = 2;
 
 /// Motifs that sit behind a person. An animal or a coffin takes the picture
 /// over, so a person is drawn without them.
@@ -319,6 +324,9 @@ pub fn plan(text: &str, chapters: &[Chapter], leads: &[Vec<String>], every: usiz
             chapter: ch.index,
             slot,
             every,
+            lately: chapters
+                .get((ch.index + 1).saturating_sub(LATELY))
+                .map_or(0, |c| c.span.start),
             hits: &hits,
             words: &scenic.words,
             usual: &usual,
@@ -450,6 +458,8 @@ struct Stretch<'a> {
     chapter: usize,
     slot: usize,
     every: usize,
+    /// Where the last [`LATELY`] chapters before the plate start.
+    lately: usize,
     /// (byte offset in the text, index into `words`), in reading order.
     hits: &'a [(usize, usize)],
     words: &'a [&'static Word],
@@ -558,6 +568,11 @@ fn draw(
     if things.iter().any(fresh) {
         things.retain(fresh);
     }
+    // What the reader has just read, if the last chapters dwell on anything:
+    // a passage from early in the stretch is too long ago to know again.
+    if things.iter().any(|d| d.from >= stretch.lately) {
+        things.retain(|d| d.from >= stretch.lately);
+    }
     let last = recent.last().copied();
 
     // Whoever has gone longest without a plate, then whoever this stretch
@@ -594,6 +609,7 @@ fn draw(
             },
             cues,
             seed: fnv(&leads[i][0]),
+            passage: None,
         };
         return Some((plate, Subject::Lead(i)));
     }
@@ -629,6 +645,7 @@ fn draw(
         who: Who::Nobody,
         cues,
         seed: fnv(focus.label) ^ chapter as u32,
+        passage: from,
     };
     Some((plate, Subject::Thing(focus.label)))
 }
@@ -722,6 +739,20 @@ mod tests {
         let every = format!("{filler}{dwelling}");
         let (text, chapters) = book(&[&every, &every, &every, &every]);
         assert!(plan(&text, &chapters, &[], 4).is_empty());
+    }
+
+    #[test]
+    fn a_plate_draws_what_the_reader_has_just_read() {
+        // The stretch opens on a pencil case and ends on a lighthouse: the
+        // plate after it is of the lighthouse, read a moment ago.
+        let filler = "今天天气不错。".repeat(200);
+        let early = "她打开铅笔盒。铅笔盒里很乱。漆黑的铅笔盒上贴着贴纸。他合上铅笔盒。铅笔盒掉了。";
+        let late = "远处有一座灯塔。灯塔很高。他走向灯塔。灯塔亮了。";
+        let (text, chapters) = book(&[early, &filler, &filler, &filler, late]);
+        let plates = plan(&text, &chapters, &[], 5);
+        assert_eq!(plates[0].who, Who::Nobody);
+        assert_eq!(labels(&plates[0])[0], "灯塔");
+        assert!(plates[0].passage.unwrap() >= chapters[4].span.start);
     }
 
     #[test]

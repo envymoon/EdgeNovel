@@ -40,6 +40,12 @@ fn main() {
             interlude::Who::Nobody => "无人".into(),
         };
         let cues: Vec<&str> = p.cues.iter().map(|w| w.label).collect();
-        println!("[{:>4}] {who:<10} {}", p.chapter + 1, cues.join(" "));
+        // Which chapter the passage it shows is in, and its opening words.
+        let from = p.passage.map(|at| {
+            let c = b.chapters.iter().position(|c| (c.span.start..c.span.end).contains(&at)).unwrap_or(0);
+            let words: String = d.text[at..].chars().take(40).collect();
+            format!("  ← 第{}章 {}", c + 1, words.replace('\n', " "))
+        });
+        println!("[{:>4}] {who:<10} {}{}", p.chapter + 1, cues.join(" "), from.unwrap_or_default());
     }
 }
