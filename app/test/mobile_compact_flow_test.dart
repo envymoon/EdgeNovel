@@ -120,6 +120,46 @@ class _ShortChapterReader extends _CompactOpenReader {
   }
 }
 
+/// Three one-page chapters, all read already, so the pages either side are
+/// cut; turning moves between them for real.
+class _SlidingReader extends _CompactOpenReader {
+  _SlidingReader() {
+    chapterIndex = 1;
+    paragraphs = _of(1);
+  }
+
+  static List<Paragraph> _of(int chapter) => [
+    Paragraph(
+      kind: ParaKind.body,
+      text: '第$chapter章的话。',
+      start: chapter * 100,
+      end: chapter * 100 + 20,
+    ),
+  ];
+
+  int nexts = 0, prevs = 0;
+
+  @override
+  List<Paragraph>? nearbyParagraphs(int chapter) =>
+      chapter >= 0 && chapter <= 2 ? _of(chapter) : null;
+
+  @override
+  Future<void> next() async {
+    nexts++;
+    chapterIndex++;
+    paragraphs = _of(chapterIndex);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> prev() async {
+    prevs++;
+    chapterIndex--;
+    paragraphs = _of(chapterIndex);
+    notifyListeners();
+  }
+}
+
 class _SilentSpeech implements LocalSpeechSynthesizer {
   @override
   Future<bool> ready() async => true;
@@ -502,6 +542,58 @@ void main() {
     await tester.dragFrom(const Offset(90, 380), const Offset(200, 0));
     await tester.pumpAndSettle();
     expect((reader.nexts, reader.prevs), (1, 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a finger slides into the next chapter as into any page', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    final reader = _SlidingReader();
+    final pageInfo = ValueNotifier((1, 1));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListenableBuilder(
+          listenable: reader,
+          builder: (context, _) => PagedReader(
+            reader: reader,
+            settings: ReadingSettings(),
+            padding: const EdgeInsets.all(20),
+            pageInfo: pageInfo,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    Finder sliding(String text) => find.descendant(
+      of: find.byType(PageView),
+      matching: find.textContaining(text),
+    );
+
+    // Halfway across, the next chapter's first page is coming in beside
+    // this one, and nothing has opened yet.
+    final gesture = await tester.startGesture(const Offset(300, 380));
+    for (var i = 0; i < 10; i++) {
+      await gesture.moveBy(const Offset(-15, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(sliding('第2章的话'), findsOneWidget);
+    expect(sliding('第1章的话'), findsOneWidget);
+    expect(reader.nexts, 0);
+    await gesture.moveBy(const Offset(-60, 0));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect((reader.nexts, reader.chapterIndex), (1, 2));
+    expect(sliding('第2章的话'), findsOneWidget);
+    expect(sliding('第1章的话'), findsNothing);
+
+    // And back the same way, onto the chapter before's last page.
+    await tester.pump();
+    await tester.dragFrom(const Offset(90, 380), const Offset(250, 0));
+    await tester.pumpAndSettle();
+    expect((reader.prevs, reader.chapterIndex), (1, 1));
+    expect(pageInfo.value, (1, 1));
     expect(tester.takeException(), isNull);
   });
 

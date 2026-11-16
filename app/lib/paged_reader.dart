@@ -82,9 +82,18 @@ class _Typography {
   final ReadingSettings s;
   final ReadingTheme t;
 
-  const _Typography(this.s, this.t);
+  /// The text style the page inherits (the app's default body text). A Text
+  /// on the page is drawn with it underneath its own style, letter spacing
+  /// and all, so the pages are measured with it too; measured without it, a
+  /// line drawn a little wider wrapped once more on screen and pushed the
+  /// page's last line off its foot.
+  final TextStyle base;
 
-  TextStyle style(ParaKind kind) => switch (kind) {
+  const _Typography(this.s, this.t, [this.base = const TextStyle()]);
+
+  TextStyle style(ParaKind kind) => base.merge(_own(kind));
+
+  TextStyle _own(ParaKind kind) => switch (kind) {
     ParaKind.title => TextStyle(
       color: t.text,
       fontFamily: s.resolvedReadingFont,
@@ -142,9 +151,10 @@ List<BookPage> paginate(
   Size size,
   ReadingSettings settings,
   ReadingTheme theme,
-  Set<int> annotatedParagraphs,
-) {
-  final ty = _Typography(settings, theme);
+  Set<int> annotatedParagraphs, {
+  TextStyle base = const TextStyle(),
+}) {
+  final ty = _Typography(settings, theme, base);
   final pages = <BookPage>[];
   var chunks = <PageChunk>[];
   var remaining = size.height;
@@ -317,6 +327,17 @@ class PagedReaderState extends State<PagedReader>
   /// The page the copies under the reader are drawn around; see [_readyAround].
   int _shown = -1;
 
+  /// Sliding pages: the last page of the chapter before (1 or 0) and the
+  /// first of the chapter after, once cut, sit at either end of this
+  /// chapter's pages, so a finger slides into them as into any other page.
+  /// Let go there, that chapter opens on that very page ([_settled]).
+  int _lead = 0;
+  int _trail = 0;
+
+  /// A slide landed on the page of the chapter beside this one, which is
+  /// opening.
+  bool _crossing = false;
+
   /// Text at the top of the current page, as (paragraph, start), so
   /// re-pagination (font change, window resize) lands back on the same text,
   /// not on the page where its paragraph began.
@@ -409,7 +430,7 @@ class PagedReaderState extends State<PagedReader>
       final page = _pageOf(now.$1, now.$2);
       if (page != _page) {
         _dropCurl();
-        _ctrl?.jumpToPage(page);
+        _ctrl?.jumpToPage(page + _lead);
       }
     }
     setState(() {});
@@ -425,9 +446,47 @@ class PagedReaderState extends State<PagedReader>
     return _pageContaining(para);
   }
 
-  int get _page => _ctrl?.hasClients == true
-      ? _ctrl!.page!.round()
-      : _ctrl?.initialPage ?? 0;
+  /// The page on screen, of this chapter's pages: -1 or [_pages].length on
+  /// the page of the chapter beside it ([_lead], [_trail]).
+  int get _page =>
+      (_ctrl?.hasClients == true
+          ? _ctrl!.page!.round()
+          : _ctrl?.initialPage ?? 0) -
+      _lead;
+
+  /// Sliding pages, not turned over (仿真) and not held still for choosing
+  /// words.
+  bool get _slides => !_curlMode && !widget.annotationMode;
+
+  /// [_lead] and [_trail] as the chapters either side are cut now.
+  (int, int) get _edges {
+    final c = widget.reader.chapterIndex;
+    if (!_slides) return (0, 0);
+    return (
+      c > 0 && _laidOut[c - 1] != null ? 1 : 0,
+      _laidOut[c + 1] != null ? 1 : 0,
+    );
+  }
+
+  /// A slide has come to rest. On the page of the chapter beside this one,
+  /// that chapter opens there; back into the chapter before, the plate
+  /// between them comes first, over this chapter's first page.
+  void _settled() {
+    if (_crossing || _ctrl?.hasClients != true) return;
+    final page = _page;
+    if (page >= _pages.length) {
+      _crossing = true;
+      widget.reader.next();
+    } else if (page < 0) {
+      if (widget.onBackOffStart?.call() ?? false) {
+        _ctrl!.jumpToPage(_lead);
+        return;
+      }
+      _crossing = true;
+      _landAtEnd = true;
+      widget.reader.prev();
+    }
+  }
 
   /// Turn one page; roll into the neighbouring chapter at either edge.
   /// [pastPlate]: back from the plate before this chapter, so on into the
@@ -450,11 +509,13 @@ class PagedReaderState extends State<PagedReader>
       }
     }
     final r = widget.reader;
+    // On the page of the chapter beside this one, which is opening.
+    if (_crossing || _page < 0 || _page >= _pages.length) return;
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
       // A tap shows the next page at once: a slide, however short, is felt as
       // the page catching before it turns. Dragging still slides.
-      _ctrl?.jumpToPage(target);
+      _ctrl?.jumpToPage(target + _lead);
     } else if (dir > 0) {
       r.next();
     } else if (r.chapterIndex > 0) {
@@ -551,7 +612,7 @@ class PagedReaderState extends State<PagedReader>
     curl.at.value = dir > 0 ? curl.gone : curl.corner;
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
-      _ctrl?.jumpToPage(target);
+      _ctrl?.jumpToPage(target + _lead);
       _dropCurl();
       return;
     }
@@ -645,6 +706,7 @@ class PagedReaderState extends State<PagedReader>
     final r = widget.reader;
     return '${r.info?.id}|$chapter|$paragraphs|$size|'
         '${s.fontFamily}|${s.fontSize}|${s.lineHeight}|${s.paragraphSpacing}|${s.firstLineIndent}|${s.themeIndex}|'
+        '${DefaultTextStyle.of(context).style.hashCode}|'
         '${r.annotations.map((a) => '${a.id}:${a.updatedAt}').join(',')}';
   }
 
@@ -657,7 +719,14 @@ class PagedReaderState extends State<PagedReader>
             .isNotEmpty)
           i,
     };
-    return paginate(paras, size, s, s.theme, annotated);
+    return paginate(
+      paras,
+      size,
+      s,
+      s.theme,
+      annotated,
+      base: DefaultTextStyle.of(context).style,
+    );
   }
 
   void _rebuild(Size size) {
@@ -683,9 +752,13 @@ class PagedReaderState extends State<PagedReader>
     _laidOut
       ..removeWhere((c, _) => (c - r.chapterIndex).abs() > 1)
       ..[r.chapterIndex] = (sig, _pages);
+    final (lead, trail) = _edges;
+    _lead = lead;
+    _trail = trail;
 
     final int initial;
     if (r.chapterIndex != _chapter) {
+      _crossing = false;
       // Fresh chapter: open on the restored paragraph (0 unless a book was
       // just reopened), or on the last page when paging backwards into it.
       _chapter = r.chapterIndex;
@@ -702,7 +775,7 @@ class PagedReaderState extends State<PagedReader>
     }
 
     final old = _ctrl;
-    _ctrl = PageController(initialPage: initial);
+    _ctrl = PageController(initialPage: initial + _lead);
     // Both deferred: _rebuild runs during build, when notifying listeners and
     // disposing a controller the old PageView still holds are both illegal.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -736,7 +809,20 @@ class PagedReaderState extends State<PagedReader>
             _laidOut[c] = (sig, _paginate(c, paras, _size));
           }
         }
-        setState(() => _shown = _page);
+        final (lead, trail) = _edges;
+        if (lead != _lead && !_crossing && _ctrl?.hasClients == true) {
+          // A page comes in before this chapter's first: the same page is
+          // shown under a new count, by a new controller.
+          final page = _page;
+          final old = _ctrl!;
+          _ctrl = PageController(initialPage: page + lead);
+          _lead = lead;
+          WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+        }
+        setState(() {
+          _trail = trail;
+          _shown = _page;
+        });
       })
       ..ensureVisualUpdate();
   }
@@ -832,9 +918,12 @@ class PagedReaderState extends State<PagedReader>
                 if (_curlMode) {
                   final dir = moved.dx < 0 ? 1 : -1;
                   if (_dragTurns(dir)) turn(dir);
-                } else if (moved.dx < 0 && _downPage >= _pages.length - 1) {
+                } else if (moved.dx < 0 &&
+                    _downPage >= _pages.length - 1 &&
+                    _trail == 0) {
+                  // No page of the next chapter to slide into yet.
                   turn(1);
-                } else if (moved.dx > 0 && _downPage <= 0) {
+                } else if (moved.dx > 0 && _downPage <= 0 && _lead == 0) {
                   turn(-1);
                 }
                 return;
@@ -914,16 +1003,23 @@ class PagedReaderState extends State<PagedReader>
     ).copyWith(dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse}),
     child: NotificationListener<ScrollEndNotification>(
       onNotification: (n) {
-        if (n.depth == 0) _readyAround();
+        if (n.depth == 0) {
+          _settled();
+          _readyAround();
+        }
         return false;
       },
       child: PageView.builder(
-        key: ValueKey(_signature),
+        // A new count of pages ahead of this chapter's is a new controller,
+        // which a PageView only starts from its own page when it is new.
+        key: ValueKey('$_signature|$_lead'),
         controller: _ctrl,
         // 仿真: the finger turns the page over (_dragCurl), never slides it.
         physics: _curlMode ? const NeverScrollableScrollPhysics() : null,
-        itemCount: _pages.length,
-        onPageChanged: (i) {
+        itemCount: _lead + _pages.length + _trail,
+        onPageChanged: (at) {
+          final i = at - _lead;
+          if (i < 0 || i >= _pages.length) return;
           _topPara = _pages[i].firstPara;
           _topStart = _pages[i].firstStart;
           widget.reader.onVisibleParagraph(_topPara);
@@ -933,18 +1029,29 @@ class PagedReaderState extends State<PagedReader>
             atEnd: i == _pages.length - 1,
           );
         },
-        itemBuilder: (context, i) => Padding(
-          padding: widget.padding,
-          child: _PageView(
-            page: _pages[i],
-            settings: widget.settings,
-            theme: t,
-            reader: widget.reader,
-            annotationMode: widget.annotationMode,
-            onAnnotationSelection: widget.onAnnotationSelection,
-            spoken: widget.tts,
-          ),
-        ),
+        itemBuilder: (context, at) {
+          final i = at - _lead;
+          final c = widget.reader.chapterIndex;
+          // The page of the chapter beside this one: its text only.
+          final beside = i < 0
+              ? _laidOut[c - 1]?.$2.last
+              : i >= _pages.length
+              ? _laidOut[c + 1]?.$2.first
+              : null;
+          return Padding(
+            padding: widget.padding,
+            child: _PageView(
+              page: beside ?? _pages[i.clamp(0, _pages.length - 1)],
+              settings: widget.settings,
+              theme: t,
+              reader: widget.reader,
+              annotationMode: beside == null && widget.annotationMode,
+              onAnnotationSelection: widget.onAnnotationSelection,
+              plain: beside != null,
+              spoken: beside == null ? widget.tts : null,
+            ),
+          );
+        },
       ),
     ),
   );

@@ -64,6 +64,47 @@ void main() {
     }
   });
 
+  test('pages are measured with the letter spacing they inherit', () {
+    // The app's body text carries a little letter spacing, and a Text on the
+    // page draws with it. Every page, drawn that way, still fits.
+    const base = TextStyle(letterSpacing: 3);
+    const size = Size(350, 600);
+    final spaced = paginate(
+      paras,
+      size,
+      settings,
+      settings.theme,
+      const {},
+      base: base,
+    );
+    expect(spaced.length, greaterThan(pages.length));
+    for (final page in spaced) {
+      var height = 0.0;
+      for (final c in page.chunks) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: c.text + c.tail,
+            style: base.merge(
+              TextStyle(
+                fontFamily: settings.resolvedReadingFont,
+                locale: const Locale.fromSubtags(
+                  languageCode: 'zh',
+                  scriptCode: 'Hans',
+                ),
+                fontSize: settings.fontSize,
+                height: settings.lineHeight,
+              ),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+          maxLines: c.tail.isEmpty ? null : c.lines,
+        )..layout(maxWidth: page.width);
+        height += tp.height + settings.paragraphSpacing;
+      }
+      expect(height - settings.paragraphSpacing, lessThanOrEqualTo(600.5));
+    }
+  });
+
   test('the indent is drawn, not spaced, and the text survives paging', () {
     for (var i = 0; i < paras.length; i++) {
       final chunks = [
