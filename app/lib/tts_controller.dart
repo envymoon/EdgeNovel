@@ -34,6 +34,10 @@ import 'tts_text.dart';
 /// spoken, and the voice follows its index from sentence to sentence. With
 /// no AI voice installed the phone's own voice reads it instead, as it goes
 /// ([_startSystem]).
+/// 听书: how long a finger rests on a sentence to read on from it. Longer
+/// than a usual long press, so a resting thumb does not start it.
+const holdToListen = Duration(milliseconds: 800);
+
 class TtsController extends ChangeNotifier {
   final ReaderState reader;
   final ReadingSettings settings;
@@ -201,6 +205,8 @@ class TtsController extends ChangeNotifier {
   /// that sentence. Throws a Chinese message the caller can show.
   Future<void> start({int? fromIndex}) async {
     if (playing) return;
+    // Nothing paused to go back to: begin on the page being read.
+    if (_utts.isEmpty) fromIndex ??= -1;
     if (_byChapter) {
       if (await aiVoiceReady()) return _startSpoken(fromIndex);
       return _startSystem(fromIndex);
@@ -210,6 +216,7 @@ class TtsController extends ChangeNotifier {
     }
     if (_utts.isEmpty) _buildUtts();
     if (_utts.isEmpty) return;
+    if (fromIndex == -1) fromIndex = _onPage();
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
       _utts.length - 1,
@@ -325,6 +332,23 @@ class TtsController extends ChangeNotifier {
     }
   }
 
+  /// Read on from the sentence holding [offset] of paragraph [paragraphIndex]
+  /// (a finger held on it).
+  Future<void> listenFrom(int paragraphIndex, int offset) async {
+    if (_utts.isEmpty) return;
+    var k = _utts.lastIndexWhere(
+      (u) => u.paragraphIndex == paragraphIndex && u.start <= offset,
+    );
+    if (k < 0) k = _utts.indexWhere((u) => u.paragraphIndex >= paragraphIndex);
+    if (k < 0) return;
+    if (playing) return seekTo(k);
+    try {
+      await start(fromIndex: k);
+    } catch (_) {
+      // The play button says what is missing.
+    }
+  }
+
   /// Pace changed. The local engine has no pace of its own — playback is
   /// stretched instead — so nothing buffered goes stale; a server is asked for
   /// the pace, and what it already made is made at the old one.
@@ -365,7 +389,7 @@ class TtsController extends ChangeNotifier {
     // Sentences of a chapter spoken ahead carry no text.
     final chapter = (reader.info?.id, reader.chapterIndex);
     if (_utts.isEmpty || !_system || chapter != _systemChapter) {
-      if (chapter != _systemChapter) _pos = 0;
+      if (chapter != _systemChapter) fromIndex ??= -1;
       _systemChapter = chapter;
       _spoken = null;
       _pausedAt = null;
@@ -373,6 +397,7 @@ class TtsController extends ChangeNotifier {
       _buildUtts();
     }
     if (_utts.isEmpty) return;
+    if (fromIndex == -1) fromIndex = _onPage();
     _system = true;
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
@@ -487,9 +512,13 @@ class TtsController extends ChangeNotifier {
       reader.chapterIndex,
     );
     if (spoken == null || spoken.sentences.isEmpty) throw '本章未合成';
-    if (_spoken?.id != spoken.id) _pausedAt = null;
+    if (_spoken?.id != spoken.id) {
+      _pausedAt = null;
+      fromIndex ??= -1;
+    }
     _spoken = spoken;
     _utts = _spokenUtts(spoken);
+    if (fromIndex == -1) fromIndex = _onPage();
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
       _utts.length - 1,
@@ -645,6 +674,15 @@ class TtsController extends ChangeNotifier {
   // ── Segmentation ───────────────────────────────────────────────────────
 
   void _buildUtts() => _utts = chapterUtterances(reader.paragraphs);
+
+  /// The first sentence on the page being read: the one the page opens in.
+  int _onPage() {
+    final (p, within) = reader.seenAt;
+    final k = _utts.indexWhere(
+      (u) => u.paragraphIndex > p || (u.paragraphIndex == p && u.end > within),
+    );
+    return k < 0 ? 0 : k;
+  }
 
   int _uttIndexOf(int paragraphIndex, int segStart) {
     for (var k = 0; k < _utts.length; k++) {

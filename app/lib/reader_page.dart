@@ -610,6 +610,12 @@ class _ReaderPageState extends State<ReaderPage> {
             onTapSentence: compact || !AppPlatformSupport.hasReadAloud
                 ? null
                 : (start) => _tts.seekToSentence(i, start),
+            // On a phone a tap is the menu: a finger held on a sentence
+            // reads on from it, while one is lit.
+            onHoldSentence:
+                compact && _tts.hasQueue && _tts.activeParagraph >= 0
+                ? (start) => _tts.listenFrom(i, start)
+                : null,
             annotations: widget.reader.annotationsForParagraph(
               widget.reader.paragraphs[i],
             ),
@@ -631,39 +637,68 @@ class _ReaderPageState extends State<ReaderPage> {
 
   /// Where the reader is while the bars are away: the chapter, how long it has
   /// left at this reader's own pace, and when reading by pages, the page.
-  Widget _footer(BookInfo info, ReadingTheme t) {
+  Widget _footer(BookInfo info, ReadingTheme t) => ListenableBuilder(
+    listenable: Listenable.merge([_pageInfo, _scrollTop]),
+    builder: (context, _) => _footerRow(
+      info,
+      t,
+      widget.reader.chapterIndex,
+      _minutesLeft(_pageInfo.value),
+      null,
+    ),
+  );
+
+  /// The footer of one page ([page] counted from 0), drawn on that page.
+  Widget _pageFooter(
+    BookInfo info,
+    ReadingTheme t,
+    int chapter,
+    int page,
+    int pages,
+  ) => _footerRow(
+    info,
+    t,
+    chapter,
+    chapter == widget.reader.chapterIndex
+        ? _minutesLeft((page + 1, pages))
+        : null,
+    '${page + 1}/$pages',
+  );
+
+  Widget _footerRow(
+    BookInfo info,
+    ReadingTheme t,
+    int chapter,
+    int? minutes,
+    String? pageNumber,
+  ) {
     final style = TextStyle(
       color: t.muted.withValues(alpha: 0.8),
       fontSize: 11,
       height: 1.2,
     );
-    return ListenableBuilder(
-      listenable: Listenable.merge([_pageInfo, _scrollTop]),
-      builder: (context, _) {
-        final page = _pageInfo.value;
-        final minutes = _minutesLeft(page);
-        return Row(
-          children: [
-            Expanded(
-              child: Text(
-                info.chapters[widget.reader.chapterIndex].title,
-                translate: false,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: style,
-              ),
-            ),
-            if (minutes != null) ...[
-              const SizedBox(width: 12),
-              Text('剩 $minutes 分钟', style: style),
-            ],
-            if (_isPaged) ...[
-              const SizedBox(width: 12),
-              Text('${page.$1}/${page.$2}', translate: false, style: style),
-            ],
-          ],
-        );
-      },
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            chapter >= 0 && chapter < info.chapters.length
+                ? info.chapters[chapter].title
+                : '',
+            translate: false,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        if (minutes != null) ...[
+          const SizedBox(width: 12),
+          Text('剩 $minutes 分钟', style: style),
+        ],
+        if (pageNumber != null) ...[
+          const SizedBox(width: 12),
+          Text(pageNumber, translate: false, style: style),
+        ],
+      ],
     );
   }
 
@@ -930,12 +965,18 @@ class _ReaderPageState extends State<ReaderPage> {
         // scrolling: making room for them would move every line on screen.
         final barsOverText = compact;
         final systemInsets = MediaQuery.paddingOf(context);
-        final readerPadding = EdgeInsets.fromLTRB(
+        final margins = EdgeInsets.fromLTRB(
           compact ? 20 : 28,
           compact ? 12 : 20,
           compact ? 20 : 28,
           compact ? 28 : 40,
         );
+        // Pages on a phone are paper to the screen's edges, under the status
+        // bar and the home bar, so a turning page lifts all of it.
+        final onPaper = barsOverText && _isPaged
+            ? systemInsets
+            : EdgeInsets.zero;
+        final readerPadding = margins + onPaper;
         return PopScope(
           canPop: false,
           onPopInvokedWithResult: (didPop, result) {
@@ -1044,7 +1085,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 _textArea(
                   barsOverText: barsOverText,
                   showControls: showControls,
-                  systemInsets: systemInsets,
+                  systemInsets: systemInsets - onPaper,
                   child: Center(
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
@@ -1067,16 +1108,24 @@ class _ReaderPageState extends State<ReaderPage> {
                                   onToggleControls: _toggleChrome,
                                   onBackOffStart: _plateOnTheWayBack,
                                   tts: _tts,
+                                  footer: footer
+                                      ? (chapter, page, pages) => Padding(
+                                          padding: EdgeInsets.fromLTRB(
+                                            readerPadding.left,
+                                            0,
+                                            readerPadding.right,
+                                            6 + onPaper.bottom,
+                                          ),
+                                          child: _pageFooter(
+                                            info,
+                                            t,
+                                            chapter,
+                                            page,
+                                            pages,
+                                          ),
+                                        )
+                                      : null,
                                 ),
-                                if (footer)
-                                  Positioned(
-                                    left: readerPadding.left,
-                                    right: readerPadding.right,
-                                    bottom: 6,
-                                    child: IgnorePointer(
-                                      child: _footer(info, t),
-                                    ),
-                                  ),
                               ],
                             )
                           // The list is rebuilt per chapter and opens directly on the
@@ -1485,6 +1534,9 @@ class ParagraphView extends StatefulWidget {
 
   /// Tapping a sentence jumps read-aloud to it.
   final void Function(int segStart)? onTapSentence;
+
+  /// Or holding it ([holdToListen]), where a tap does something else.
+  final void Function(int segStart)? onHoldSentence;
   final List<BookAnnotation> annotations;
   final ValueChanged<List<BookAnnotation>>? onShowAnnotations;
   final bool annotationMode;
@@ -1499,6 +1551,7 @@ class ParagraphView extends StatefulWidget {
     this.active = false,
     this.activeStart = -1,
     this.onTapSentence,
+    this.onHoldSentence,
     this.annotations = const [],
     this.onShowAnnotations,
     this.annotationMode = false,
@@ -1513,7 +1566,7 @@ class ParagraphView extends StatefulWidget {
 class _ParagraphViewState extends State<ParagraphView> {
   /// One recognizer per sentence span. Recognizers are not garbage-collected by
   /// the framework, so they are rebuilt and disposed with the spans.
-  final List<TapGestureRecognizer> _taps = [];
+  final List<GestureRecognizer> _taps = [];
 
   @override
   void dispose() {
@@ -1564,10 +1617,16 @@ class _ParagraphViewState extends State<ParagraphView> {
       spans.add(const TextSpan(text: indentGlyphs, style: indentStyle));
     }
     for (final seg in sentenceSegments(text)) {
-      final tap = widget.onTapSentence == null
-          ? null
-          : (TapGestureRecognizer()
-              ..onTap = () => widget.onTapSentence?.call(seg.start));
+      final GestureRecognizer? tap = widget.onTapSentence != null
+          ? (TapGestureRecognizer()
+              ..onTap = () => widget.onTapSentence?.call(seg.start))
+          : widget.onHoldSentence != null
+          ? (LongPressGestureRecognizer(duration: holdToListen)
+              ..onLongPress = () {
+                HapticFeedback.selectionClick();
+                widget.onHoldSentence?.call(seg.start);
+              })
+          : null;
       if (tap != null) _taps.add(tap);
       spans.add(
         TextSpan(

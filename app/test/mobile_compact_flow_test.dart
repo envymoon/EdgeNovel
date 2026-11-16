@@ -412,8 +412,38 @@ void main() {
     await tester.tapAt(const Offset(195, 380));
     await tester.pump();
     expect(find.byTooltip('目录'), findsNothing);
-    expect(find.text('第一章 开始'), findsOneWidget);
-    expect(pageCount, findsOneWidget);
+    // Each page carries its own footer, the pages under it too.
+    expect(find.text('第一章 开始'), findsWidgets);
+    expect(find.textContaining(RegExp(r'^1/\d+$')), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a phone page is paper to the edges of the screen', (
+    tester,
+  ) async {
+    await setCompactSize(tester);
+    tester.view.padding = const FakeViewPadding(top: 47, bottom: 34);
+    addTearDown(tester.view.resetPadding);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderPage(
+          reader: _CompactOpenReader(),
+          settings: ReadingSettings(),
+          localSpeech: _SilentSpeech(),
+          enableTtsIo: false,
+          onBack: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+    final pages = find.byType(PagedReader);
+    // Under the status bar and the home bar too, so a turning page lifts
+    // all of it; the text keeps clear of both.
+    expect(tester.getSize(pages).height, 760);
+    expect(tester.getTopLeft(pages).dy, 0);
+    final padding = tester.widget<PagedReader>(pages).padding;
+    expect(padding.top, greaterThanOrEqualTo(47));
+    expect(padding.bottom, greaterThanOrEqualTo(34));
     expect(tester.takeException(), isNull);
   });
 

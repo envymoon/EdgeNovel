@@ -221,6 +221,24 @@ class ReaderState extends ChangeNotifier {
 
   bool get isOpen => info != null;
   int get currentOffset => _offset;
+
+  /// Where the page on screen opens: its first paragraph, and how far into
+  /// it (a page may open mid-paragraph). Listening starts there.
+  (int, int) get seenAt {
+    final seen = _seen;
+    if (seen != null && seen.$1 == chapterIndex && seen.$2 < paragraphs.length) {
+      return (seen.$2, seen.$3);
+    }
+    final index = paragraphs.lastIndexWhere((p) => p.start <= _offset);
+    return (index < 0 ? 0 : index, 0);
+  }
+
+  (int, int, int)? _seen;
+
+  /// The paged reader tells where its page opens; scrolling tells only the
+  /// paragraph ([onVisibleParagraph]).
+  void noteSeen(int paragraph, int within) =>
+      _seen = (chapterIndex, paragraph, within);
   Paragraph? get currentParagraph {
     if (paragraphs.isEmpty) return null;
     final index = paragraphs.lastIndexWhere((p) => p.start <= _offset);
@@ -1491,6 +1509,10 @@ class ReaderState extends ChangeNotifier {
   void onVisibleParagraph(int paragraphIndex) {
     if (paragraphIndex < 0 || paragraphIndex >= paragraphs.length) return;
     _offset = paragraphs[paragraphIndex].start;
+    if (_seen case (final c, final p, _)
+        when c != chapterIndex || p != paragraphIndex) {
+      _seen = null;
+    }
     _save();
     _logSpeedWindow(
       _speedLog.moved(chapterIndex, paragraphIndex, _charsBetween),
@@ -1592,6 +1614,7 @@ class ReaderState extends ChangeNotifier {
     if (b != null && b.path != _enrichingPath) await closeBook(path: b.path);
     info = null;
     paragraphs = const [];
+    _seen = null;
     _nearby.clear();
     annotations = const [];
     completedChapters = const {};

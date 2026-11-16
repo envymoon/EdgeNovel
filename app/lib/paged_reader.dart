@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart' show PointerScrollEvent, VelocityTracker;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import 'annotation_page.dart';
 import 'page_curl.dart';
@@ -293,6 +294,10 @@ class PagedReader extends StatefulWidget {
   /// 听书: the page follows the sentence being spoken, and shows it.
   final TtsController? tts;
 
+  /// The line under a page (chapter, page in it, pages in it), drawn on the
+  /// page itself so it slides and turns with it. Placed at the page's foot.
+  final Widget Function(int chapter, int page, int pages)? footer;
+
   const PagedReader({
     super.key,
     required this.reader,
@@ -305,6 +310,7 @@ class PagedReader extends StatefulWidget {
     this.onToggleControls,
     this.onBackOffStart,
     this.tts,
+    this.footer,
   });
 
   @override
@@ -337,6 +343,11 @@ class PagedReaderState extends State<PagedReader>
   /// A slide landed on the page of the chapter beside this one, which is
   /// opening.
   bool _crossing = false;
+
+  /// 听书: a finger held still on a sentence ([holdToListen]) reads on from
+  /// it. Only while a sentence is lit, so a resting thumb never starts it.
+  Timer? _hold;
+  bool _held = false;
 
   /// Text at the top of the current page, as (paragraph, start), so
   /// re-pagination (font change, window resize) lands back on the same text,
@@ -523,6 +534,36 @@ class PagedReaderState extends State<PagedReader>
       _landAtEnd = true;
       r.prev();
     }
+  }
+
+  /// Reads on from the sentence under [global], held there ([holdToListen]).
+  void _listenFrom(Offset global) {
+    final tts = widget.tts;
+    final box = _currentKey.currentContext?.findRenderObject();
+    if (!mounted || tts == null || box is! RenderBox || !box.hasSize) return;
+    final hits = BoxHitTestResult();
+    box.hitTest(hits, position: box.globalToLocal(global));
+    RenderParagraph? text;
+    PageChunk? chunk;
+    for (final entry in hits.path) {
+      final target = entry.target;
+      if (target is RenderParagraph) text ??= target;
+      if (target is RenderMetaData && target.metaData is PageChunk) {
+        chunk = target.metaData as PageChunk;
+        break;
+      }
+    }
+    if (text == null || chunk == null) return;
+    final at = text.getPositionForOffset(text.globalToLocal(global)).offset;
+    final source =
+        chunk.sourceStart +
+        (at - chunk.leadingNonSource).clamp(
+          0,
+          chunk.sourceEnd - chunk.sourceStart,
+        );
+    _held = true;
+    HapticFeedback.selectionClick();
+    unawaited(tts.listenFrom(chunk.paraIndex, source));
   }
 
   /// Lifts the page that turns [dir] by its right edge at [y]: the page on
@@ -768,6 +809,7 @@ class PagedReaderState extends State<PagedReader>
       _landAtEnd = false;
       _topPara = _pages[initial].firstPara;
       _topStart = _pages[initial].firstStart;
+      r.noteSeen(_topPara, _topStart);
     } else {
       // Same text, new geometry: stay on the words being read. The spot itself
       // is kept until a turn, so A+ then A- comes back to the very same page.
@@ -829,19 +871,42 @@ class PagedReaderState extends State<PagedReader>
 
   /// The pages one turn away from [_shown], in this chapter or the one beside
   /// it, each with the key its copy is drawn under.
-  List<(BookPage, GlobalKey)> get _neighbours {
+  /// The pages either side of the one shown, with where each sits: its
+  /// chapter, its place in it and that chapter's pages.
+  List<(BookPage, GlobalKey, int, int, int)> get _neighbours {
     if (_shown < 0 || _shown >= _pages.length) return const [];
     final c = widget.reader.chapterIndex;
+    final n = _pages.length;
     return [
       if (_shown > 0)
-        (_pages[_shown - 1], _prevKey)
+        (_pages[_shown - 1], _prevKey, c, _shown - 1, n)
       else if (_laidOut[c - 1]?.$2 case final prev?)
-        (prev.last, _prevKey),
-      if (_shown < _pages.length - 1)
-        (_pages[_shown + 1], _nextKey)
+        (prev.last, _prevKey, c - 1, prev.length - 1, prev.length),
+      if (_shown < n - 1)
+        (_pages[_shown + 1], _nextKey, c, _shown + 1, n)
       else if (_laidOut[c + 1]?.$2 case final next?)
-        (next.first, _nextKey),
+        (next.first, _nextKey, c + 1, 0, next.length),
     ];
+  }
+
+  /// A page's text in its margins, with its footer: all of one sheet, which
+  /// is what slides and what a curl lifts.
+  Widget _sheet(Widget text, int chapter, int page, int pages) {
+    final padded = Padding(padding: widget.padding, child: text);
+    final footer = widget.footer;
+    if (footer == null) return padded;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        padded,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: IgnorePointer(child: footer(chapter, page, pages)),
+        ),
+      ],
+    );
   }
 
   int _pageContaining(int paraIndex) {
@@ -852,6 +917,7 @@ class PagedReaderState extends State<PagedReader>
   @override
   void dispose() {
     widget.tts?.removeListener(_onSpeech);
+    _hold?.cancel();
     _ctrl?.dispose();
     _curlRun.dispose();
     _curl?.dispose();
@@ -893,8 +959,21 @@ class PagedReaderState extends State<PagedReader>
               _dragPointer = e.pointer;
               _dragDx = 0;
               _dragSpeed = VelocityTracker.withKind(e.kind);
+              _held = false;
+              _hold?.cancel();
+              final tts = widget.tts;
+              if (tts != null &&
+                  !widget.annotationMode &&
+                  tts.hasQueue &&
+                  tts.activeParagraph >= 0) {
+                final at = e.position;
+                _hold = Timer(holdToListen, () => _listenFrom(at));
+              }
             },
-            onPointerMove: _curlMode ? _dragCurl : null,
+            onPointerMove: (e) {
+              if ((e.position - _downAt).distance > 12) _hold?.cancel();
+              if (_curlMode) _dragCurl(e);
+            },
             // The pages do not scroll in 仿真: a notch of the wheel turns one,
             // and the notches that come while it turns are let go by.
             onPointerSignal: _curlMode
@@ -906,8 +985,17 @@ class PagedReaderState extends State<PagedReader>
                     }
                   }
                 : null,
-            onPointerCancel: (_) => _letGoCurl(),
+            onPointerCancel: (_) {
+              _hold?.cancel();
+              _letGoCurl();
+            },
             onPointerUp: (e) {
+              _hold?.cancel();
+              if (_held) {
+                _held = false;
+                _letGoCurl();
+                return;
+              }
               if (_letGoCurl()) return;
               final moved = e.position - _downAt;
               if (!widget.annotationMode &&
@@ -949,7 +1037,7 @@ class PagedReaderState extends State<PagedReader>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                for (final (page, key) in _neighbours)
+                for (final (page, key, chapter, at, of) in _neighbours)
                   IgnorePointer(
                     child: ExcludeSemantics(
                       child: RepaintBoundary(
@@ -957,9 +1045,8 @@ class PagedReaderState extends State<PagedReader>
                         // On paper, for a picture of it to turn (_startCurl).
                         child: ColoredBox(
                           color: t.background,
-                          child: Padding(
-                            padding: widget.padding,
-                            child: _PageView(
+                          child: _sheet(
+                            _PageView(
                               page: page,
                               settings: widget.settings,
                               theme: t,
@@ -967,6 +1054,9 @@ class PagedReaderState extends State<PagedReader>
                               annotationMode: false,
                               plain: true,
                             ),
+                            chapter,
+                            at,
+                            of,
                           ),
                         ),
                       ),
@@ -1023,6 +1113,7 @@ class PagedReaderState extends State<PagedReader>
           _topPara = _pages[i].firstPara;
           _topStart = _pages[i].firstStart;
           widget.reader.onVisibleParagraph(_topPara);
+          widget.reader.noteSeen(_topPara, _topStart);
           widget.pageInfo.value = (i + 1, _pages.length);
           widget.reader.recordChapterViewport(
             atStart: i == 0,
@@ -1033,15 +1124,18 @@ class PagedReaderState extends State<PagedReader>
           final i = at - _lead;
           final c = widget.reader.chapterIndex;
           // The page of the chapter beside this one: its text only.
-          final beside = i < 0
-              ? _laidOut[c - 1]?.$2.last
-              : i >= _pages.length
-              ? _laidOut[c + 1]?.$2.first
-              : null;
-          return Padding(
-            padding: widget.padding,
-            child: _PageView(
-              page: beside ?? _pages[i.clamp(0, _pages.length - 1)],
+          final before = i < 0 ? _laidOut[c - 1]?.$2 : null;
+          final after = i >= _pages.length ? _laidOut[c + 1]?.$2 : null;
+          final beside = before?.last ?? after?.first;
+          final n = _pages.length;
+          final (chapter, place, of) = before != null
+              ? (c - 1, before.length - 1, before.length)
+              : after != null
+              ? (c + 1, 0, after.length)
+              : (c, i.clamp(0, n - 1), n);
+          return _sheet(
+            _PageView(
+              page: beside ?? _pages[i.clamp(0, n - 1)],
               settings: widget.settings,
               theme: t,
               reader: widget.reader,
@@ -1050,6 +1144,9 @@ class PagedReaderState extends State<PagedReader>
               plain: beside != null,
               spoken: beside == null ? widget.tts : null,
             ),
+            chapter,
+            place,
+            of,
           );
         },
       ),
@@ -1119,12 +1216,17 @@ class _PageView extends StatelessWidget {
       spans.add(TextSpan(text: body));
     }
     if (c.tail.isNotEmpty) spans.add(TextSpan(text: c.tail));
-    return Text.rich(
-      TextSpan(style: style, children: spans),
-      textAlign: TextAlign.justify,
-      maxLines: c.tail.isEmpty ? null : c.lines,
-      overflow: TextOverflow.clip,
-      semanticsLabel: body,
+    // Which words these are, for a finger held on them (_listenFrom).
+    return MetaData(
+      metaData: c,
+      behavior: HitTestBehavior.translucent,
+      child: Text.rich(
+        TextSpan(style: style, children: spans),
+        textAlign: TextAlign.justify,
+        maxLines: c.tail.isEmpty ? null : c.lines,
+        overflow: TextOverflow.clip,
+        semanticsLabel: body,
+      ),
     );
   }
 
