@@ -26,6 +26,22 @@ static sd_ctx_t *        g_ctx = nullptr;
 static std::atomic<bool> g_cancel{false};
 static std::atomic<bool> g_background{false};
 
+// The engine kept loaded between pictures of one run (章间立绘, or covers
+// while the dialog is open): loading it is part of every picture's time, and
+// what it draws does not depend on it being fresh. Freed by edge_sd_release,
+// at the latest when the next picture is drawn without `keep`.
+static sd_ctx_t *        g_kept = nullptr;
+static std::string       g_kept_for;
+static std::atomic<bool> g_drop{false};
+
+static void drop_kept() {
+    if (g_kept) {
+        free_sd_ctx(g_kept);
+        g_kept = nullptr;
+        g_kept_for.clear();
+    }
+}
+
 // Where the picture being drawn is: 0 none, 1 the GPU, 2 the CPU only for
 // being behind the screen, 3 the CPU.
 static std::atomic<int>         g_where{0};
@@ -102,6 +118,17 @@ extern "C" void edge_sd_cancel(void) {
     stop_now();
 }
 
+// Give the kept engine's memory back: now, or when the picture being drawn
+// is done. Never waits.
+extern "C" void edge_sd_release(void) {
+    g_drop = true;
+    std::unique_lock<std::mutex> one(g_one, std::try_to_lock);
+    if (one.owns_lock()) {
+        drop_kept();
+        g_drop = false;
+    }
+}
+
 // One thread per performance core, as the other engines count them.
 static int cpu_threads() {
     for (const char * key : { "hw.perflevel0.physicalcpu", "hw.physicalcpu" }) {
@@ -126,15 +153,22 @@ struct sink {
 
 // 0 drawn into `out`, 1 stopped (edge_sd_cancel, or the app moving between
 // screen and background), -1 failed (edge_sd_error). `prefer_gpu` with `gpu`
-// 0: on the CPU only because the app is behind the screen.
+// 0: on the CPU only because the app is behind the screen. `keep` leaves the
+// engine loaded for the next picture.
 extern "C" int edge_sd_draw(const char * model, const char * taesd, int gpu, int prefer_gpu, const char * prompt,
                             const char * negative, int width, int height, int steps, int64_t seed, const char * out,
-                            edge_sd_log_cb on_log, edge_sd_step_cb on_step, void * user) {
+                            int keep, edge_sd_log_cb on_log, edge_sd_step_cb on_step, void * user) {
     watch_app();
     std::lock_guard<std::mutex> one(g_one);
     g_cancel = false;
     gpu      = gpu && edge_sd_gpu() && !g_background;
     g_where  = gpu ? 1 : (prefer_gpu && edge_sd_gpu() ? 2 : 3);
+    // A kept engine on the other device, or for other files, goes before
+    // this one loads: never two in memory.
+    const std::string key = std::string(model) + '|' + taesd + (gpu ? "|gpu" : "|cpu");
+    if (g_drop.exchange(false) || g_kept_for != key) {
+        drop_kept();
+    }
 
     sink s{ on_log, on_step, user };
     sd_set_log_callback(
@@ -163,7 +197,9 @@ extern "C" int edge_sd_draw(const char * model, const char * taesd, int gpu, int
     p.backend    = gpu ? nullptr : "cpu";
 
     int        rc  = 0;
-    sd_ctx_t * ctx = new_sd_ctx(&p);
+    sd_ctx_t * ctx = g_kept ? g_kept : new_sd_ctx(&p);
+    g_kept         = nullptr;
+    g_kept_for.clear();
     if (!ctx) {
         g_error = "生图引擎启动失败";
         rc      = -1;
@@ -221,7 +257,12 @@ extern "C" int edge_sd_draw(const char * model, const char * taesd, int gpu, int
             std::lock_guard<std::mutex> lock(g_ctx_mutex);
             g_ctx = nullptr;
         }
-        free_sd_ctx(ctx);
+        if (keep && rc != -1 && !g_drop.exchange(false)) {
+            g_kept     = ctx;
+            g_kept_for = key;
+        } else {
+            free_sd_ctx(ctx);
+        }
     }
     g_where = 0;
     sd_set_log_callback(nullptr, nullptr);

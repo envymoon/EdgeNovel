@@ -786,9 +786,20 @@ pub struct CoverProgress {
     pub path: Option<String>,
 }
 
-/// Stop a picture being drawn. The dialog calls it on close too.
+/// Stop a picture being drawn. The dialog calls it on close too, which also
+/// gives back the engine kept loaded for its next picture.
 pub fn cancel_cover() {
     COVER.stop();
+    release();
+}
+
+/// iOS keeps the engine loaded between pictures of one run (the plates, or
+/// covers while the dialog is open); this frees it, now or when the picture
+/// in hand is done. Anything else that needs the memory calls it first.
+#[flutter_rust_bridge::frb(ignore)]
+pub(crate) fn release() {
+    #[cfg(in_process_engine)]
+    engine::release();
 }
 
 fn next_tmp() -> PathBuf {
@@ -1049,6 +1060,7 @@ fn render(
             path: None,
         });
         let gpu = prefer_gpu && !engine::background();
+        timing(if gpu { "draw gpu" } else { "draw cpu" });
         let mut log = Log::default();
         let drawn = engine::draw(
             &model,
@@ -1061,6 +1073,9 @@ fn render(
             &out,
             &mut |event| match event {
                 engine::Event::Log(error, text) => {
+                    if text.contains("taking") || text.contains("completed in") {
+                        timing(text.trim());
+                    }
                     let line = if error { format!("[E] {}", text.trim()) } else { text.trim().to_string() };
                     if let Some(p) = log.feed(&line) {
                         report(p);
@@ -1089,6 +1104,25 @@ fn render(
     }
 }
 
+/// iOS: how long each part of a picture took (loading, prompt, sampling,
+/// decoding), kept in `image/timings.log` to see where a phone's time goes.
+#[cfg(in_process_engine)]
+fn timing(line: &str) {
+    use std::io::Write;
+    let Ok(dir) = image_dir() else { return };
+    let path = dir.join("timings.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 256 * 1024) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{now} {line}");
+    }
+}
+
 /// The engine compiled into the app (ios_sd/edge_sd.mm).
 #[cfg(in_process_engine)]
 mod engine {
@@ -1109,11 +1143,13 @@ mod engine {
             steps: c_int,
             seed: i64,
             out: *const c_char,
+            keep: c_int,
             on_log: extern "C" fn(c_int, *const c_char, *mut c_void),
             on_step: extern "C" fn(c_int, c_int, *mut c_void),
             user: *mut c_void,
         ) -> c_int;
         fn edge_sd_cancel();
+        fn edge_sd_release();
         fn edge_sd_background() -> c_int;
         fn edge_sd_error() -> *const c_char;
     }
@@ -1151,6 +1187,10 @@ mod engine {
 
     pub fn cancel() {
         unsafe { edge_sd_cancel() }
+    }
+
+    pub fn release() {
+        unsafe { edge_sd_release() }
     }
 
     pub enum Event<'a> {
@@ -1206,6 +1246,7 @@ mod engine {
                 STEPS as c_int,
                 seed as i64,
                 out.as_ptr(),
+                1,
                 take_log,
                 take_step,
                 &mut sink as *mut Sink as *mut c_void,
@@ -1337,6 +1378,13 @@ fn plates(
     // first: there is memory for one model at a time.
     #[cfg(in_process_engine)]
     crate::api::ai::stop_ai();
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            release();
+        }
+    }
+    let _release = Release;
     let (genre_tags, reading) = crate::api::book::plate_context(book_id)?;
     let (plan, leads) = crate::api::book::plate_plan(path, book_id, every.max(1) as usize)?;
     let scene = default_cover_scene(genre_tags);
@@ -1666,6 +1714,19 @@ mod tests {
             std::fs::rename(&path, out.join(format!("{name}.png")))
                 .or_else(|_| std::fs::copy(&path, out.join(format!("{name}.png"))).map(|_| ()))
                 .unwrap();
+            // Again with the engine kept from the picture above: faster, and
+            // the very same picture.
+            let t = std::time::Instant::now();
+            let mut again = Vec::new();
+            draw(&strings(&["少女"]), &strings(&["仙侠"]), "", &[], 7, |p| again.push(p)).unwrap();
+            println!("[{name}] 引擎不重载 {:.1} 秒", t.elapsed().as_secs_f64());
+            let second = again.last().unwrap().path.clone().unwrap();
+            assert_eq!(
+                std::fs::read(&second).unwrap(),
+                std::fs::read(out.join(format!("{name}.png"))).unwrap(),
+                "a kept engine draws the same picture"
+            );
+            release();
         }
         crate::api::ai::set_ai_runtime_config(0, 0, 0, 1, 0);
     }

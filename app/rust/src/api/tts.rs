@@ -803,6 +803,7 @@ mod engine {
         let path = |p: &Path| CString::new(p.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string());
         let (t, c) = (path(talker)?, path(codec)?);
         *loaded = None;
+        crate::api::image::release();
         if unsafe { edge_tts_load(t.as_ptr(), c.as_ptr(), gpu as c_int) } == 0 {
             return Err(format!("启动朗读引擎失败: {}", error()));
         }
