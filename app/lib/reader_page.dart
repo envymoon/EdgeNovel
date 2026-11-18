@@ -1661,7 +1661,7 @@ class _ParagraphViewState extends State<ParagraphView> {
           : widget.onHoldSentence != null
           ? (LongPressGestureRecognizer(duration: holdToListen)
               ..onLongPress = () {
-                HapticFeedback.selectionClick();
+                HapticFeedback.mediumImpact();
                 widget.onHoldSentence?.call(seg.start);
               })
           : null;

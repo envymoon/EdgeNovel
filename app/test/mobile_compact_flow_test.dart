@@ -12,6 +12,7 @@ import 'package:novel/shelf_categories.dart';
 import 'package:novel/shelf_page.dart';
 import 'package:novel/src/rust/api/book.dart';
 import 'package:novel/theme.dart';
+import 'package:novel/tts_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _CompactReader extends ReaderState {
@@ -157,6 +158,27 @@ class _SlidingReader extends _CompactOpenReader {
     chapterIndex--;
     paragraphs = _of(chapterIndex);
     notifyListeners();
+  }
+}
+
+/// A voice playing paragraph 0 that notes where a held finger asks it to read
+/// from.
+class _HeldVoice extends TtsController {
+  _HeldVoice(ReaderState reader)
+    : super(reader, ReadingSettings(), localSpeech: _SilentSpeech(), enableIo: false) {
+    activeParagraph = 0;
+    activeStart = 0;
+    activeEnd = 5;
+  }
+
+  final asked = <(int, int)>[];
+
+  @override
+  bool get hasQueue => true;
+
+  @override
+  Future<void> listenFrom(int paragraphIndex, int offset) async {
+    asked.add((paragraphIndex, offset));
   }
 }
 
@@ -806,6 +828,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('未选择正文'), findsOneWidget);
     expect(find.text('退出'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a finger held on a sentence reads on from it', (tester) async {
+    await setCompactSize(tester);
+    final reader = _CompactOpenReader();
+    final voice = _HeldVoice(reader);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PagedReader(
+          reader: reader,
+          settings: ReadingSettings(),
+          padding: const EdgeInsets.all(20),
+          pageInfo: ValueNotifier((1, 1)),
+          tts: voice,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final at = tester.getCenter(find.textContaining('第 2 段', findRichText: true).first);
+    final finger = await tester.startGesture(at);
+    await tester.pump(holdToListen + const Duration(milliseconds: 100));
+    await finger.up();
+    await tester.pumpAndSettle();
+    expect(voice.asked.map((a) => a.$1), [2]);
     expect(tester.takeException(), isNull);
   });
 }

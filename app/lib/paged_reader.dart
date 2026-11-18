@@ -549,11 +549,12 @@ class PagedReaderState extends State<PagedReader>
     }
   }
 
-  /// Reads on from the sentence under [global], held there ([holdToListen]).
-  void _listenFrom(Offset global) {
-    final tts = widget.tts;
+  /// Where in the text [global] is, as (paragraph, offset): asked as the
+  /// finger comes down. Held still a moment later the page no longer answers,
+  /// its scroller having taken the finger, and nothing was ever found.
+  (int, int)? _textAt(Offset global) {
     final box = _currentKey.currentContext?.findRenderObject();
-    if (!mounted || tts == null || box is! RenderBox || !box.hasSize) return;
+    if (box is! RenderBox || !box.hasSize) return null;
     final hits = BoxHitTestResult();
     box.hitTest(hits, position: box.globalToLocal(global));
     RenderParagraph? text;
@@ -566,17 +567,25 @@ class PagedReaderState extends State<PagedReader>
         break;
       }
     }
-    if (text == null || chunk == null) return;
+    if (text == null || chunk == null) return null;
     final at = text.getPositionForOffset(text.globalToLocal(global)).offset;
-    final source =
-        chunk.sourceStart +
-        (at - chunk.leadingNonSource).clamp(
-          0,
-          chunk.sourceEnd - chunk.sourceStart,
-        );
+    return (
+      chunk.paraIndex,
+      chunk.sourceStart +
+          (at - chunk.leadingNonSource).clamp(
+            0,
+            chunk.sourceEnd - chunk.sourceStart,
+          ),
+    );
+  }
+
+  /// Reads on from [at], held there ([holdToListen]).
+  void _listenFrom((int, int) at) {
+    final tts = widget.tts;
+    if (!mounted || tts == null) return;
     _held = true;
-    HapticFeedback.selectionClick();
-    unawaited(tts.listenFrom(chunk.paraIndex, source));
+    HapticFeedback.mediumImpact();
+    unawaited(tts.listenFrom(at.$1, at.$2));
   }
 
   /// Lifts the page that turns [dir] by its right edge at [y]: the page on
@@ -1006,8 +1015,10 @@ class PagedReaderState extends State<PagedReader>
                   !widget.annotationMode &&
                   tts.hasQueue &&
                   tts.activeParagraph >= 0) {
-                final at = e.position;
-                _hold = Timer(holdToListen, () => _listenFrom(at));
+                final at = _textAt(e.position);
+                if (at != null) {
+                  _hold = Timer(holdToListen, () => _listenFrom(at));
+                }
               }
             },
             onPointerMove: (e) {
