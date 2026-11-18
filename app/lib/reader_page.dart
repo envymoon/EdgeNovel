@@ -457,8 +457,12 @@ class _ReaderPageState extends State<ReaderPage> {
   int? _plateBook;
   int _plateChapter = -1;
 
-  /// The plate drawn before the chapter being read, if any.
+  /// The plate drawn before the chapter being read, and after it, if any.
   String? _plateBefore;
+  String? _plateAfter;
+
+  /// [_plate] fades in: not when it came on as a page, turned onto.
+  bool _plateFade = true;
 
   /// Reading on from a chapter a plate was drawn after shows it first, and
   /// paging back off the next chapter's first page shows it again
@@ -470,21 +474,38 @@ class _ReaderPageState extends State<ReaderPage> {
       return;
     }
     final onward = book == _plateBook && chapter == _plateChapter + 1;
+    // Known already: the page turned onto was this plate, so it stays up.
+    final arriving = onward ? _plateAfter : null;
     _plateBook = book;
     _plateChapter = chapter;
-    _plateBefore = null;
-    if (_plate != null) setState(() => _plate = null);
-    if (chapter == 0) return;
-    // Any plate drawn for the chapter shows, whatever spacing drew it.
-    platePath(bookId: book, chapter: chapter - 1).then((path) {
-      if (path == null || !mounted) return;
-      if (widget.reader.info?.id != book ||
-          widget.reader.chapterIndex != chapter) {
-        return;
-      }
-      _plateBefore = path;
-      if (onward) setState(() => _plate = path);
+    _plateBefore = arriving;
+    _plateAfter = null;
+    setState(() {
+      _plate = arriving;
+      _plateFade = false;
     });
+    bool still() =>
+        mounted &&
+        widget.reader.info?.id == book &&
+        widget.reader.chapterIndex == chapter;
+    // Any plate drawn for the chapter shows, whatever spacing drew it.
+    if (chapter > 0 && arriving == null) {
+      platePath(bookId: book, chapter: chapter - 1).then((path) {
+        if (path == null || !still()) return;
+        setState(() {
+          _plateBefore = path;
+          if (onward) {
+            _plate = path;
+            _plateFade = true;
+          }
+        });
+      });
+    }
+    if (chapter + 1 < (widget.reader.info?.chapters.length ?? 0)) {
+      platePath(bookId: book, chapter: chapter).then((path) {
+        if (path != null && still()) setState(() => _plateAfter = path);
+      });
+    }
   }
 
   void _closePlate() => setState(() => _plate = null);
@@ -493,7 +514,10 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _plateOnTheWayBack() {
     final path = _plateBefore;
     if (path == null || _plate != null) return false;
-    setState(() => _plate = path);
+    setState(() {
+      _plate = path;
+      _plateFade = !_isPaged;
+    });
     return true;
   }
 
@@ -517,7 +541,10 @@ class _ReaderPageState extends State<ReaderPage> {
     _plateBook = info.id;
     _plateChapter = widget.reader.chapterIndex;
     _plateBefore = next == chapter + 1 ? path : null;
-    setState(() => _plate = path);
+    setState(() {
+      _plate = path;
+      _plateFade = true;
+    });
   }
 
   Widget _withPlate(ReadingTheme t, Widget page, {required bool compact}) =>
@@ -532,6 +559,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 compactTapZones: compact,
                 onForward: _closePlate,
                 onBack: _plateBack,
+                fade: _plateFade,
               ),
             ),
         ],
@@ -1107,6 +1135,8 @@ class _ReaderPageState extends State<ReaderPage> {
                                   compactTapZones: compact,
                                   onToggleControls: _toggleChrome,
                                   onBackOffStart: _plateOnTheWayBack,
+                                  plateBefore: _plateBefore,
+                                  plateAfter: _plateAfter,
                                   tts: _tts,
                                   footer: footer
                                       ? (chapter, page, pages) => Padding(

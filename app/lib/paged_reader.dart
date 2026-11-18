@@ -10,6 +10,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 import 'annotation_page.dart';
 import 'page_curl.dart';
+import 'plate_view.dart';
 import 'reader_interaction.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
@@ -298,6 +299,12 @@ class PagedReader extends StatefulWidget {
   /// page itself so it slides and turns with it. Placed at the page's foot.
   final Widget Function(int chapter, int page, int pages)? footer;
 
+  /// The 章间立绘 before this chapter and after it, if drawn: the page beside
+  /// the chapter's edge is then the plate, not the other chapter's page, so a
+  /// slide or a turn lands on it at once.
+  final String? plateBefore;
+  final String? plateAfter;
+
   const PagedReader({
     super.key,
     required this.reader,
@@ -311,6 +318,8 @@ class PagedReader extends StatefulWidget {
     this.onBackOffStart,
     this.tts,
     this.footer,
+    this.plateBefore,
+    this.plateAfter,
   });
 
   @override
@@ -430,6 +439,10 @@ class PagedReaderState extends State<PagedReader>
       old.tts?.removeListener(_onSpeech);
       widget.tts?.addListener(_onSpeech);
     }
+    if (old.plateBefore != widget.plateBefore ||
+        old.plateAfter != widget.plateAfter) {
+      _readyAround();
+    }
   }
 
   void _onSpeech() {
@@ -474,8 +487,8 @@ class PagedReaderState extends State<PagedReader>
     final c = widget.reader.chapterIndex;
     if (!_slides) return (0, 0);
     return (
-      c > 0 && _laidOut[c - 1] != null ? 1 : 0,
-      _laidOut[c + 1] != null ? 1 : 0,
+      c > 0 && (widget.plateBefore != null || _laidOut[c - 1] != null) ? 1 : 0,
+      widget.plateAfter != null || _laidOut[c + 1] != null ? 1 : 0,
     );
   }
 
@@ -582,7 +595,10 @@ class PagedReaderState extends State<PagedReader>
       there?.dispose();
       return false;
     }
-    if (dir < 0 && _page == 0 && (widget.onBackOffStart?.call() ?? false)) {
+    if (dir < 0 &&
+        _page == 0 &&
+        widget.plateBefore == null &&
+        (widget.onBackOffStart?.call() ?? false)) {
       here.dispose();
       there.dispose();
       return true;
@@ -654,6 +670,13 @@ class PagedReaderState extends State<PagedReader>
     final target = _page + dir;
     if (target >= 0 && target < _pages.length) {
       _ctrl?.jumpToPage(target + _lead);
+      _dropCurl();
+      return;
+    }
+    // Back onto the plate before this chapter: it is put up over the page.
+    if (dir < 0 &&
+        widget.plateBefore != null &&
+        (widget.onBackOffStart?.call() ?? false)) {
       _dropCurl();
       return;
     }
@@ -869,23 +892,40 @@ class PagedReaderState extends State<PagedReader>
       ..ensureVisualUpdate();
   }
 
-  /// The pages one turn away from [_shown], in this chapter or the one beside
-  /// it, each with the key its copy is drawn under.
-  /// The pages either side of the one shown, with where each sits: its
-  /// chapter, its place in it and that chapter's pages.
-  List<(BookPage, GlobalKey, int, int, int)> get _neighbours {
+  /// The pages one turn away from [_shown], in this chapter, the one beside
+  /// it or a plate between them, each with the key its copy is drawn under.
+  List<(Widget, GlobalKey)> _neighbours(ReadingTheme t) {
     if (_shown < 0 || _shown >= _pages.length) return const [];
     final c = widget.reader.chapterIndex;
     final n = _pages.length;
+    Widget page(BookPage p, int chapter, int at, int of) => _sheet(
+      _PageView(
+        page: p,
+        settings: widget.settings,
+        theme: t,
+        reader: widget.reader,
+        annotationMode: false,
+        plain: true,
+      ),
+      chapter,
+      at,
+      of,
+    );
+    final before = widget.plateBefore;
+    final after = widget.plateAfter;
     return [
       if (_shown > 0)
-        (_pages[_shown - 1], _prevKey, c, _shown - 1, n)
+        (page(_pages[_shown - 1], c, _shown - 1, n), _prevKey)
+      else if (before != null && c > 0)
+        (PlateView.picture(before, t), _prevKey)
       else if (_laidOut[c - 1]?.$2 case final prev?)
-        (prev.last, _prevKey, c - 1, prev.length - 1, prev.length),
+        (page(prev.last, c - 1, prev.length - 1, prev.length), _prevKey),
       if (_shown < n - 1)
-        (_pages[_shown + 1], _nextKey, c, _shown + 1, n)
+        (page(_pages[_shown + 1], c, _shown + 1, n), _nextKey)
+      else if (after != null)
+        (PlateView.picture(after, t), _nextKey)
       else if (_laidOut[c + 1]?.$2 case final next?)
-        (next.first, _nextKey, c + 1, 0, next.length),
+        (page(next.first, c + 1, 0, next.length), _nextKey),
     ];
   }
 
@@ -1037,28 +1077,13 @@ class PagedReaderState extends State<PagedReader>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                for (final (page, key, chapter, at, of) in _neighbours)
+                for (final (page, key) in _neighbours(t))
                   IgnorePointer(
                     child: ExcludeSemantics(
                       child: RepaintBoundary(
                         key: key,
                         // On paper, for a picture of it to turn (_startCurl).
-                        child: ColoredBox(
-                          color: t.background,
-                          child: _sheet(
-                            _PageView(
-                              page: page,
-                              settings: widget.settings,
-                              theme: t,
-                              reader: widget.reader,
-                              annotationMode: false,
-                              plain: true,
-                            ),
-                            chapter,
-                            at,
-                            of,
-                          ),
-                        ),
+                        child: ColoredBox(color: t.background, child: page),
                       ),
                     ),
                   ),
@@ -1123,6 +1148,13 @@ class PagedReaderState extends State<PagedReader>
         itemBuilder: (context, at) {
           final i = at - _lead;
           final c = widget.reader.chapterIndex;
+          // A plate between this chapter and the one beside it.
+          final plate = i < 0
+              ? widget.plateBefore
+              : i >= _pages.length
+              ? widget.plateAfter
+              : null;
+          if (plate != null) return PlateView.picture(plate, t);
           // The page of the chapter beside this one: its text only.
           final before = i < 0 ? _laidOut[c - 1]?.$2 : null;
           final after = i >= _pages.length ? _laidOut[c + 1]?.$2 : null;

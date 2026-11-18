@@ -20,6 +20,7 @@ class PlateView extends StatelessWidget {
     required this.compactTapZones,
     required this.onForward,
     required this.onBack,
+    this.fade = true,
   });
 
   final String path;
@@ -27,6 +28,9 @@ class PlateView extends StatelessWidget {
   final bool compactTapZones;
   final VoidCallback onForward;
   final VoidCallback onBack;
+
+  /// Fades in; not when it came on as a page, already on screen.
+  final bool fade;
 
   @override
   Widget build(BuildContext context) => Listener(
@@ -53,51 +57,65 @@ class PlateView extends StatelessWidget {
           if (v > 0) onBack();
           if (v < 0) onForward();
         },
-        child: _picture(),
+        child: picture(path, theme, fade: fade, onGone: onForward),
       ),
     ),
   );
 
-  Widget _picture() => ColoredBox(
-        color: theme.background,
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: 1),
-          duration: const Duration(milliseconds: 450),
-          curve: Curves.easeOut,
-          builder: (context, v, child) => Opacity(opacity: v, child: child),
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-                  child: Center(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: Image.file(
-                        File(path),
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.medium,
-                        // A plate deleted under us is simply not shown.
-                        errorBuilder: (context, _, _) {
-                          WidgetsBinding.instance.addPostFrameCallback(
-                            (_) => onForward(),
-                          );
-                          return const SizedBox.shrink();
-                        },
-                      ),
-                    ),
-                  ),
+  /// The plate as a page: also what the page beside a chapter's edge shows
+  /// when a plate is there, so turning onto it is turning onto this.
+  static Widget picture(
+    String path,
+    ReadingTheme theme, {
+    bool fade = false,
+    VoidCallback? onGone,
+  }) {
+    final page = Column(
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+            child: Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.file(
+                  File(path),
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
+                  // A plate deleted under us is simply not shown.
+                  errorBuilder: (context, _, _) {
+                    if (onGone != null) {
+                      WidgetsBinding.instance.addPostFrameCallback(
+                        (_) => onGone(),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Text(
-                  '轻触继续',
-                  style: TextStyle(color: theme.muted, fontSize: 11.5),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      );
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Text(
+            '轻触继续',
+            style: TextStyle(color: theme.muted, fontSize: 11.5),
+          ),
+        ),
+      ],
+    );
+    return ColoredBox(
+      color: theme.background,
+      child: !fade
+          ? page
+          : TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 450),
+              curve: Curves.easeOut,
+              builder: (context, v, child) => Opacity(opacity: v, child: child),
+              child: page,
+            ),
+    );
+  }
 }
