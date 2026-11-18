@@ -1711,7 +1711,6 @@ pub fn analyze(
         first_chapter: p.first_chapter,
         uncertain: p.uncertain,
         evidence: Vec::new(),
-        spare: p.spare,
     });
     let Some(protagonist) = lead_person.as_ref() else {
         return RelationshipReport {
@@ -1748,7 +1747,6 @@ pub fn analyze(
             first_chapter: p.first_chapter,
             uncertain: p.uncertain,
             evidence: Vec::new(),
-            spare: p.spare,
         })
         .collect();
     let candidates: Vec<(usize, &Person)> = called
@@ -2025,7 +2023,6 @@ mod tests {
             first_chapter: 0,
             uncertain: false,
             evidence: Vec::new(),
-            spare: false,
         }
     }
 

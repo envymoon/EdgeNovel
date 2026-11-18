@@ -1564,6 +1564,13 @@ impl Store {
         rows.collect()
     }
 
+    /// The cached scans of a book, and nothing the model wrote about it.
+    pub fn drop_cast_cache(&self, book_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM cast_cache WHERE book_id = ?1", [book_id])?;
+        Ok(())
+    }
+
     /// Take someone off the graph, or put them back.
     pub fn set_removed_person(&self, book_id: i64, name: &str, removed: bool) -> Result<()> {
         if removed {

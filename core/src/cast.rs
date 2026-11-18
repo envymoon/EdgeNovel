@@ -34,10 +34,6 @@ pub struct Person {
     /// beside it. See [`BACKGROUND_CUES`].
     #[serde(default)]
     pub evidence: Vec<(usize, String)>,
-    /// Past the [`TOP_CAST`]: one of the next [`SPARE_CAST`] by count, kept
-    /// after them only to take a seat someone was removed from.
-    #[serde(default)]
-    pub spare: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -113,10 +109,6 @@ const MAX_EVIDENCE: usize = 70;
 /// of pairs the model can afford to read dozens of scenes per pair.
 pub const TOP_CAST: usize = 10;
 
-/// Kept after the [`TOP_CAST`], in count order, for when the reader or the
-/// model removes someone from the graph: the next one takes the seat.
-pub const SPARE_CAST: usize = 2;
-
 /// Of the [`TOP_CAST`] slots, this many go to the highest whole-book mention
 /// counts — the perennial leads. The rest are reserved for the opening cast (see
 /// [`prune`]): the most-mentioned characters who *debut early*. The reserve was
@@ -139,7 +131,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 25;
+pub const SCAN_VERSION: u32 = 26;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -1511,6 +1503,13 @@ pub fn candidate_stats(
 }
 
 pub fn scan(text: &str, chapters: &[Chapter], upto: usize) -> Cast {
+    scan_without(text, chapters, upto, &[])
+}
+
+/// [`scan`], with names the reader took off this book's graph left out of it
+/// as if they were not names at all: the seats are filled by the same rules
+/// from whoever is left.
+pub fn scan_without(text: &str, chapters: &[Chapter], upto: usize, removed: &[String]) -> Cast {
     let n = upto.min(chapters.len());
     let mut paras: Vec<(usize, &str)> = Vec::new();
     for ch in chapters.iter().take(n) {
@@ -1526,7 +1525,7 @@ pub fn scan(text: &str, chapters: &[Chapter], upto: usize) -> Cast {
     let (people, edges, n_chapters) = graph(&paras, members);
     let romance_focus = crate::focus::analyze(text, &chapters[..n]).romance.zh();
     let relationship = crate::romance::analyze(&paras, &people, &edges, n_chapters, romance_focus);
-    let mut cast = prune(people, edges, n_chapters);
+    let mut cast = prune(people, edges, n_chapters, removed);
     cast.relationship = Some(relationship);
     cast
 }
@@ -2276,7 +2275,6 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
             first_chapter: 0,
             uncertain: false,
             evidence: Vec::new(),
-            spare: false,
         })
         .collect();
 
@@ -2500,10 +2498,10 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
 /// early* — that is what rescues a founder like 齐静春 whom a running total
 /// buries under a thousand later chapters. Any slots the opening cast leaves
 /// unfilled (a short book, a late-starting story) fall back to raw count.
-fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize) -> Cast {
+fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize, removed: &[String]) -> Cast {
     let density = |p: &Person| p.mentions as f32 / p.chapters.max(1) as f32;
     let alive: Vec<usize> = (0..people.len())
-        .filter(|&i| density(&people[i]) >= DENSITY_FLOOR)
+        .filter(|&i| density(&people[i]) >= DENSITY_FLOOR && !removed.contains(&people[i].name))
         .collect();
     // The leads: the first survivors in count order (people are count-sorted).
     let mut chosen: HashSet<usize> = alive.iter().take(PRIMARY_BY_COUNT).copied().collect();
@@ -2524,50 +2522,14 @@ fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize) -> Cast {
         }
         chosen.insert(i);
     }
-    // The next few by count wait after them, for a seat someone leaves.
-    // Only sure ones, and nobody already seated under another form of the
-    // name (蓝湛 for 蓝忘机's 蓝, 上官明 inside 上官明月).
-    let forms = |p: &Person| -> Vec<String> {
-        std::iter::once(p.name.clone()).chain(p.aliases.iter().cloned()).collect()
-    };
-    let mut seated: Vec<String> = chosen.iter().flat_map(|&i| forms(&people[i])).collect();
-    let mut spares: HashSet<usize> = HashSet::new();
-    for &i in &alive {
-        if spares.len() >= SPARE_CAST {
-            break;
-        }
-        if chosen.contains(&i) || density(&people[i]) < DENSITY_SURE {
-            continue;
-        }
-        let mine = forms(&people[i]);
-        if mine
-            .iter()
-            .any(|f| seated.iter().any(|s| s.contains(f.as_str()) || f.contains(s.as_str())))
-        {
-            continue;
-        }
-        seated.extend(mine);
-        spares.insert(i);
-    }
-    // Rebuild in count order so the graph's node order stays stable, the
-    // spares after everyone seated.
+    // Rebuild in count order so the graph's node order stays stable.
     let mut remap = vec![usize::MAX; people.len()];
     let mut kept: Vec<Person> = Vec::new();
-    let mut waiting: Vec<(usize, Person)> = Vec::new();
     for (i, mut p) in people.into_iter().enumerate() {
-        if !chosen.contains(&i) && !spares.contains(&i) {
+        if !chosen.contains(&i) {
             continue;
         }
         p.uncertain = density(&p) < DENSITY_SURE;
-        if spares.contains(&i) {
-            p.spare = true;
-            waiting.push((i, p));
-            continue;
-        }
-        remap[i] = kept.len();
-        kept.push(p);
-    }
-    for (i, p) in waiting {
         remap[i] = kept.len();
         kept.push(p);
     }

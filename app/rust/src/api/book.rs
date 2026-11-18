@@ -1464,9 +1464,12 @@ pub(crate) fn scan_cached(
             }
         }
     }
+    // Anyone the reader took off the graph is left out of the scan itself, and
+    // the seats go by the usual rules to whoever is left.
+    let removed = with_store!(s => s.removed_people(book_id)).unwrap_or_default();
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
-    let cast = novel_core::cast::scan(&l.text, &l.chapters, upto);
+    let cast = novel_core::cast::scan_without(&l.text, &l.chapters, upto, &removed);
     if let Ok(json) = serde_json::to_string(&cast) {
         let _ = with_store!(s => s.set_cast_cache(book_id, upto as i64, total, &json));
     }
@@ -1496,7 +1499,9 @@ fn lead_of(cast: &novel_core::cast::Cast) -> usize {
 }
 
 /// Take someone off a book's graph by hand, or put them back. The one in the
-/// middle stays: the graph is drawn around them.
+/// middle stays: the graph is drawn around them. Either way the book is
+/// scanned again on the next look, the seats filled by the usual rules;
+/// summaries and backgrounds already written are kept, by name.
 pub fn remove_person(
     path: String,
     book_id: i64,
@@ -1512,7 +1517,8 @@ pub fn remove_person(
         }
     }
     with_store!(s => s.set_removed_person(book_id, &name, removed))
-        .map_err(|e| format!("保存失败: {e}"))
+        .map_err(|e| format!("保存失败: {e}"))?;
+    with_store!(s => s.drop_cast_cache(book_id))
 }
 
 /// The people taken off this book's graph by hand, to put back.
@@ -1520,9 +1526,9 @@ pub fn removed_people(book_id: i64) -> Result<Vec<String>, String> {
     with_store!(s => s.removed_people(book_id))
 }
 
-/// Who of the scanned cast the reader sees: the first `top` not thrown out, by
-/// the model or by hand, in the graph's own order, so 3 or 5 is the head of
-/// the ten; someone thrown out from the ten calls in a spare, if there is one.
+/// Who of the scanned cast the reader sees: the first `top` the model has not
+/// thrown out, in the graph's own order, so 3 or 5 is the head of the ten and
+/// a word thrown out leaves its slot empty rather than calling in an eleventh.
 fn shown(cast: &novel_core::cast::Cast, verdicts: &HashMap<String, bool>, top: u32) -> Vec<bool> {
     let mut seated = 0;
     cast.people
@@ -1890,7 +1896,7 @@ fn lead_sentences(cast: &novel_core::cast::Cast, i: usize) -> Vec<(usize, String
         .people
         .iter()
         .enumerate()
-        .filter(|&(j, q)| j != i && !q.spare)
+        .filter(|&(j, _)| j != i)
         .flat_map(|(_, q)| std::iter::once(q.name.as_str()).chain(q.aliases.iter().map(String::as_str)))
         .filter(|n| !n.is_empty() && !mine.iter().any(|m| m.contains(n) || n.contains(m)))
         .collect();

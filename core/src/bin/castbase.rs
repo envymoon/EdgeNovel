@@ -31,19 +31,18 @@ fn snapshot(dir: &str, upto: usize) -> String {
         let fp = fingerprint(d.encoding, &d.text);
         let b = book::build(&d.text, &fp);
         let n = upto.min(b.chapters.len());
-        let c = cast::scan(&d.text, &b.chapters, n);
+        // Probe: names taken off by hand, as the app does (REMOVE=甲,乙).
+        let removed: Vec<String> = std::env::var("REMOVE")
+            .map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default();
+        let c = cast::scan_without(&d.text, &b.chapters, n, &removed);
 
         out.push_str(&format!(
             "== {} · 前 {n} 章 · {} 人\n",
             path.file_name().unwrap().to_string_lossy(),
-            c.people.iter().filter(|p| !p.spare).count()
+            c.people.len()
         ));
         for (i, p) in c.people.iter().enumerate() {
-            if p.spare {
-                out.push_str(&format!("     候补 {}
-", p.name));
-                continue;
-            }
             let alias = if p.aliases.is_empty() {
                 String::new()
             } else {
