@@ -283,6 +283,14 @@ CREATE TABLE IF NOT EXISTS name_verdicts (
     PRIMARY KEY (book_id, name)
 );
 
+-- People the reader took off a book's graph by hand. Apart from the model's
+-- verdicts, and kept through 重新分析: the reader said so, not a scan.
+CREATE TABLE IF NOT EXISTS cast_removed (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    name    TEXT NOT NULL,
+    PRIMARY KEY (book_id, name)
+);
+
 -- The model's prose summary of how a pair get on, keyed by the pair's names. A
 -- closed-set label proved too lossy for the small model to pick stably (师徒 vs
 -- 同门, and pairs that are both), so it writes a sentence instead. Same reasoning
@@ -1544,6 +1552,31 @@ impl Store {
              VALUES (?1, ?2, ?3)",
             params![book_id, name, i64::from(is_person)],
         )?;
+        Ok(())
+    }
+
+    /// People the reader took off this book's graph, in the order taken.
+    pub fn removed_people(&self, book_id: i64) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT name FROM cast_removed WHERE book_id = ?1 ORDER BY rowid")?;
+        let rows = st.query_map([book_id], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// Take someone off the graph, or put them back.
+    pub fn set_removed_person(&self, book_id: i64, name: &str, removed: bool) -> Result<()> {
+        if removed {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO cast_removed (book_id, name) VALUES (?1, ?2)",
+                params![book_id, name],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM cast_removed WHERE book_id = ?1 AND name = ?2",
+                params![book_id, name],
+            )?;
+        }
         Ok(())
     }
 

@@ -1397,6 +1397,9 @@ pub struct CastGraph {
     /// Chapters actually scanned — the spoiler cap — so the UI can say "up to
     /// chapter N" instead of implying it read the whole book.
     pub upto: u32,
+    /// The lead the graph is built around, by index into `people`: never
+    /// one the reader can remove.
+    pub center: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -1470,9 +1473,56 @@ pub(crate) fn scan_cached(
     Ok((cast, upto))
 }
 
-/// Who of the scanned cast the reader sees: the first `top` the model has not
-/// thrown out, in the graph's own order, so 3 or 5 is the head of the ten and
-/// a word thrown out leaves its slot empty rather than calling in an eleventh.
+/// Who is not a person here: the model's verdicts, and anyone the reader took
+/// off the graph by hand, which outrank them.
+fn verdicts_of(book_id: i64) -> Result<HashMap<String, bool>, String> {
+    let mut verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    for name in with_store!(s => s.removed_people(book_id)).unwrap_or_default() {
+        verdicts.insert(name, false);
+    }
+    Ok(verdicts)
+}
+
+/// The lead of a scanned cast, by index: the one the relationship pass took
+/// for the protagonist, or else the most mentioned.
+fn lead_of(cast: &novel_core::cast::Cast) -> usize {
+    cast.relationship
+        .as_ref()
+        .and_then(|r| cast.people.iter().position(|p| p.name == r.protagonist))
+        .unwrap_or(0)
+}
+
+/// Take someone off a book's graph by hand, or put them back. The one in the
+/// middle stays: the graph is drawn around them.
+pub fn remove_person(
+    path: String,
+    book_id: i64,
+    up_to_chapter: i64,
+    name: String,
+    removed: bool,
+) -> Result<(), String> {
+    if removed {
+        ensure_loaded(&path)?;
+        let (cast, _) = scan_cached(&path, book_id, up_to_chapter)?;
+        if cast.people.get(lead_of(&cast)).is_some_and(|p| p.name == name) {
+            return Err("主角不能移除".into());
+        }
+    }
+    with_store!(s => s.set_removed_person(book_id, &name, removed))
+        .map_err(|e| format!("保存失败: {e}"))
+}
+
+/// The people taken off this book's graph by hand, to put back.
+pub fn removed_people(book_id: i64) -> Result<Vec<String>, String> {
+    with_store!(s => s.removed_people(book_id))
+}
+
+/// Who of the scanned cast the reader sees: the first `top` not thrown out, by
+/// the model or by hand, in the graph's own order, so 3 or 5 is the head of
+/// the ten; someone thrown out from the ten calls in a spare, if there is one.
 fn shown(cast: &novel_core::cast::Cast, verdicts: &HashMap<String, bool>, top: u32) -> Vec<bool> {
     let mut seated = 0;
     cast.people
@@ -1501,10 +1551,7 @@ pub fn cast_graph(
     ensure_loaded(&path)?;
     let (cast, upto) = scan_cached(&path, book_id, up_to_chapter)?;
 
-    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let verdicts = verdicts_of(book_id)?;
     let summaries: HashMap<(String, String), String> =
         with_store!(s => s.relation_summaries(book_id))
             .unwrap_or_default()
@@ -1577,7 +1624,9 @@ pub fn cast_graph(
             }
         })
         .collect();
+    let lead = lead_of(&cast);
     Ok(CastGraph {
+        center: if keep.get(lead) == Some(&true) { remap[lead] as u32 } else { 0 },
         people,
         edges,
         upto: upto as u32,
@@ -1616,10 +1665,7 @@ pub(crate) fn plate_plan(
         l.chapters.len().saturating_sub(1) as i64
     };
     let (cast, _) = scan_cached(path, book_id, last_chapter)?;
-    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let verdicts = verdicts_of(book_id)?;
     let leads: Vec<Vec<String>> = cast
         .people
         .iter()
@@ -1688,10 +1734,7 @@ pub(crate) fn unjudged_names(
     top: u32,
 ) -> Result<Vec<(String, String)>, String> {
     let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
-    let judged: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let judged = verdicts_of(book_id)?;
     let mut sure_ahead = 0;
     let reachable: Vec<bool> = cast
         .people
@@ -1744,10 +1787,7 @@ pub(crate) fn residual_relations(
         .collect();
     // An edge to a word the model threw out is never drawn: 冬日重现's 周围 had
     // five of them summarized for nothing.
-    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let verdicts = verdicts_of(book_id)?;
     let seen = shown(&cast, &verdicts, top);
     let kept = |i: usize| seen[i];
     Ok(cast
@@ -1818,10 +1858,7 @@ pub(crate) fn residual_people(
     let (cast, _) = scan_cached(path, book_id, up_to_chapter)?;
     let sources = background_sources(book_id)?;
     // Anyone the model has already thrown out is not worth a biography.
-    let verdicts: HashMap<String, bool> = with_store!(s => s.name_verdicts(book_id))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let verdicts = verdicts_of(book_id)?;
     let seen = shown(&cast, &verdicts, top);
     Ok(cast
         .people
@@ -1852,7 +1889,7 @@ fn lead_sentences(cast: &novel_core::cast::Cast, i: usize) -> Vec<(usize, String
         .people
         .iter()
         .enumerate()
-        .filter(|&(j, _)| j != i)
+        .filter(|&(j, q)| j != i && !q.spare)
         .flat_map(|(_, q)| std::iter::once(q.name.as_str()).chain(q.aliases.iter().map(String::as_str)))
         .filter(|n| !n.is_empty() && !mine.iter().any(|m| m.contains(n) || n.contains(m)))
         .collect();

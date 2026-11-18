@@ -36,9 +36,14 @@ fn snapshot(dir: &str, upto: usize) -> String {
         out.push_str(&format!(
             "== {} · 前 {n} 章 · {} 人\n",
             path.file_name().unwrap().to_string_lossy(),
-            c.people.len()
+            c.people.iter().filter(|p| !p.spare).count()
         ));
         for (i, p) in c.people.iter().enumerate() {
+            if p.spare {
+                out.push_str(&format!("     候补 {}
+", p.name));
+                continue;
+            }
             let alias = if p.aliases.is_empty() {
                 String::new()
             } else {

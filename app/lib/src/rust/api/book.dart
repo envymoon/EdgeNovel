@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_records`, `chapter_titles`, `clip`, `cut_text`, `cuts_for`, `data_dir`, `db_path`, `decode_file`, `digest`, `ensure_loaded`, `excerpt`, `first_paragraph`, `is_cut`, `is_loaded`, `lead_sentences`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `recut_book`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summary_excerpt`, `unjudged_names`, `with_text`, `without_closing_title`
+// These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_records`, `chapter_titles`, `clip`, `cut_text`, `cuts_for`, `data_dir`, `db_path`, `decode_file`, `digest`, `ensure_loaded`, `excerpt`, `first_paragraph`, `is_cut`, `is_loaded`, `lead_of`, `lead_sentences`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `recut_book`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summary_excerpt`, `unjudged_names`, `verdicts_of`, `with_text`, `without_closing_title`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -232,6 +232,26 @@ Future<List<SearchHit>> searchText({
 /// is ready the moment the book is and is never stored.
 Future<List<double?>> chapterPace({required String path}) =>
     RustLib.instance.api.crateApiBookChapterPace(path: path);
+
+/// Take someone off a book's graph by hand, or put them back. The one in the
+/// middle stays: the graph is drawn around them.
+Future<void> removePerson({
+  required String path,
+  required PlatformInt64 bookId,
+  required PlatformInt64 upToChapter,
+  required String name,
+  required bool removed,
+}) => RustLib.instance.api.crateApiBookRemovePerson(
+  path: path,
+  bookId: bookId,
+  upToChapter: upToChapter,
+  name: name,
+  removed: removed,
+);
+
+/// The people taken off this book's graph by hand, to put back.
+Future<List<String>> removedPeople({required PlatformInt64 bookId}) =>
+    RustLib.instance.api.crateApiBookRemovedPeople(bookId: bookId);
 
 /// Scan the cast and relationships. Pure rules, no engine, no download —
 /// then whatever the model has already ruled on for this book is laid over the
@@ -512,14 +532,20 @@ class CastGraph {
   /// chapter N" instead of implying it read the whole book.
   final int upto;
 
+  /// The lead the graph is built around, by index into `people`: never
+  /// one the reader can remove.
+  final int center;
+
   const CastGraph({
     required this.people,
     required this.edges,
     required this.upto,
+    required this.center,
   });
 
   @override
-  int get hashCode => people.hashCode ^ edges.hashCode ^ upto.hashCode;
+  int get hashCode =>
+      people.hashCode ^ edges.hashCode ^ upto.hashCode ^ center.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -528,7 +554,8 @@ class CastGraph {
           runtimeType == other.runtimeType &&
           people == other.people &&
           edges == other.edges &&
-          upto == other.upto;
+          upto == other.upto &&
+          center == other.center;
 }
 
 class CastPerson {

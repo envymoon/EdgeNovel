@@ -54,6 +54,9 @@ class _CastGraphPageState extends State<CastGraphPage> {
   bool _hasModel = false;
   AiTaskState? _lastState;
 
+  /// Taken off the graph by hand, to put back.
+  List<String> _removed = const [];
+
   @override
   void initState() {
     super.initState();
@@ -110,8 +113,10 @@ class _CastGraphPageState extends State<CastGraphPage> {
         top: widget.settings.castTop,
       );
       final s = await aiStatus();
+      final removed = await removedPeople(bookId: widget.book.id);
       if (!mounted) return;
       setState(() {
+        _removed = removed;
         _graph = g;
         _pos = _layout(g);
         _hasModel = s.engine && s.model != null;
@@ -140,6 +145,56 @@ class _CastGraphPageState extends State<CastGraphPage> {
     final g = _graph!;
     return _modelLabel[_key(g.people[e.a].name, g.people[e.b].name)];
   }
+
+  /// Off the graph, or back on: the next in line takes or gives up the seat.
+  Future<void> _setRemoved(String name, bool removed) async {
+    try {
+      await removePerson(
+        path: widget.book.path,
+        bookId: widget.book.id,
+        upToChapter: widget.book.chapterCount,
+        name: name,
+        removed: removed,
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _selected = null);
+    await _load();
+  }
+
+  Future<void> _showRemoved() => showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: widget.settings.theme.background,
+    builder: (context) {
+      final t = widget.settings.theme;
+      return SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            for (final name in _removed)
+              ListTile(
+                dense: true,
+                title: Text(
+                  name,
+                  style: TextStyle(color: t.text, fontSize: 14),
+                ),
+                trailing: TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _setRemoved(name, false);
+                  },
+                  child: const Text('恢复'),
+                ),
+              ),
+          ],
+        ),
+      );
+    },
+  );
 
   /// The first [n] of the ten: the graph is drawn again for them.
   Future<void> _setTop(int n) async {
@@ -472,6 +527,18 @@ class _CastGraphPageState extends State<CastGraphPage> {
                   style: TextStyle(color: t.muted, fontSize: 12),
                 ),
               ),
+              if (_removed.isNotEmpty)
+                TextButton(
+                  onPressed: _showRemoved,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                  ),
+                  child: Text(
+                    '已移除 ${_removed.length}',
+                    style: TextStyle(color: t.muted, fontSize: 12),
+                  ),
+                ),
               for (final n in ReadingSettings.castTopChoices)
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
@@ -687,6 +754,19 @@ class _CastGraphPageState extends State<CastGraphPage> {
               '${p.mentions} 次 · ${p.chapters} 章',
               style: TextStyle(color: t.muted, fontSize: 11),
             ),
+            // The one the graph is built around stays.
+            if (sel != g.center && !_castActive)
+              TextButton(
+                onPressed: () => _setRemoved(p.name, true),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: Text(
+                  '移除',
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+              ),
           ],
         ),
         const SizedBox(height: 4),

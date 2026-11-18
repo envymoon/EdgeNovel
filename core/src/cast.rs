@@ -34,6 +34,10 @@ pub struct Person {
     /// beside it. See [`BACKGROUND_CUES`].
     #[serde(default)]
     pub evidence: Vec<(usize, String)>,
+    /// Past the [`TOP_CAST`]: one of the next [`SPARE_CAST`] by count, kept
+    /// after them only to take a seat someone was removed from.
+    #[serde(default)]
+    pub spare: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -109,6 +113,10 @@ const MAX_EVIDENCE: usize = 70;
 /// of pairs the model can afford to read dozens of scenes per pair.
 pub const TOP_CAST: usize = 10;
 
+/// Kept after the [`TOP_CAST`], in count order, for when the reader or the
+/// model removes someone from the graph: the next one takes the seat.
+pub const SPARE_CAST: usize = 2;
+
 /// Of the [`TOP_CAST`] slots, this many go to the highest whole-book mention
 /// counts — the perennial leads. The rest are reserved for the opening cast (see
 /// [`prune`]): the most-mentioned characters who *debut early*. The reserve was
@@ -131,7 +139,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 23;
+pub const SCAN_VERSION: u32 = 24;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -2268,6 +2276,7 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
             first_chapter: 0,
             uncertain: false,
             evidence: Vec::new(),
+            spare: false,
         })
         .collect();
 
@@ -2515,14 +2524,32 @@ fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize) -> Cast {
         }
         chosen.insert(i);
     }
-    // Rebuild in count order so the graph's node order stays stable.
+    // The next few by count wait after them, for a seat someone leaves.
+    let spares: HashSet<usize> = alive
+        .iter()
+        .copied()
+        .filter(|i| !chosen.contains(i))
+        .take(SPARE_CAST)
+        .collect();
+    // Rebuild in count order so the graph's node order stays stable, the
+    // spares after everyone seated.
     let mut remap = vec![usize::MAX; people.len()];
     let mut kept: Vec<Person> = Vec::new();
+    let mut waiting: Vec<(usize, Person)> = Vec::new();
     for (i, mut p) in people.into_iter().enumerate() {
-        if !chosen.contains(&i) {
+        if !chosen.contains(&i) && !spares.contains(&i) {
             continue;
         }
         p.uncertain = density(&p) < DENSITY_SURE;
+        if spares.contains(&i) {
+            p.spare = true;
+            waiting.push((i, p));
+            continue;
+        }
+        remap[i] = kept.len();
+        kept.push(p);
+    }
+    for (i, p) in waiting {
         remap[i] = kept.len();
         kept.push(p);
     }
