@@ -248,26 +248,50 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
         }
 
         final flying = <int, Future<Uint8List?>>{};
+        // Every lane kept busy: a sentence goes out as soon as one comes
+        // back, not only once the next one to be written has. One long
+        // sentence used to leave the other lanes idle until it was done.
+        // Those that come back early wait their turn here, a few dozen at
+        // most.
+        var busy = 0;
+        var ahead = w.next;
+        var open = true;
+        late final void Function() fill;
+        void send(int i) {
+          busy++;
+          flying[i] = speak(i).whenComplete(() {
+            busy--;
+            fill();
+          });
+        }
+
+        fill = () {
+          while (open &&
+              gen == _gen &&
+              _mayGo &&
+              busy < lanes &&
+              ahead < utts.length &&
+              ahead < w.next + lanes * 8) {
+            send(ahead++);
+          }
+        };
+
         try {
           for (var i = 0; i < w.next; i++) {
             left -= utts[i].text.length;
           }
           done += w.next;
           notifyListeners();
-          var ahead = w.next;
           while (!w.done) {
             // What is in flight is kept whatever happens; more only goes
             // out while the job may run.
             if (!flying.containsKey(w.next)) {
               await _mayRun(gen);
               if (gen != _gen) return;
-              flying[w.next] = speak(w.next);
-              ahead = w.next + 1;
+              send(w.next);
+              if (ahead <= w.next) ahead = w.next + 1;
             }
-            while (ahead < utts.length && ahead < w.next + lanes && _mayGo) {
-              flying[ahead] = speak(ahead);
-              ahead++;
-            }
+            fill();
             final text = utts[w.next].text;
             final wav = await flying.remove(w.next)!;
             if (gen != _gen) return;
@@ -292,6 +316,7 @@ class TtsPrepare extends ChangeNotifier with WidgetsBindingObserver {
           }
           await w.finish();
         } finally {
+          open = false;
           await w.close();
         }
       }
