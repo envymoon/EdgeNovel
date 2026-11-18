@@ -21,7 +21,10 @@
 static std::shared_mutex     g_mutex;
 static qt_context *          g_ctx = nullptr;
 static std::atomic<bool>     g_gpu{false};
-static std::atomic<bool>     g_cancel{false};
+// Bumped to stop every sentence then being spoken; each one keeps the value
+// it started with. One flag reset by every new sentence let a sentence started
+// a moment later, in another lane, undo a stop meant for the rest.
+static std::atomic<int64_t>  g_moved{0};
 static std::atomic<bool>     g_background{false};
 static thread_local std::string g_error;
 
@@ -35,7 +38,7 @@ extern "C" int edge_tts_gpu(void);
 extern "C" void edge_tts_set_background(int on) {
     g_background = on != 0;
     if (on ? g_gpu.load() : (!g_gpu && edge_tts_gpu())) {
-        g_cancel = true;
+        g_moved++;
     }
 }
 
@@ -52,7 +55,7 @@ static int64_t now_ns() {
 // engine rests three times as long as it last worked: iOS ends an app there
 // that keeps more than 80% of a core busy over a minute, and it works on
 // every performance core.
-static bool stop_or_rest(void *) {
+static bool stop_or_rest(void * started) {
     if (!g_gpu && g_background) {
         const int64_t now  = now_ns();
         const int64_t busy = now - g_last.load();
@@ -61,7 +64,7 @@ static bool stop_or_rest(void *) {
         }
     }
     g_last = now_ns();
-    return g_cancel.load();
+    return *static_cast<const int64_t *>(started) != g_moved.load() || (g_gpu && g_background);
 }
 
 // UIKit's notification names (the app's and its scene's), so that nothing here
@@ -166,8 +169,8 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
         g_error = "voice not loaded";
         return QT_STATUS_INVALID_PARAMS;
     }
-    g_cancel = g_gpu && g_background;
-    g_last   = now_ns();
+    int64_t started = g_moved.load();
+    g_last          = now_ns();
     pcm_sink sink{ on_pcm, user };
 
     qt_tts_params p;
@@ -180,6 +183,7 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
     p.top_k          = top_k;
     p.seed           = seed;
     p.cancel         = stop_or_rest;
+    p.cancel_user_data = &started;
     p.on_chunk       = [](const float * s, int n, void * u) -> bool {
         auto * k = static_cast<pcm_sink *>(u);
         k->cb(s, n, k->user);

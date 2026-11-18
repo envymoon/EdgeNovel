@@ -635,15 +635,18 @@ fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
 #[cfg(in_process_engine)]
 fn speak_with(line: &str, voice: &str, how: Sampling) -> Result<Vec<u8>, String> {
     let _busy = InFlight::new();
-    let mut again = true;
+    // Stopped because the app went behind the screen or came back: spoken
+    // again, on the CPU or the GPU, however often the screen goes off and on
+    // meanwhile. Each lost sentence used to count against the job, and a few
+    // glances at a locked phone ended it.
+    let mut moves = 0;
     loop {
-        ensure()?;
-        match engine::speak(line, voice, max_frames(line), how) {
+        let behind = engine::background();
+        let said = ensure().and_then(|_| engine::speak(line, voice, max_frames(line), how));
+        match said {
             Ok(pcm) if pcm.is_empty() => return Err("语音合成为空".into()),
             Ok(pcm) => return Ok(wav(&pcm)),
-            // Stopped because the app went behind the screen or came back:
-            // spoken again, on the CPU or the GPU.
-            Err(_) if again && engine::misplaced() => again = false,
+            Err(_) if moves < 20 && engine::moving(behind) => moves += 1,
             Err(e) => return Err(e),
         }
     }
@@ -786,6 +789,23 @@ mod engine {
             Some(true) => background(),
             Some(false) => !background() && gpu(),
             None => false,
+        }
+    }
+
+    /// Whether a sentence that failed was caught by the app going behind the
+    /// screen or coming back (`behind`: where it was when the sentence
+    /// started). iOS refuses the GPU a moment before the app hears it is
+    /// behind the screen, so a GPU failure on screen waits a little for that.
+    pub fn moving(behind: bool) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if misplaced() || background() != behind {
+                return true;
+            }
+            if *LOADED.lock().unwrap() != Some(true) || std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 

@@ -92,6 +92,7 @@ class _ReaderPageState extends State<ReaderPage> {
     );
     _tts.addListener(_onTtsTick);
     TtsPrepare.instance.addListener(_onPrepareTick);
+    _resumed = AppLifecycleListener(onResume: _onPrepareTick);
     widget.reader.addListener(_onChapter);
     spokenChapterWanted.addListener(_onSpokenWanted);
     // Opened for a chapter tapped in 已合成.
@@ -105,6 +106,7 @@ class _ReaderPageState extends State<ReaderPage> {
     _positions.itemPositions.removeListener(_onScroll);
     _tts.removeListener(_onTtsTick);
     TtsPrepare.instance.removeListener(_onPrepareTick);
+    _resumed.dispose();
     _tts.dispose();
     _pageInfo.dispose();
     _scrollTop.dispose();
@@ -234,10 +236,16 @@ class _ReaderPageState extends State<ReaderPage> {
     await _tts.onVoiceOrSpeedChanged();
   }
 
+  late final AppLifecycleListener _resumed;
+
+  /// A job that failed behind the screen says so once the reader is back.
   void _onPrepareTick() {
     final job = TtsPrepare.instance;
     final why = job.error;
     if (why == null || job.running || !mounted) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
     job.error = null;
     ScaffoldMessenger.of(
       context,
