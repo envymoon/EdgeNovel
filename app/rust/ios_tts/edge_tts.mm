@@ -9,28 +9,59 @@
 #import <Metal/Metal.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 
 // One voice. Sentences share it: the engine takes as many at once as it was
 // loaded for (EDGE_TTS_BATCH, 1 unless set) and queues the rest.
 static std::shared_mutex     g_mutex;
 static qt_context *          g_ctx = nullptr;
-static bool                  g_gpu = false;
+static std::atomic<bool>     g_gpu{false};
 static std::atomic<bool>     g_cancel{false};
 static std::atomic<bool>     g_background{false};
 static thread_local std::string g_error;
 
+extern "C" int edge_tts_gpu(void);
+
 // Behind the screen (1) or back (0). iOS refuses GPU work from an app behind
-// the screen, and listening goes on with the screen locked: the sentence on
-// the GPU stops, and the voice belongs on the CPU (edge_tts_background).
+// the screen, and listening goes on with the screen locked: the sentences on
+// the GPU stop, and the voice belongs on the CPU (edge_tts_background). Back
+// on screen, those on the CPU stop too, to be said again on the GPU at once.
+// A voice already where it belongs goes on.
 extern "C" void edge_tts_set_background(int on) {
     g_background = on != 0;
-    if (on) {
+    if (on ? g_gpu.load() : (!g_gpu && edge_tts_gpu())) {
         g_cancel = true;
     }
+}
+
+// When the engine last worked or was given a sentence, in steady-clock ns.
+static std::atomic<int64_t> g_last{0};
+
+static int64_t now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// Asked at every step of a sentence. Behind the screen, on the CPU, the
+// engine rests three times as long as it last worked: iOS ends an app there
+// that keeps more than 80% of a core busy over a minute, and it works on
+// every performance core.
+static bool stop_or_rest(void *) {
+    if (!g_gpu && g_background) {
+        const int64_t now  = now_ns();
+        const int64_t busy = now - g_last.load();
+        if (busy > 0 && busy < 3'000'000'000) {
+            std::this_thread::sleep_for(std::chrono::nanoseconds(busy * 3));
+        }
+    }
+    g_last = now_ns();
+    return g_cancel.load();
 }
 
 // UIKit's notification names (the app's and its scene's), so that nothing here
@@ -136,6 +167,7 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
         return QT_STATUS_INVALID_PARAMS;
     }
     g_cancel = g_gpu && g_background;
+    g_last   = now_ns();
     pcm_sink sink{ on_pcm, user };
 
     qt_tts_params p;
@@ -147,7 +179,7 @@ extern "C" int edge_tts_speak(const char * text, const char * speaker, int max_f
     p.temperature    = temperature;
     p.top_k          = top_k;
     p.seed           = seed;
-    p.cancel         = [](void *) -> bool { return g_cancel.load(); };
+    p.cancel         = stop_or_rest;
     p.on_chunk       = [](const float * s, int n, void * u) -> bool {
         auto * k = static_cast<pcm_sink *>(u);
         k->cb(s, n, k->user);

@@ -1,0 +1,84 @@
+diff -ru a/src/pipeline-tts.cpp b/src/pipeline-tts.cpp
+--- a/src/pipeline-tts.cpp
++++ b/src/pipeline-tts.cpp
+@@ -596,6 +596,17 @@
+     delete e;
+ }
+ 
++void tts_engine_fail_all(TtsEngine * e, std::vector<TtsJob *> * retired, const char * why) {
++    for (TtsSlot & s : e->slots) {
++        if (s.job) {
++            s.job->status = QT_STATUS_GENERATE_FAILED;
++            s.job->error  = why;
++            retired->push_back(s.job);
++        }
++    }
++    e->slots.clear();
++}
++
+ int tts_engine_active(const TtsEngine * e) {
+     return (int) e->slots.size();
+ }
+diff -ru a/src/pipeline-tts.h b/src/pipeline-tts.h
+--- a/src/pipeline-tts.h
++++ b/src/pipeline-tts.h
+@@ -253,3 +253,8 @@
+ 
+ // Number of currently occupied slots.
+ int tts_engine_active(const TtsEngine * e);
++
++// Every occupied slot's job, failed with `why`, onto *retired: for a step
++// or an admit that threw (a GPU that refused the work), after which the
++// engine is freed and made again.
++void tts_engine_fail_all(TtsEngine * e, std::vector<TtsJob *> * retired, const char * why);
+diff -ru a/src/qwen.cpp b/src/qwen.cpp
+--- a/src/qwen.cpp
++++ b/src/qwen.cpp
+@@ -400,11 +400,31 @@
+                 TtsJob * j = q->queue.front();
+                 q->queue.pop_front();
+                 lk.unlock();
+-                const bool admitted = tts_engine_admit(e, j);
++                // A throw here or in the step (the GPU refusing work once
++                // the app is behind the screen) would end the app: the
++                // jobs fail instead, and the engine starts over.
++                bool admitted = false;
++                retired.clear();
++                try {
++                    admitted = tts_engine_admit(e, j);
++                } catch (const std::exception & ex) {
++                    j->status = QT_STATUS_GENERATE_FAILED;
++                    j->error  = ex.what();
++                    tts_engine_fail_all(e, &retired, ex.what());
++                    tts_engine_free(e);
++                    e = tts_engine_new(&q->pt, &q->tok);
++                }
+                 lk.lock();
++                for (TtsJob * r : retired) {
++                    if (r != j) {
++                        r->done = true;
++                    }
++                }
+                 if (!admitted) {
+                     j->done = true;
+                     q->cv_done.notify_all();
++                } else if (!retired.empty()) {
++                    q->cv_done.notify_all();
+                 }
+             }
+             if (tts_engine_active(e) == 0) {
+@@ -412,7 +432,13 @@
+             }
+             lk.unlock();
+             retired.clear();
+-            tts_engine_step(e, &retired);
++            try {
++                tts_engine_step(e, &retired);
++            } catch (const std::exception & ex) {
++                tts_engine_fail_all(e, &retired, ex.what());
++                tts_engine_free(e);
++                e = tts_engine_new(&q->pt, &q->tok);
++            }
+             lk.lock();
+             for (TtsJob * j : retired) {
+                 j->done = true;

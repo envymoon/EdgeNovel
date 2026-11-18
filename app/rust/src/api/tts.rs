@@ -641,8 +641,8 @@ fn speak_with(line: &str, voice: &str, how: Sampling) -> Result<Vec<u8>, String>
         match engine::speak(line, voice, max_frames(line), how) {
             Ok(pcm) if pcm.is_empty() => return Err("语音合成为空".into()),
             Ok(pcm) => return Ok(wav(&pcm)),
-            // Stopped on the GPU because the app went behind the screen:
-            // spoken again, on the CPU.
+            // Stopped because the app went behind the screen or came back:
+            // spoken again, on the CPU or the GPU.
             Err(_) if again && engine::misplaced() => again = false,
             Err(e) => return Err(e),
         }
@@ -779,9 +779,14 @@ mod engine {
         *LOADED.lock().unwrap() != Some(!background() && gpu())
     }
 
-    /// On the GPU with the app behind the screen: it has to move.
+    /// On the GPU with the app behind the screen, or on the CPU back on
+    /// screen with a GPU that can run it: it has to move.
     pub fn misplaced() -> bool {
-        *LOADED.lock().unwrap() == Some(true) && background()
+        match *LOADED.lock().unwrap() {
+            Some(true) => background(),
+            Some(false) => !background() && gpu(),
+            None => false,
+        }
     }
 
     fn error() -> String {
