@@ -139,7 +139,7 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 24;
+pub const SCAN_VERSION: u32 = 25;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -2525,12 +2525,30 @@ fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize) -> Cast {
         chosen.insert(i);
     }
     // The next few by count wait after them, for a seat someone leaves.
-    let spares: HashSet<usize> = alive
-        .iter()
-        .copied()
-        .filter(|i| !chosen.contains(i))
-        .take(SPARE_CAST)
-        .collect();
+    // Only sure ones, and nobody already seated under another form of the
+    // name (蓝湛 for 蓝忘机's 蓝, 上官明 inside 上官明月).
+    let forms = |p: &Person| -> Vec<String> {
+        std::iter::once(p.name.clone()).chain(p.aliases.iter().cloned()).collect()
+    };
+    let mut seated: Vec<String> = chosen.iter().flat_map(|&i| forms(&people[i])).collect();
+    let mut spares: HashSet<usize> = HashSet::new();
+    for &i in &alive {
+        if spares.len() >= SPARE_CAST {
+            break;
+        }
+        if chosen.contains(&i) || density(&people[i]) < DENSITY_SURE {
+            continue;
+        }
+        let mine = forms(&people[i]);
+        if mine
+            .iter()
+            .any(|f| seated.iter().any(|s| s.contains(f.as_str()) || f.contains(s.as_str())))
+        {
+            continue;
+        }
+        seated.extend(mine);
+        spares.insert(i);
+    }
     // Rebuild in count order so the graph's node order stays stable, the
     // spares after everyone seated.
     let mut remap = vec![usize::MAX; people.len()];
