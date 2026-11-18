@@ -1649,15 +1649,15 @@ pub(crate) fn plate_context(book_id: i64) -> Result<(Vec<String>, usize), String
 /// How many leads 章间立绘 takes turns between, from the top of the roster.
 const PLATE_LEADS: usize = 8;
 
-/// 章间立绘's plan for a book: what to draw after which chapters. The leads are
-/// the whole book's roster, the same cached scan 扫书报告 reads, less anyone
-/// the model has ruled is not a person; [`novel_core::interlude`] only ever
-/// reads text before each plate.
+/// 章间立绘's plan for a book: what to draw after which chapters, and the
+/// leads its people are, by index. The leads are the whole book's roster, the
+/// same cached scan 扫书报告 reads, less anyone the model has ruled is not a
+/// person; [`novel_core::interlude`] only ever reads text before each plate.
 pub(crate) fn plate_plan(
     path: &str,
     book_id: i64,
     every: usize,
-) -> Result<Vec<novel_core::interlude::Plate>, String> {
+) -> Result<(Vec<novel_core::interlude::Plate>, Vec<Vec<String>>), String> {
     ensure_loaded(path)?;
     let last_chapter = {
         let guard = cache().read().unwrap();
@@ -1675,7 +1675,8 @@ pub(crate) fn plate_plan(
         .collect();
     let guard = cache().read().unwrap();
     let l = guard.get(path).ok_or("书未打开")?;
-    Ok(novel_core::interlude::plan(&l.text, &l.chapters, &leads, every))
+    let plan = novel_core::interlude::plan(&l.text, &l.chapters, &leads, every);
+    Ok((plan, leads))
 }
 
 /// The pre-reading relationship structure always scans the whole available

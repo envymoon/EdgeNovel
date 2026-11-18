@@ -62,6 +62,19 @@ class PlateView extends StatelessWidget {
     ),
   );
 
+  /// What the plate shows, in a word, kept beside it as `<chapter>.txt`; a
+  /// plate drawn before that has none. A few bytes, read as it is shown, so
+  /// a plate drawn again says what it shows now.
+  static String? _word(String path) {
+    try {
+      final f = File(path.replaceFirst(RegExp(r'\.png$'), '.txt'));
+      final word = f.existsSync() ? f.readAsStringSync().trim() : '';
+      return word.isEmpty ? null : word;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// The plate as a page: also what the page beside a chapter's edge shows
   /// when a plate is there, so turning onto it is turning onto this.
   static Widget picture(
@@ -70,6 +83,7 @@ class PlateView extends StatelessWidget {
     bool fade = false,
     VoidCallback? onGone,
   }) {
+    final word = _word(path);
     final page = Column(
       children: [
         Expanded(
@@ -96,6 +110,14 @@ class PlateView extends StatelessWidget {
             ),
           ),
         ),
+        if (word != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              word,
+              style: TextStyle(color: theme.text, fontSize: 14),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: Text(

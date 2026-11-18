@@ -1237,6 +1237,7 @@ pub(crate) fn follow_split(book_id: i64, moved: &[(i64, i64)]) {
     let held = |old: i64| dir.join(format!("{old}.moving"));
     for (old, _) in moved {
         let _ = std::fs::rename(dir.join(format!("{old}.png")), held(*old));
+        let _ = std::fs::rename(dir.join(format!("{old}.txt")), dir.join(format!("{old}.word")));
     }
     for (old, new) in moved {
         if !held(*old).is_file() {
@@ -1247,6 +1248,7 @@ pub(crate) fn follow_split(book_id: i64, moved: &[(i64, i64)]) {
             .map(|n| dir.join(format!("{n}.png")))
             .find(|p| !p.exists())
             .expect("a free chapter number");
+        let _ = std::fs::rename(dir.join(format!("{old}.word")), free.with_extension("txt"));
         let _ = std::fs::rename(held(*old), free);
     }
 }
@@ -1336,11 +1338,28 @@ fn plates(
     #[cfg(in_process_engine)]
     crate::api::ai::stop_ai();
     let (genre_tags, reading) = crate::api::book::plate_context(book_id)?;
-    let plan = crate::api::book::plate_plan(path, book_id, every.max(1) as usize)?;
+    let (plan, leads) = crate::api::book::plate_plan(path, book_id, every.max(1) as usize)?;
     let scene = default_cover_scene(genre_tags);
     let dir = plates_dir(book_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("建立插画目录失败: {e}"))?;
     let file = |p: &interlude::Plate| dir.join(format!("{}.png", p.chapter));
+
+    // What each shows, in a word, said under it: some come out too abstract
+    // to make out. Plates drawn before this get theirs now.
+    let say = |p: &interlude::Plate| {
+        let word = match p.who {
+            Who::Girl(i) | Who::Boy(i) => leads.get(i).and_then(|l| l.first()).cloned(),
+            Who::Nobody => p.cues.first().map(|w| w.label.to_string()),
+        };
+        if let Some(word) = word {
+            let _ = std::fs::write(file(p).with_extension("txt"), word);
+        }
+    };
+    for p in &plan {
+        if file(p).is_file() && !file(p).with_extension("txt").is_file() {
+            say(p);
+        }
+    }
 
     let total = plan.len() as u32;
     let mut todo: Vec<&interlude::Plate> = plan.iter().filter(|p| !file(p).is_file()).collect();
@@ -1357,6 +1376,7 @@ fn plates(
             Err(_) if PLATES.stopped() => return Ok(()),
             Err(e) => return Err(e),
         };
+        say(p);
         // The temp dir can be on another drive, where a rename fails.
         let to = file(p);
         if std::fs::rename(&out, &to).is_err() {
