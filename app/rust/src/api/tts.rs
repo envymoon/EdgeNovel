@@ -616,7 +616,8 @@ fn max_frames(line: &str) -> usize {
 /// spoken alone, without the ones around it, the guesses swing from line to
 /// line, and now and then wander into a dialect the voice never had. Lower and
 /// narrower, the voice reads evenly; one seed, and a sentence said again comes
-/// out the same.
+/// out the same. 0.3 rather than 0.6: the same narrating tone throughout, as
+/// the reader asked for, with no sentence heard to stick or repeat.
 #[derive(Clone, Copy)]
 struct Sampling {
     temperature: f32,
@@ -624,7 +625,7 @@ struct Sampling {
     seed: i64,
 }
 
-const STEADY: Sampling = Sampling { temperature: 0.6, top_k: 30, seed: 1 };
+const STEADY: Sampling = Sampling { temperature: 0.3, top_k: 30, seed: 1 };
 
 #[cfg(in_process_engine)]
 fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
