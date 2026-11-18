@@ -1,6 +1,7 @@
 import AVFoundation
 import BackgroundTasks
 import Flutter
+import MediaPlayer
 import UIKit
 import os
 
@@ -125,6 +126,12 @@ import os
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelKeep") {
       FlutterMethodChannel(name: "novel/keep", binaryMessenger: registrar.messenger())
         .setMethodCallHandler { call, result in KeepAlive.shared.handle(call, result) }
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelNowPlaying") {
+      let channel = FlutterMethodChannel(
+        name: "novel/now_playing", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in NowPlaying.shared.handle(call, result) }
+      NowPlaying.shared.channel = channel
     }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelSpeech") {
       let channel = FlutterMethodChannel(
@@ -666,7 +673,8 @@ final class KeepAlive {
         if let self = self, !self.holders.isEmpty, self.player?.isPlaying != true { _ = self.update() }
       }
     }
-    let mix = !holders.values.contains(false)
+    // Listening owns the sound, so it shows on the lock screen.
+    let mix = !NowPlaying.shared.isOn && !holders.values.contains(false)
     try? session.setCategory(.playback, mode: .default, options: mix ? [.mixWithOthers] : [])
     try? session.setActive(true)
     if player == nil {
@@ -679,6 +687,11 @@ final class KeepAlive {
       return player?.play() ?? false
     }
     return true
+  }
+
+  /// The sound setting again, for listening starting or ending.
+  func refresh() {
+    if !holders.isEmpty { _ = update() }
   }
 
   /// A second of 24 kHz 16-bit mono, all zeros, as a WAV file.
@@ -694,5 +707,135 @@ final class KeepAlive {
     d.append(contentsOf: Array("data".utf8)); le32(bytes)
     d.append(Data(count: Int(bytes)))
     return d
+  }
+}
+
+/// 听书 on the lock screen, in Control Center and on headphones
+/// (tts_controller.dart): the chapter and the book, playing or paused, and
+/// play, pause and the sentence before or after from there. Shown only while
+/// something is being listened to; silence kept playing for work behind the
+/// screen never shows. A call or another app's sound pauses it, and it plays
+/// on after a call; headphones taken out pause it.
+final class NowPlaying: NSObject {
+  static let shared = NowPlaying()
+
+  var channel: FlutterMethodChannel?
+  private(set) var isOn = false
+  private var playing = false
+
+  override init() {
+    super.init()
+    let center = NotificationCenter.default
+    center.addObserver(
+      self, selector: #selector(interrupted(_:)),
+      name: AVAudioSession.interruptionNotification, object: nil)
+    center.addObserver(
+      self, selector: #selector(routeChanged(_:)),
+      name: AVAudioSession.routeChangeNotification, object: nil)
+  }
+
+  func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    switch call.method {
+    case "set":
+      show(
+        title: args["title"] as? String ?? "", book: args["book"] as? String ?? "",
+        playing: args["playing"] as? Bool ?? false)
+    case "clear":
+      hide()
+    default:
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    result(nil)
+  }
+
+  private func show(title: String, book: String, playing: Bool) {
+    self.playing = playing
+    if !isOn {
+      isOn = true
+      let commands = MPRemoteCommandCenter.shared()
+      let send = { (name: String) -> (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
+        { [weak self] _ in
+          self?.send(name)
+          return .success
+        }
+      }
+      commands.playCommand.addTarget(handler: send("play"))
+      commands.pauseCommand.addTarget(handler: send("pause"))
+      commands.togglePlayPauseCommand.addTarget(handler: send("toggle"))
+      commands.nextTrackCommand.addTarget(handler: send("next"))
+      commands.previousTrackCommand.addTarget(handler: send("previous"))
+      for command in [
+        commands.playCommand, commands.pauseCommand, commands.togglePlayPauseCommand,
+        commands.nextTrackCommand, commands.previousTrackCommand,
+      ] {
+        command.isEnabled = true
+      }
+      KeepAlive.shared.refresh()
+    }
+    if playing {
+      try? AVAudioSession.sharedInstance().setActive(true)
+    }
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+      MPMediaItemPropertyTitle: title,
+      MPMediaItemPropertyArtist: book,
+      MPMediaItemPropertyAlbumTitle: book,
+      MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+      MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
+    ]
+  }
+
+  private func hide() {
+    guard isOn else { return }
+    isOn = false
+    playing = false
+    let commands = MPRemoteCommandCenter.shared()
+    for command in [
+      commands.playCommand, commands.pauseCommand, commands.togglePlayPauseCommand,
+      commands.nextTrackCommand, commands.previousTrackCommand,
+    ] {
+      command.removeTarget(nil)
+    }
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    KeepAlive.shared.refresh()
+  }
+
+  private func send(_ command: String) {
+    DispatchQueue.main.async { self.channel?.invokeMethod("command", arguments: command) }
+  }
+
+  /// Paused when a call or another app takes the sound; on again after,
+  /// when iOS says it should.
+  private var pausedByInterruption = false
+
+  @objc private func interrupted(_ note: Notification) {
+    guard isOn, let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+      let type = AVAudioSession.InterruptionType(rawValue: raw)
+    else { return }
+    switch type {
+    case .began:
+      if playing {
+        pausedByInterruption = true
+        send("pause")
+      }
+    case .ended:
+      let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map {
+        AVAudioSession.InterruptionOptions(rawValue: $0)
+      }
+      if pausedByInterruption, options?.contains(.shouldResume) == true {
+        send("play")
+      }
+      pausedByInterruption = false
+    @unknown default:
+      break
+    }
+  }
+
+  @objc private func routeChanged(_ note: Notification) {
+    guard isOn, playing, let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+      AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable
+    else { return }
+    send("pause")
   }
 }

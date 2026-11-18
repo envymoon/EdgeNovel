@@ -61,6 +61,70 @@ class TtsController extends ChangeNotifier {
     if (enableIo && defaultTargetPlatform == TargetPlatform.android) {
       addListener(_holdListening);
     }
+    if (enableIo && defaultTargetPlatform == TargetPlatform.iOS) {
+      addListener(_showNowPlaying);
+    }
+  }
+
+  // ── iPhone: the lock screen and headphones ─────────────────────────────
+
+  /// What is being listened to, on the lock screen, in Control Center and on
+  /// headphones (AppDelegate.swift, NowPlaying).
+  static const _nowPlaying = MethodChannel('novel/now_playing');
+
+  /// The reader whose listening shows there: the last to play.
+  static TtsController? _shownBy;
+  static String? _shown;
+
+  void _showNowPlaying() {
+    if (playing && _shownBy != this) {
+      _shownBy = this;
+      _shown = null;
+      _nowPlaying.setMethodCallHandler(_onNowPlaying);
+    }
+    if (_shownBy != this) return;
+    final info = reader.info;
+    if (info == null || (!playing && !hasQueue)) return _hideNowPlaying();
+    final c = reader.chapterIndex;
+    final chapter = c >= 0 && c < info.chapters.length
+        ? info.chapters[c].title
+        : '';
+    final key = '$playing|$chapter|${info.title}';
+    if (key == _shown) return;
+    _shown = key;
+    _nowPlaying.invokeMethod('set', {
+      'title': chapter,
+      'book': info.title,
+      'playing': playing,
+    }).ignore();
+  }
+
+  void _hideNowPlaying() {
+    if (_shownBy != this) return;
+    _shownBy = null;
+    _shown = null;
+    _nowPlaying.invokeMethod('clear').ignore();
+  }
+
+  static Future<void> _onNowPlaying(MethodCall call) async {
+    final self = _shownBy;
+    if (self == null || call.method != 'command') return;
+    try {
+      switch (call.arguments) {
+        case 'play':
+          await self.start();
+        case 'pause':
+          await self.pause();
+        case 'toggle':
+          await self.toggle();
+        case 'next':
+          if (self.hasQueue) await self.seekTo(self.position + 1);
+        case 'previous':
+          if (self.hasQueue) await self.seekTo(self.position - 1);
+      }
+    } catch (_) {
+      // Nothing to play: the reader's own button says why.
+    }
   }
 
   /// Android lets an app behind the screen go on only as a foreground
@@ -1026,6 +1090,7 @@ class TtsController extends ChangeNotifier {
   @override
   void dispose() {
     _gen++;
+    _hideNowPlaying();
     if (_speaking == this) {
       _speaking = null;
       if (_system) _speech.invokeMethod('stop').ignore();
