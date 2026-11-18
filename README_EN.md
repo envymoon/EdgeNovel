@@ -81,9 +81,11 @@ No. Your data is stored apart from the app, and each new version backs it up bef
 | --- | --- |
 | Windows | [Zhiyue 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.0) (unzip and run `novel.exe`; keep the whole folder together) |
 | Android | [Zhiyue 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.0) (ARM64) |
-| iOS | [Zhiyue 1.5.1](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.1) (unsigned; sign it yourself to install) |
+| iOS | [Zhiyue 1.5.2](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.2) (unsigned; sign it yourself to install) |
 
 ## What's new
+
+**1.5.2** (iOS) Read-aloud remembers your place in each chapter, narrates more evenly and runs faster, and no longer stops when the screen is locked or the app is in the background; the book report lets you pick chapters and people.
 
 **1.5.1** (iOS) Smoother page turns; read-aloud picks up on the page you are reading, and holding a sentence while listening reads on from there; fixes the last line of a page being cut off after changing fonts.
 
