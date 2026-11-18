@@ -251,6 +251,7 @@ fn engine_child() -> &'static Mutex<Option<Engine>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ChatEngineState {
     context: u32,
+    slots: u32,
     kv_cache: &'static str,
 }
 
@@ -619,10 +620,6 @@ fn ensure_on(
             // Prompt ingestion must obey the same ceiling as generation.
             "-tb",
             &threads_arg,
-            // One background task at a time. Parallel slots increase KV memory
-            // and make two "quiet" jobs compete for the same thermal budget.
-            "-np",
-            "1",
             // Do not spin while the loaded model is waiting for the next
             // chapter. Keeping weights mapped costs memory, not active CPU.
             "--poll",
@@ -663,7 +660,7 @@ fn ensure_on(
         {
             cmd.env("EDGE_PARENT_PID", std::process::id().to_string())
                 .env("LLAMA_API_KEY", crate::android_engine::api_key()?)
-                .args(["--threads-http", "2"]);
+                .args(["--threads-http", "6"]);
             // No GPU device opened at all: the one that failed can take the
             // CPU run down with it while it is being set up.
             if !gpu {
@@ -697,7 +694,7 @@ fn ensure_on(
         let key = crate::engine_thread::api_key()?;
         let args: Vec<&OsStr> = args
             .into_iter()
-            .chain(["--api-key", key, "--threads-http", "2"].map(OsStr::new))
+            .chain(["--api-key", key, "--threads-http", "6"].map(OsStr::new))
             .collect();
         crate::engine_thread::Engine::start(port, &args)
             .map_err(|e| format!("启动引擎失败: {e}"))?
@@ -753,8 +750,12 @@ fn stop_chat_engine() {
     *engine_state().lock().unwrap() = None;
 }
 
-fn chat_engine_args<'a>(context: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
+/// `context` is the whole window, shared out evenly over `slots` requests
+/// answered at once.
+fn chat_engine_args<'a>(context: &'a str, slots: &'a str, kv_cache: &'a str) -> Vec<&'a str> {
     let mut args = vec![
+        "-np",
+        slots,
         "-c",
         context,
         "--jinja",
@@ -788,12 +789,26 @@ const FULL_CONTEXT: u32 = 8192;
 /// KV cache, about 360 MB back on a phone.
 const SUMMARY_CONTEXT: u32 = 2048;
 
+/// Chapters summarized at once, each its own request in its own
+/// [SUMMARY_CONTEXT] window. Measured on 160 chapters (GPU): 27% less time a
+/// chapter than one at a time; the same window memory as one [FULL_CONTEXT]
+/// run, which the people and relations passes already need. About half the
+/// chapters come out worded a little differently from one at a time (the
+/// batch is computed together); the reader judged that acceptable.
+const SUMMARY_SLOTS: u32 = 4;
+
 /// The window is sized to what a task reads, never the other way round, and
 /// inside it the model computes the same thing at any size: measured word for
 /// word identical at 2K, 4K and 8K on 78 chapters (GPU) and 27 (CPU). Runtime
 /// profiles may change scheduling pressure, never the information the model
 /// can read.
 fn ensure_engine(context: u32) -> Result<(), String> {
+    ensure_engine_slots(context, 1)
+}
+
+/// [ensure_engine] answering `slots` requests at once, each in a window of
+/// `context`. One task at a time still: the slots are one task's pieces.
+fn ensure_engine_slots(context: u32, slots: u32) -> Result<(), String> {
     #[cfg(target_os = "android")]
     let startup_generation = crate::android_engine::generation();
     #[cfg(target_os = "android")]
@@ -808,7 +823,9 @@ fn ensure_engine(context: u32) -> Result<(), String> {
 
     if health(PORT)
         && engine_state().lock().unwrap().is_some_and(|state| {
-            state.context == context && matches!(state.kv_cache, "q8_0" | "f16")
+            state.context == context
+                && state.slots == slots
+                && matches!(state.kv_cache, "q8_0" | "f16")
         })
     {
         return Ok(());
@@ -818,10 +835,13 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     if health(PORT) || engine_child().lock().unwrap().is_some() {
         stop_chat_engine();
     }
+    // A picture engine kept loaded between pictures goes first.
+    crate::api::image::release();
     let model = find_model(ai_dir()?).ok_or("模型未安装（缺 .gguf 文件）")?;
-    let context_arg = context.to_string();
+    let context_arg = (context * slots).to_string();
+    let slots_arg = slots.to_string();
     let start = |kv_cache: &'static str| {
-        let args = chat_engine_args(&context_arg, kv_cache);
+        let args = chat_engine_args(&context_arg, &slots_arg, kv_cache);
         ensure(
             PORT,
             engine_child(),
@@ -853,6 +873,7 @@ fn ensure_engine(context: u32) -> Result<(), String> {
     };
     *engine_state().lock().unwrap() = Some(ChatEngineState {
         context,
+        slots,
         kv_cache: active_kv,
     });
     Ok(())
@@ -872,6 +893,7 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
     let _prepare = crate::android_engine::PREPARE_LOCK.lock().unwrap();
     #[cfg(in_process_engine)]
     let _prepare = crate::engine_thread::PREPARE_LOCK.lock().unwrap();
+    crate::api::image::release();
     let model = find_gguf(ai_dir()?, true).ok_or("嵌入模型未安装（缺 bge 等 .gguf）")?;
     #[cfg(target_os = "android")]
     note_crash(embed_child());
@@ -880,6 +902,8 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
         embed_child(),
         model,
         &[
+            "-np",
+            "1",
             "--embeddings",
             "--pooling",
             "cls",
@@ -1048,6 +1072,8 @@ trait LocalInferenceBackend: Sync {
     #[flutter_rust_bridge::frb(ignore)]
     fn prepare_chat(&self, context: u32) -> Result<(), String>;
     #[flutter_rust_bridge::frb(ignore)]
+    fn prepare_chat_slots(&self, context: u32, slots: u32) -> Result<(), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn prepare_embeddings(&self) -> Result<(), String>;
     #[flutter_rust_bridge::frb(ignore)]
     fn chat_completion(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
@@ -1062,6 +1088,10 @@ struct LlamaServerBackend;
 impl LocalInferenceBackend for LlamaServerBackend {
     fn prepare_chat(&self, context: u32) -> Result<(), String> {
         ensure_engine(context)
+    }
+
+    fn prepare_chat_slots(&self, context: u32, slots: u32) -> Result<(), String> {
+        ensure_engine_slots(context, slots)
     }
 
     fn prepare_embeddings(&self) -> Result<(), String> {
@@ -1227,7 +1257,8 @@ pub fn enrich_book(
 ) -> Result<(), String> {
     CANCEL.store(false, Ordering::SeqCst);
     let mut context = SUMMARY_CONTEXT;
-    inference_backend().prepare_chat(context)?;
+    let mut slots = SUMMARY_SLOTS;
+    inference_backend().prepare_chat_slots(context, slots)?;
     if !book::is_loaded(&path) {
         book::open_book(path.clone())?;
     }
@@ -1248,86 +1279,116 @@ pub fn enrich_book(
     let model_tag = ai_status()?.model.unwrap_or_default();
 
     let mut consecutive_errors = 0;
-    for (done, (idx, title, need_summary, need_mood)) in missing.into_iter().enumerate() {
+    let mut done = 0u32;
+    let mut rest = missing.as_slice();
+    while !rest.is_empty() {
         if CANCEL.load(Ordering::SeqCst) {
             break;
         }
-        // One excerpt, a summary and (while [MOOD_LABELS] is on) a mood over
-        // it. Each piece is written only when it was missing, so a re-run never
-        // re-pays finished work.
-        let result = book::summary_excerpt(&path, idx as u32).and_then(|ex| {
-            let summary = if need_summary {
-                match summarize_excerpt(&ex, context)? {
-                    Some(s) => Some(s),
-                    // An excerpt that tokenizes unusually long: widen the
-                    // window for the rest of the run and ask again.
-                    None if context < FULL_CONTEXT => {
-                        context = FULL_CONTEXT;
-                        inference_backend().prepare_chat(context)?;
-                        Some(
-                            summarize_excerpt(&ex, context)?
-                                .ok_or("章节摘录超出上下文")?,
-                        )
-                    }
-                    None => return Err("章节摘录超出上下文".into()),
-                }
-            } else {
-                None
-            };
-            let mood = if MOOD_LABELS && need_mood {
-                classify_mood(&ex)?
-            } else {
-                None
-            };
-            Ok((summary, mood))
+        // The next few chapters still to do, wherever they are in the book,
+        // asked at once: each is its own request, so which chapters were
+        // picked does not matter, and fewer than [SUMMARY_SLOTS] left just
+        // makes a smaller batch.
+        let (batch, after) = rest.split_at(rest.len().min(slots as usize));
+        rest = after;
+        let excerpts: Vec<Result<String, String>> = batch
+            .iter()
+            .map(|(idx, ..)| book::summary_excerpt(&path, *idx as u32))
+            .collect();
+        let mut summaries: Vec<Result<Option<String>, String>> = std::thread::scope(|scope| {
+            let asks: Vec<_> = batch
+                .iter()
+                .zip(&excerpts)
+                .map(|((_, _, need_summary, _), ex)| {
+                    let ctx = context;
+                    scope.spawn(move || match ex {
+                        Ok(ex) if *need_summary => summarize_excerpt(ex, ctx),
+                        Ok(_) => Ok(Some(String::new())),
+                        Err(e) => Err(e.clone()),
+                    })
+                })
+                .collect();
+            asks.into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("引擎请求异常".into())))
+                .collect()
         });
-
-        let progress = match result {
-            Ok((summary, mood)) => {
-                consecutive_errors = 0;
-                {
-                    let mut guard = book::store().lock().unwrap();
-                    let s = guard.as_mut().ok_or("数据库未初始化")?;
-                    s.set_chapter_ai(
-                        book_id,
-                        idx,
-                        summary.as_deref(),
-                        mood.as_deref(),
-                        &model_tag,
-                    )
-                    .map_err(|e| format!("{e}"))?;
-                }
-                EnrichProgress {
-                    index: idx as u32,
-                    title,
-                    done: done as u32 + 1,
-                    total,
-                    summary,
-                    error: None,
+        // An excerpt that tokenizes unusually long: one at a time in the
+        // full window for the rest of the run, this one asked again.
+        if summaries.iter().any(|r| matches!(r, Ok(None))) {
+            if context < FULL_CONTEXT {
+                context = FULL_CONTEXT;
+                slots = 1;
+                inference_backend().prepare_chat_slots(context, slots)?;
+            }
+            for (r, ex) in summaries.iter_mut().zip(&excerpts) {
+                if let (Ok(None), Ok(ex)) = (&*r, ex) {
+                    *r = summarize_excerpt(ex, context)
+                        .and_then(|s| s.ok_or_else(|| "章节摘录超出上下文".to_string()).map(Some));
                 }
             }
-            Err(e) => {
-                consecutive_errors += 1;
-                EnrichProgress {
-                    index: idx as u32,
-                    title,
-                    done: done as u32,
-                    total,
-                    summary: None,
-                    error: Some(e),
-                }
-            }
-        };
-        // A dropped sink means the listener is gone; stop burning CPU for nobody.
-        if sink.add(progress).is_err() {
-            break;
         }
-        if consecutive_errors >= 3 {
-            return Err("连续 3 章失败，已停止".into());
+
+        for (((idx, title, need_summary, need_mood), ex), summary) in
+            batch.iter().zip(&excerpts).zip(summaries)
+        {
+            let result = summary.and_then(|summary| {
+                let summary = if *need_summary { summary } else { None };
+                let mood = match ex {
+                    Ok(ex) if MOOD_LABELS && *need_mood => classify_mood(ex)?,
+                    _ => None,
+                };
+                Ok((summary, mood))
+            });
+            let progress = match result {
+                Ok((summary, mood)) => {
+                    consecutive_errors = 0;
+                    {
+                        let mut guard = book::store().lock().unwrap();
+                        let s = guard.as_mut().ok_or("数据库未初始化")?;
+                        s.set_chapter_ai(
+                            book_id,
+                            *idx,
+                            summary.as_deref(),
+                            mood.as_deref(),
+                            &model_tag,
+                        )
+                        .map_err(|e| format!("{e}"))?;
+                    }
+                    done += 1;
+                    EnrichProgress {
+                        index: *idx as u32,
+                        title: title.clone(),
+                        done,
+                        total,
+                        summary,
+                        error: None,
+                    }
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    EnrichProgress {
+                        index: *idx as u32,
+                        title: title.clone(),
+                        done,
+                        total,
+                        summary: None,
+                        error: Some(e),
+                    }
+                }
+            };
+            // A dropped sink means the listener is gone; stop burning CPU for nobody.
+            if sink.add(progress).is_err() {
+                return Ok(());
+            }
+            if consecutive_errors >= 3 {
+                return Err("连续 3 章失败，已停止".into());
+            }
         }
         // Advance in durable slices. The controller may stop us between any two
-        // chapters; quiet mode also leaves the memory controller time to cool.
-        background_rest(1800, 350);
+        // batches; quiet mode also leaves the memory controller time to cool,
+        // as long per chapter as when they went one at a time.
+        let n = batch.len() as u64;
+        background_rest(1800 * n, 350 * n);
     }
     Ok(())
 }
@@ -2296,8 +2357,10 @@ mod tests {
     #[test]
     fn q8_kv_uses_both_quantized_caches_and_flash_attention() {
         assert_eq!(
-            chat_engine_args("8192", "q8_0"),
+            chat_engine_args("8192", "1", "q8_0"),
             vec![
+                "-np",
+                "1",
                 "-c",
                 "8192",
                 "--jinja",
@@ -2316,8 +2379,10 @@ mod tests {
     #[test]
     fn f16_fallback_keeps_the_previous_cache_configuration() {
         assert_eq!(
-            chat_engine_args("8192", "f16"),
+            chat_engine_args("8192", "1", "f16"),
             vec![
+                "-np",
+                "1",
                 "-c",
                 "8192",
                 "--jinja",
