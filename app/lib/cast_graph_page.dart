@@ -55,7 +55,6 @@ class _CastGraphPageState extends State<CastGraphPage> {
   AiTaskState? _lastState;
 
   /// Taken off the graph by hand, to put back.
-  List<String> _removed = const [];
 
   @override
   void initState() {
@@ -113,10 +112,8 @@ class _CastGraphPageState extends State<CastGraphPage> {
         top: widget.settings.castTop,
       );
       final s = await aiStatus();
-      final removed = await removedPeople(bookId: widget.book.id);
       if (!mounted) return;
       setState(() {
-        _removed = removed;
         _graph = g;
         _pos = _layout(g);
         _hasModel = s.engine && s.model != null;
@@ -164,37 +161,6 @@ class _CastGraphPageState extends State<CastGraphPage> {
     setState(() => _selected = null);
     await _load();
   }
-
-  Future<void> _showRemoved() => showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: widget.settings.theme.background,
-    builder: (context) {
-      final t = widget.settings.theme;
-      return SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            for (final name in _removed)
-              ListTile(
-                dense: true,
-                title: Text(
-                  name,
-                  style: TextStyle(color: t.text, fontSize: 14),
-                ),
-                trailing: TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _setRemoved(name, false);
-                  },
-                  child: const Text('恢复'),
-                ),
-              ),
-          ],
-        ),
-      );
-    },
-  );
 
   /// The first [n] of the ten: the graph is drawn again for them.
   Future<void> _setTop(int n) async {
@@ -527,18 +493,6 @@ class _CastGraphPageState extends State<CastGraphPage> {
                   style: TextStyle(color: t.muted, fontSize: 12),
                 ),
               ),
-              if (_removed.isNotEmpty)
-                TextButton(
-                  onPressed: _showRemoved,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                  ),
-                  child: Text(
-                    '已移除 ${_removed.length}',
-                    style: TextStyle(color: t.muted, fontSize: 12),
-                  ),
-                ),
               for (final n in ReadingSettings.castTopChoices)
                 Padding(
                   padding: const EdgeInsets.only(left: 6),

@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS name_verdicts (
 );
 
 -- People the reader took off a book's graph by hand. Apart from the model's
--- verdicts, and kept through 重新分析: the reader said so, not a scan.
+-- verdicts; 重新分析 clears them, back to the graph the first scan found.
 CREATE TABLE IF NOT EXISTS cast_removed (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     name    TEXT NOT NULL,
@@ -1655,6 +1655,7 @@ impl Store {
             "name_verdicts",
             "relation_summaries",
             "person_summaries",
+            "cast_removed",
         ] {
             self.conn
                 .execute(&format!("DELETE FROM {t} WHERE book_id = ?1"), [book_id])?;
