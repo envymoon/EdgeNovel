@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'keep_alive.dart';
 import 'reader_state.dart';
@@ -55,6 +57,7 @@ class TtsController extends ChangeNotifier {
        _remote = enableIo ? TtsRemoteClient() : null {
     final player = _player;
     if (_byChapter && player != null) _listen(player);
+    if (enableIo) unawaited(_heardMap());
     if (enableIo && defaultTargetPlatform == TargetPlatform.android) {
       addListener(_holdListening);
     }
@@ -216,7 +219,7 @@ class TtsController extends ChangeNotifier {
     }
     if (_utts.isEmpty) _buildUtts();
     if (_utts.isEmpty) return;
-    if (fromIndex == -1) fromIndex = _onPage();
+    if (fromIndex == -1) fromIndex = _whereLeft();
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
       _utts.length - 1,
@@ -397,7 +400,7 @@ class TtsController extends ChangeNotifier {
       _buildUtts();
     }
     if (_utts.isEmpty) return;
-    if (fromIndex == -1) fromIndex = _onPage();
+    if (fromIndex == -1) fromIndex = _whereLeft();
     _system = true;
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
@@ -476,7 +479,7 @@ class TtsController extends ChangeNotifier {
     if (!playing) return;
     final gen = _gen;
     final info = reader.info;
-    await reader.markCurrentChapterCompleted();
+    await _finished();
     if (gen != _gen) return;
     if (info == null || reader.chapterIndex >= info.chapters.length - 1) {
       playing = false;
@@ -518,7 +521,7 @@ class TtsController extends ChangeNotifier {
     }
     _spoken = spoken;
     _utts = _spokenUtts(spoken);
-    if (fromIndex == -1) fromIndex = _onPage();
+    if (fromIndex == -1) fromIndex = _whereLeft();
     _pos = (fromIndex ?? (_pos >= _utts.length ? 0 : _pos)).clamp(
       0,
       _utts.length - 1,
@@ -649,7 +652,7 @@ class TtsController extends ChangeNotifier {
         ? null
         : await TtsChapters.instance.chapter(info, next);
     if (gen != _gen) return;
-    await reader.markCurrentChapterCompleted();
+    await _finished();
     if (gen != _gen) return;
     if (spoken == null || spoken.sentences.isEmpty) {
       if (!last) notice = '下一章未合成';
@@ -674,6 +677,81 @@ class TtsController extends ChangeNotifier {
   // ── Segmentation ───────────────────────────────────────────────────────
 
   void _buildUtts() => _utts = chapterUtterances(reader.paragraphs);
+
+  /// Where listening stopped in each chapter, by `book:chapter`: the
+  /// sentence's paragraph and where in it it starts. A chapter played again
+  /// goes on from there, whatever page is open; one heard to the end, or
+  /// never played, starts on the page being read.
+  static const _heardKey = 'tts_heard';
+  static const _heardKept = 300;
+  static Map<String, List<int>>? _heard;
+  static Timer? _heardSave;
+
+  static Future<Map<String, List<int>>> _heardMap() async {
+    if (_heard != null) return _heard!;
+    final map = <String, List<int>>{};
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(_heardKey);
+      if (raw != null) {
+        (jsonDecode(raw) as Map<String, dynamic>).forEach((k, v) {
+          final l = (v as List).cast<int>();
+          if (l.length == 2) map[k] = l;
+        });
+      }
+    } catch (_) {}
+    return _heard ??= map;
+  }
+
+  String? get _chapterKey {
+    final id = reader.info?.id;
+    return id == null ? null : '$id:${reader.chapterIndex}';
+  }
+
+  static void _saveHeard() {
+    _heardSave?.cancel();
+    _heardSave = Timer(const Duration(seconds: 2), () async {
+      final map = _heard;
+      if (map == null) return;
+      try {
+        await (await SharedPreferences.getInstance()).setString(
+          _heardKey,
+          jsonEncode(map),
+        );
+      } catch (_) {}
+    });
+  }
+
+  void _leave(int p, int start) {
+    final key = _chapterKey;
+    final map = _heard;
+    if (key == null || p < 0) return;
+    if (map == null) {
+      unawaited(_heardMap().then((_) => _leave(p, start)));
+      return;
+    }
+    final was = map.remove(key);
+    map[key] = [p, start];
+    while (map.length > _heardKept) {
+      map.remove(map.keys.first);
+    }
+    if (was == null || was[0] != p || was[1] != start) _saveHeard();
+  }
+
+  Future<void> _finished() async {
+    final key = _chapterKey;
+    if (key != null && (await _heardMap()).remove(key) != null) _saveHeard();
+    await reader.markCurrentChapterCompleted();
+  }
+
+  /// Where this chapter's listening stopped, or the page being read.
+  int _whereLeft() {
+    final at = _heard?[_chapterKey];
+    if (at == null) return _onPage();
+    final k = _utts.indexWhere(
+      (u) => u.paragraphIndex > at[0] || (u.paragraphIndex == at[0] && u.end > at[1]),
+    );
+    return k < 0 ? _onPage() : k;
+  }
 
   /// The first sentence on the page being read: the one the page opens in.
   int _onPage() {
@@ -793,7 +871,7 @@ class TtsController extends ChangeNotifier {
         if (info == null || reader.chapterIndex >= info.chapters.length - 1) {
           break;
         }
-        if (_failed.isEmpty) await reader.markCurrentChapterCompleted();
+        if (_failed.isEmpty) await _finished();
         await reader.next();
         if (gen != _gen) return;
         _buildUtts();
@@ -930,6 +1008,7 @@ class TtsController extends ChangeNotifier {
   }
 
   void _setActive(int p, int start, int end) {
+    _leave(p, start);
     if (activeParagraph != p || activeStart != start || activeEnd != end) {
       activeParagraph = p;
       activeStart = start;
