@@ -35,7 +35,25 @@ fn snapshot(dir: &str, upto: usize) -> String {
         let removed: Vec<String> = std::env::var("REMOVE")
             .map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect())
             .unwrap_or_default();
-        let c = cast::scan_without(&d.text, &b.chapters, n, &removed);
+        let mut c = cast::scan_without(&d.text, &b.chapters, n, &removed);
+        // Probe: who would fill the seats if the whole cast were taken off by
+        // hand, NEXT rounds deep (NEXT=2 lists roughly the next twenty).
+        let deep: usize = std::env::var("NEXT").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        if deep > 0 {
+            let mut gone = removed.clone();
+            let mut next = Vec::new();
+            for _ in 0..deep {
+                gone.extend(c.people.iter().map(|p| p.name.clone()));
+                c = cast::scan_without(&d.text, &b.chapters, n, &gone);
+                next.extend(c.people.iter().map(|p| p.name.clone()));
+            }
+            out.push_str(&format!(
+                "== {}\n{}\n\n",
+                path.file_name().unwrap().to_string_lossy(),
+                next.join(" ")
+            ));
+            continue;
+        }
 
         out.push_str(&format!(
             "== {} · 前 {n} 章 · {} 人\n",
