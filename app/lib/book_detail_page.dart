@@ -1013,6 +1013,65 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
   /// streams each one as it lands, so the list fills in without a reload.
   final Map<int, String> _fresh = {};
 
+  /// Chapters ticked for the analysis about to start; null when not picking.
+  Set<int>? _picked;
+
+  /// Chapters an analysis would summarize: those with no summary yet.
+  List<int> get _open => [
+    for (var i = 0; i < widget.info.chapters.length; i++)
+      if (_summaryOf(i).isEmpty) i,
+  ];
+
+  void _pick() => setState(() => _picked = _open.toSet());
+
+  void _startPicked() {
+    final picked = _picked;
+    if (picked == null || picked.isEmpty) return;
+    widget.reader.startEnrich(
+      widget.book,
+      chapters: picked.toList()..sort(),
+    );
+    setState(() => _picked = null);
+  }
+
+  void _toggle(int chapter) => setState(() {
+    final picked = _picked!;
+    if (!picked.remove(chapter)) picked.add(chapter);
+  });
+
+  /// 全选, or none once all are.
+  Widget _pickBar(ReadingTheme t) {
+    final picked = _picked!;
+    final open = _open;
+    final all = open.isNotEmpty && picked.length == open.length;
+    return Row(
+      children: [
+        Checkbox(
+          value: all ? true : (picked.isEmpty ? false : null),
+          tristate: true,
+          visualDensity: VisualDensity.compact,
+          onChanged: (_) =>
+              setState(() => _picked = all ? <int>{} : open.toSet()),
+        ),
+        Expanded(
+          child: Text(
+            '全选 · 已选 ${picked.length} 章',
+            style: TextStyle(color: t.text, fontSize: 12.5),
+          ),
+        ),
+        TextButton(
+          onPressed: () => setState(() => _picked = null),
+          child: const Text('取消'),
+        ),
+        const SizedBox(width: 4),
+        FilledButton.tonal(
+          onPressed: picked.isEmpty ? null : _startPicked,
+          child: const Text('开始分析'),
+        ),
+      ],
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1086,8 +1145,15 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                     settings: widget.settings,
                     done: summarized,
                     total: chapters.length,
+                    onPick: _pick,
                   ),
                 ),
+                if (_picked != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 18, 4),
+                    child: _pickBar(t),
+                  )
+                else
                 Padding(
                   padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
                   child: Container(
@@ -1143,6 +1209,7 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                           widget.lastChapter != null &&
                           index == last &&
                           !completed;
+                      final picking = _picked != null && summary.isEmpty;
                       return Material(
                         color: isLast
                             ? t.text.withValues(alpha: 0.045)
@@ -1155,11 +1222,19 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                           ),
                           leading: SizedBox(
                             width: 30,
-                            child: Icon(
-                              isLast ? Icons.history : Icons.menu_book_outlined,
-                              color: isLast ? t.text : t.muted,
-                              size: 19,
-                            ),
+                            child: picking
+                                ? Checkbox(
+                                    value: _picked!.contains(index),
+                                    visualDensity: VisualDensity.compact,
+                                    onChanged: (_) => _toggle(index),
+                                  )
+                                : Icon(
+                                    isLast
+                                        ? Icons.history
+                                        : Icons.menu_book_outlined,
+                                    color: isLast ? t.text : t.muted,
+                                    size: 19,
+                                  ),
                           ),
                           title: Row(
                             children: [
@@ -1218,12 +1293,16 @@ class _ChapterSummaryPageState extends State<_ChapterSummaryPage> {
                                     ),
                                   ),
                                 ),
-                          trailing: Icon(
-                            Icons.chevron_right,
-                            color: t.muted,
-                            size: 18,
-                          ),
-                          onTap: () => widget.onOpenChapter(index, null),
+                          trailing: picking
+                              ? null
+                              : Icon(
+                                  Icons.chevron_right,
+                                  color: t.muted,
+                                  size: 18,
+                                ),
+                          onTap: picking
+                              ? () => _toggle(index)
+                              : () => widget.onOpenChapter(index, null),
                         ),
                       );
                     },

@@ -184,6 +184,7 @@ abstract class RustLibApi extends BaseApi {
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
     required int top,
+    required List<String> names,
   });
 
   Stream<DownloadProgress> crateApiSourceDownloadBook({
@@ -217,6 +218,7 @@ abstract class RustLibApi extends BaseApi {
   Stream<EnrichProgress> crateApiAiEnrichBook({
     required String path,
     required PlatformInt64 bookId,
+    required List<int> chapters,
   });
 
   Future<CleanupReport> crateApiCleanupFindCleanup({required String path});
@@ -1556,6 +1558,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required PlatformInt64 bookId,
     required PlatformInt64 upToChapter,
     required int top,
+    required List<String> names,
   }) {
     final sink = RustStreamSink<DescribeProgress>();
     unawaited(
@@ -1567,6 +1570,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             sse_encode_i_64(bookId, serializer);
             sse_encode_i_64(upToChapter, serializer);
             sse_encode_u_32(top, serializer);
+            sse_encode_list_String(names, serializer);
             sse_encode_StreamSink_describe_progress_Sse(sink, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -1580,7 +1584,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_String,
           ),
           constMeta: kCrateApiAiDescribePeopleConstMeta,
-          argValues: [path, bookId, upToChapter, top, sink],
+          argValues: [path, bookId, upToChapter, top, names, sink],
           apiImpl: this,
         ),
       ),
@@ -1590,7 +1594,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAiDescribePeopleConstMeta => const TaskConstMeta(
     debugName: "describe_people",
-    argNames: ["path", "bookId", "upToChapter", "top", "sink"],
+    argNames: ["path", "bookId", "upToChapter", "top", "names", "sink"],
   );
 
   @override
@@ -1812,6 +1816,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Stream<EnrichProgress> crateApiAiEnrichBook({
     required String path,
     required PlatformInt64 bookId,
+    required List<int> chapters,
   }) {
     final sink = RustStreamSink<EnrichProgress>();
     unawaited(
@@ -1821,6 +1826,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             final serializer = SseSerializer(generalizedFrbRustBinding);
             sse_encode_String(path, serializer);
             sse_encode_i_64(bookId, serializer);
+            sse_encode_list_prim_u_32_loose(chapters, serializer);
             sse_encode_StreamSink_enrich_progress_Sse(sink, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -1834,7 +1840,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_String,
           ),
           constMeta: kCrateApiAiEnrichBookConstMeta,
-          argValues: [path, bookId, sink],
+          argValues: [path, bookId, chapters, sink],
           apiImpl: this,
         ),
       ),
@@ -1844,7 +1850,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAiEnrichBookConstMeta => const TaskConstMeta(
     debugName: "enrich_book",
-    argNames: ["path", "bookId", "sink"],
+    argNames: ["path", "bookId", "chapters", "sink"],
   );
 
   @override
@@ -4578,6 +4584,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<int> dco_decode_list_prim_u_32_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
+  }
+
+  @protected
   Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint32List;
@@ -6008,6 +6020,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getInt64List(len_);
+  }
+
+  @protected
+  List<int> sse_decode_list_prim_u_32_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
   }
 
   @protected
@@ -7524,6 +7543,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putInt64List(self);
+  }
+
+  @protected
+  void sse_encode_list_prim_u_32_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(
+      self is Uint32List ? self : Uint32List.fromList(self),
+    );
   }
 
   @protected

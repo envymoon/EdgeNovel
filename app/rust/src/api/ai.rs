@@ -1216,11 +1216,13 @@ pub fn cancel_enrich() {
 }
 
 /// Summarize every chapter of a book that has no summary yet, front to back,
-/// streaming progress. Resumable by construction: finished chapters are on
+/// streaming progress; only those in `chapters` when it is not empty, as the
+/// reader picked them. Resumable by construction: finished chapters are on
 /// disk, and a re-run only sees the missing ones.
 pub fn enrich_book(
     path: String,
     book_id: i64,
+    chapters: Vec<u32>,
     sink: StreamSink<EnrichProgress>,
 ) -> Result<(), String> {
     CANCEL.store(false, Ordering::SeqCst);
@@ -1235,6 +1237,12 @@ pub fn enrich_book(
         let s = guard.as_mut().ok_or("数据库未初始化")?;
         s.chapters_needing_enrich(book_id, MOOD_LABELS)
             .map_err(|e| format!("{e}"))?
+    };
+    let missing: Vec<_> = if chapters.is_empty() {
+        missing
+    } else {
+        let picked: std::collections::HashSet<u32> = chapters.into_iter().collect();
+        missing.into_iter().filter(|m| picked.contains(&(m.0 as u32))).collect()
     };
     let total = missing.len() as u32;
     let model_tag = ai_status()?.model.unwrap_or_default();
@@ -1511,7 +1519,8 @@ pub fn cancel_describe() {
 }
 
 /// Write a background for every character in the graph (its first `top`, as
-/// [`book::cast_graph`] shows them), streaming each as it
+/// [`book::cast_graph`] shows them; only those in `names` when it is not
+/// empty, as the reader picked them), streaming each as it
 /// lands. Same contract as [`label_relations`]: resumable, cancellable, and
 /// whatever finished is on disk before the reader sees it.
 pub fn describe_people(
@@ -1519,13 +1528,17 @@ pub fn describe_people(
     book_id: i64,
     up_to_chapter: i64,
     top: u32,
+    names: Vec<String>,
     sink: StreamSink<DescribeProgress>,
 ) -> Result<(), String> {
     CANCEL_DESCRIBE.store(false, Ordering::SeqCst);
     inference_backend().prepare_chat(FULL_CONTEXT)?;
     book::ensure_loaded(&path)?;
 
-    let residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
+    let mut residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
+    if !names.is_empty() {
+        residual.retain(|(name, _, _)| names.contains(name));
+    }
     let total = residual.len() as u32;
 
     let mut consecutive_errors = 0;

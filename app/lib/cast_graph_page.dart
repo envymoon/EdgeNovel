@@ -159,9 +159,100 @@ class _CastGraphPageState extends State<CastGraphPage> {
       if (mounted) setState(() => _hasModel = s.engine && s.model != null);
       return;
     }
-    people
-        ? widget.reader.startPeople(widget.book)
-        : widget.reader.startCast(widget.book);
+    if (!people) {
+      widget.reader.startCast(widget.book);
+      return;
+    }
+    final g = _graph;
+    if (g == null) return;
+    final names = await _pickPeople(g);
+    if (names == null || names.isEmpty || !mounted) return;
+    widget.reader.startPeople(widget.book, names: names);
+  }
+
+  /// Who to write up, all ticked at first: those with no background yet, or
+  /// one that could now be written better.
+  Future<List<String>?> _pickPeople(CastGraph g) {
+    final t = widget.settings.theme;
+    final open = [
+      for (final p in g.people)
+        if (_backgroundOf(p) == null ||
+            (p.backgroundOutdated && !_modelBackground.containsKey(p.name)))
+          p.name,
+    ];
+    final picked = open.toSet();
+    return showModalBottomSheet<List<String>>(
+      context: context,
+      backgroundColor: t.background,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final all = picked.length == open.length;
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 16, 4),
+                    child: Row(
+                      children: [
+                        Checkbox(
+                          value: all ? true : (picked.isEmpty ? false : null),
+                          tristate: true,
+                          onChanged: (_) => setSheet(() {
+                            all ? picked.clear() : picked.addAll(open);
+                          }),
+                        ),
+                        Expanded(
+                          child: Text(
+                            '全选 · 已选 ${picked.length} 人',
+                            style: TextStyle(color: t.text, fontSize: 13),
+                          ),
+                        ),
+                        FilledButton.tonal(
+                          onPressed: picked.isEmpty
+                              ? null
+                              : () => Navigator.pop(context, [
+                                  for (final n in open)
+                                    if (picked.contains(n)) n,
+                                ]),
+                          child: const Text('开始归纳'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 12),
+                      children: [
+                        for (final n in open)
+                          CheckboxListTile(
+                            value: picked.contains(n),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            dense: true,
+                            title: Text(
+                              n,
+                              style: TextStyle(color: t.text, fontSize: 14),
+                            ),
+                            onChanged: (_) => setSheet(() {
+                              if (!picked.remove(n)) picked.add(n);
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _reset() async {

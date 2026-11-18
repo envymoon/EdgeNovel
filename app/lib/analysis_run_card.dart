@@ -56,6 +56,7 @@ class ChapterAnalysisCard extends StatelessWidget {
     required this.settings,
     required this.done,
     required this.total,
+    this.onPick,
   });
 
   final ShelfItem book;
@@ -63,6 +64,9 @@ class ChapterAnalysisCard extends StatelessWidget {
   final ReadingSettings settings;
   final int done;
   final int total;
+
+  /// Starting asks which chapters first, once the model is there.
+  final VoidCallback? onPick;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -86,7 +90,7 @@ class ChapterAnalysisCard extends StatelessWidget {
           return s.engine && s.model != null;
         },
         missing: '需要先下载本地 AI 模型',
-        start: () => reader.startEnrich(book),
+        start: onPick ?? () => reader.startEnrich(book),
       ),
       onPause: () => reader.stopEnrichFor(book.id),
       onRunNow: () => reader.runEnrichNow(book.id),

@@ -53,18 +53,25 @@ Future<void> stopAi() => RustLib.instance.api.crateApiAiStopAi();
 Future<void> cancelEnrich() => RustLib.instance.api.crateApiAiCancelEnrich();
 
 /// Summarize every chapter of a book that has no summary yet, front to back,
-/// streaming progress. Resumable by construction: finished chapters are on
+/// streaming progress; only those in `chapters` when it is not empty, as the
+/// reader picked them. Resumable by construction: finished chapters are on
 /// disk, and a re-run only sees the missing ones.
 Stream<EnrichProgress> enrichBook({
   required String path,
   required PlatformInt64 bookId,
-}) => RustLib.instance.api.crateApiAiEnrichBook(path: path, bookId: bookId);
+  required List<int> chapters,
+}) => RustLib.instance.api.crateApiAiEnrichBook(
+  path: path,
+  bookId: bookId,
+  chapters: chapters,
+);
 
 Future<void> cancelDescribe() =>
     RustLib.instance.api.crateApiAiCancelDescribe();
 
 /// Write a background for every character in the graph (its first `top`, as
-/// [`book::cast_graph`] shows them), streaming each as it
+/// [`book::cast_graph`] shows them; only those in `names` when it is not
+/// empty, as the reader picked them), streaming each as it
 /// lands. Same contract as [`label_relations`]: resumable, cancellable, and
 /// whatever finished is on disk before the reader sees it.
 Stream<DescribeProgress> describePeople({
@@ -72,11 +79,13 @@ Stream<DescribeProgress> describePeople({
   required PlatformInt64 bookId,
   required PlatformInt64 upToChapter,
   required int top,
+  required List<String> names,
 }) => RustLib.instance.api.crateApiAiDescribePeople(
   path: path,
   bookId: bookId,
   upToChapter: upToChapter,
   top: top,
+  names: names,
 );
 
 /// Throw away everything derived for this book's graph — the scan, the model's

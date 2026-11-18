@@ -41,6 +41,8 @@ class _AiQueuedTask {
     required this.path,
     required this.title,
     this.upTo = 0,
+    this.chapters = const [],
+    this.names = const [],
     this.paused = false,
     this.failed = false,
   });
@@ -52,6 +54,11 @@ class _AiQueuedTask {
 
   /// Chapters the cast pass reads up to. Unused by the other kinds.
   final int upTo;
+
+  /// Only these, as the reader picked them; empty is all. The chapters an
+  /// analysis summarizes, the people a background pass writes up.
+  List<int> chapters;
+  List<String> names;
   bool paused;
   bool failed;
 
@@ -77,6 +84,8 @@ class _AiQueuedTask {
     'path': path,
     'title': title,
     'upTo': upTo,
+    if (chapters.isNotEmpty) 'chapters': chapters,
+    if (names.isNotEmpty) 'names': names,
     'paused': paused,
     'failed': failed,
   };
@@ -103,6 +112,14 @@ class _AiQueuedTask {
       path: path,
       title: title,
       upTo: upTo,
+      chapters: [
+        for (final c in value['chapters'] is List ? value['chapters'] as List : const [])
+          if (c is int) c,
+      ],
+      names: [
+        for (final n in value['names'] is List ? value['names'] as List : const [])
+          if (n is String) n,
+      ],
       paused: value['paused'] == true,
       failed: value['failed'] == true,
     );
@@ -386,13 +403,15 @@ class ReaderState extends ChangeNotifier {
   /// Something in the queue would run if it were allowed to.
   bool get aiRunnable => _aiQueue.any((task) => !task.paused && !task.failed);
 
-  void startEnrich(ShelfItem b) {
+  /// [chapters]: only these, as picked; empty is every chapter not done.
+  void startEnrich(ShelfItem b, {List<int> chapters = const []}) {
     _enqueue(
       _AiQueuedTask(
         kind: _AiTaskKind.enrich,
         bookId: b.id,
         path: b.path,
         title: b.title,
+        chapters: chapters,
       ),
     );
   }
@@ -477,9 +496,15 @@ class ReaderState extends ChangeNotifier {
   /// a longer pass that is already running steps aside for it (that pass stays
   /// queued and picks up from its last finished chapter afterwards).
   void startCast(ShelfItem b) => _startCastPass(_AiTaskKind.cast, b);
-  void startPeople(ShelfItem b) => _startCastPass(_AiTaskKind.people, b);
+  /// [names]: only these, as picked; empty is everyone the pass would write.
+  void startPeople(ShelfItem b, {List<String> names = const []}) =>
+      _startCastPass(_AiTaskKind.people, b, names: names);
 
-  void _startCastPass(_AiTaskKind kind, ShelfItem b) {
+  void _startCastPass(
+    _AiTaskKind kind,
+    ShelfItem b, {
+    List<String> names = const [],
+  }) {
     final task =
         _firstOrNull(
           _aiQueue.where((t) => t.kind == kind && t.bookId == b.id),
@@ -494,6 +519,7 @@ class ReaderState extends ChangeNotifier {
     task.paused = false;
     task.failed = false;
     if (_activeAiTask == task) return;
+    task.names = names;
     _aiQueue.remove(task);
     _aiQueue.insert(0, task);
     if (castBookId != b.id) {
@@ -607,6 +633,7 @@ class ReaderState extends ChangeNotifier {
       bookId: task.bookId,
       upToChapter: task.upTo,
       top: top,
+      names: task.names,
     )) {
       if (_pauseRequested) await cancelDescribe();
       if (p.background.isNotEmpty) castBackgrounds[p.name] = p.background;
@@ -856,6 +883,7 @@ class ReaderState extends ChangeNotifier {
     if (existing != null) {
       existing.paused = false;
       existing.failed = false;
+      if (existing != _activeAiTask) existing.chapters = task.chapters;
     } else {
       _aiQueue.add(task);
     }
@@ -1068,7 +1096,11 @@ class ReaderState extends ChangeNotifier {
       enrichProgress = null;
       enrichingTitle = task.title;
       _enrichingPath = task.path;
-      _enrichSub = enrichBook(path: task.path, bookId: task.bookId).listen(
+      _enrichSub = enrichBook(
+        path: task.path,
+        bookId: task.bookId,
+        chapters: task.chapters,
+      ).listen(
         (progress) {
           enrichProgress = progress;
           if (progress.error != null) enrichError = progress.error;

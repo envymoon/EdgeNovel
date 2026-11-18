@@ -1349,6 +1349,7 @@ fn wire__crate__api__ai__describe_people_impl(
             let api_book_id = <i64>::sse_decode(&mut deserializer);
             let api_up_to_chapter = <i64>::sse_decode(&mut deserializer);
             let api_top = <u32>::sse_decode(&mut deserializer);
+            let api_names = <Vec<String>>::sse_decode(&mut deserializer);
             let api_sink = <StreamSink<
                 crate::api::ai::DescribeProgress,
                 flutter_rust_bridge::for_generated::SseCodec,
@@ -1361,6 +1362,7 @@ fn wire__crate__api__ai__describe_people_impl(
                         api_book_id,
                         api_up_to_chapter,
                         api_top,
+                        api_names,
                         api_sink,
                     )?;
                     Ok(output_ok)
@@ -1623,6 +1625,7 @@ fn wire__crate__api__ai__enrich_book_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_path = <String>::sse_decode(&mut deserializer);
             let api_book_id = <i64>::sse_decode(&mut deserializer);
+            let api_chapters = <Vec<u32>>::sse_decode(&mut deserializer);
             let api_sink = <StreamSink<
                 crate::api::ai::EnrichProgress,
                 flutter_rust_bridge::for_generated::SseCodec,
@@ -1630,7 +1633,8 @@ fn wire__crate__api__ai__enrich_book_impl(
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::ai::enrich_book(api_path, api_book_id, api_sink)?;
+                    let output_ok =
+                        crate::api::ai::enrich_book(api_path, api_book_id, api_chapters, api_sink)?;
                     Ok(output_ok)
                 })())
             }
