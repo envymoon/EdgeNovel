@@ -52,6 +52,25 @@ class SilentKeepAlive {
       }
       return _on == wanted;
     }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      // The system loops it without a stop between rounds (AppDelegate.swift,
+      // KeepAlive); looped from here, it stopped at the end of each, and
+      // behind a locked screen was never started again.
+      try {
+        final held = await _keep.invokeMethod<bool>('set', {
+          'id': identityHashCode(this),
+          'on': wanted,
+          'mix': mix,
+        });
+        if (wanted && held != true) _on = false;
+        return _on == wanted;
+      } on MissingPluginException {
+        // Below: an app built before it was there.
+      } catch (_) {
+        if (wanted) _on = false;
+        return _on == wanted;
+      }
+    }
     try {
       if (!wanted) {
         await _player?.stop();

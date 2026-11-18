@@ -122,6 +122,10 @@ import os
           }
         }
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelKeep") {
+      FlutterMethodChannel(name: "novel/keep", binaryMessenger: registrar.messenger())
+        .setMethodCallHandler { call, result in KeepAlive.shared.handle(call, result) }
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelSpeech") {
       let channel = FlutterMethodChannel(
         name: "novel/speech", binaryMessenger: registrar.messenger())
@@ -616,5 +620,79 @@ final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
     guard let last = queued.last, last === utterance else { return }
     queued = []
     channel?.invokeMethod("end", arguments: nil)
+  }
+}
+
+/// Keeps the app running behind the screen (keep_alive.dart): a second of
+/// silence played over and over by the system itself, which never stops
+/// between rounds. A player looped from Dart stops at the end of each round
+/// and is started again from there; behind a locked screen that start never
+/// comes, and iOS suspends the app a few seconds later.
+final class KeepAlive {
+  static let shared = KeepAlive()
+
+  /// Who wants it, and whether each lets other apps' sound go on.
+  private var holders: [Int: Bool] = [:]
+  private var player: AVAudioPlayer?
+  /// Started again after a call or another app's sound took the session,
+  /// or the app's own players let it go; checked while it runs.
+  private var watch: Timer?
+
+  func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    guard call.method == "set", let id = args["id"] as? Int else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    if args["on"] as? Bool ?? false {
+      holders[id] = args["mix"] as? Bool ?? false
+    } else {
+      holders[id] = nil
+    }
+    result(update())
+  }
+
+  private func update() -> Bool {
+    let session = AVAudioSession.sharedInstance()
+    if holders.isEmpty {
+      watch?.invalidate()
+      watch = nil
+      player?.stop()
+      player = nil
+      return true
+    }
+    if watch == nil {
+      watch = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        if let self = self, !self.holders.isEmpty, self.player?.isPlaying != true { _ = self.update() }
+      }
+    }
+    let mix = !holders.values.contains(false)
+    try? session.setCategory(.playback, mode: .default, options: mix ? [.mixWithOthers] : [])
+    try? session.setActive(true)
+    if player == nil {
+      guard let p = try? AVAudioPlayer(data: KeepAlive.silence()) else { return false }
+      p.numberOfLoops = -1
+      player = p
+    }
+    if player?.isPlaying != true {
+      player?.prepareToPlay()
+      return player?.play() ?? false
+    }
+    return true
+  }
+
+  /// A second of 24 kHz 16-bit mono, all zeros, as a WAV file.
+  private static func silence() -> Data {
+    let rate: UInt32 = 24_000
+    let bytes = rate * 2
+    var d = Data()
+    func le32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    func le16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    d.append(contentsOf: Array("RIFF".utf8)); le32(36 + bytes)
+    d.append(contentsOf: Array("WAVEfmt ".utf8)); le32(16); le16(1); le16(1)
+    le32(rate); le32(rate * 2); le16(2); le16(16)
+    d.append(contentsOf: Array("data".utf8)); le32(bytes)
+    d.append(Data(count: Int(bytes)))
+    return d
   }
 }
