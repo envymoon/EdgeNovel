@@ -81,9 +81,11 @@ Android 需要 64 位（ARM64）手机；iOS 任何版本都能装，16.4 起可
 | --- | --- |
 | Windows | [挚阅 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.0)（解压后运行 `novel.exe`，整个文件夹一起保留） |
 | Android | [挚阅 1.5.0](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.0)（ARM64） |
-| iOS | [挚阅 1.5.2](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.2)（未签名，需自行签名后安装） |
+| iOS | [挚阅 1.5.3](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.3)（未签名，需自行签名后安装） |
 
 ## 版本更新
+
+**1.5.3**（iOS）　听书可以在锁屏和控制中心播放暂停、用耳机控制；修复锁屏后合成有时停止、左右翻页时按住句子不能从这句开始听。
 
 **1.5.2**（iOS）　听书按章记住进度、语气更平稳、合成更快，修复锁屏或切到后台时合成停止；扫书报告可以挑选章节和人物。
 
