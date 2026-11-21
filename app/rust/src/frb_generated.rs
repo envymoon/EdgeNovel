@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 296580356;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1666381092;
 
 // Section: executor
 
@@ -2567,6 +2567,42 @@ fn wire__crate__api__stats__pace_speed_impl(
         },
     )
 }
+fn wire__crate__api__book__place_atlas_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "place_atlas",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_book_id = <i64>::sse_decode(&mut deserializer);
+            let api_up_to_chapter = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::book::place_atlas(api_path, api_book_id, api_up_to_chapter)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__image__plate_chapters_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4803,6 +4839,42 @@ impl SseDecode for Vec<crate::api::book::Paragraph> {
     }
 }
 
+impl SseDecode for Vec<crate::api::book::PlaceNode> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::book::PlaceNode>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::book::PlaceStage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::book::PlaceStage>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<i32>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<i64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5142,6 +5214,60 @@ impl SseDecode for crate::api::book::Paragraph {
             text: var_text,
             start: var_start,
             end: var_end,
+        };
+    }
+}
+
+impl SseDecode for crate::api::book::PlaceAtlas {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_places = <Vec<crate::api::book::PlaceNode>>::sse_decode(deserializer);
+        let mut var_stages = <Vec<crate::api::book::PlaceStage>>::sse_decode(deserializer);
+        let mut var_setting = <Vec<i32>>::sse_decode(deserializer);
+        let mut var_upto = <u32>::sse_decode(deserializer);
+        return crate::api::book::PlaceAtlas {
+            places: var_places,
+            stages: var_stages,
+            setting: var_setting,
+            upto: var_upto,
+        };
+    }
+}
+
+impl SseDecode for crate::api::book::PlaceNode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_mentions = <u32>::sse_decode(deserializer);
+        let mut var_chapters = <u32>::sse_decode(deserializer);
+        let mut var_firstChapter = <u32>::sse_decode(deserializer);
+        let mut var_parent = <Option<u32>>::sse_decode(deserializer);
+        let mut var_settings = <u32>::sse_decode(deserializer);
+        let mut var_people = <Vec<String>>::sse_decode(deserializer);
+        return crate::api::book::PlaceNode {
+            name: var_name,
+            mentions: var_mentions,
+            chapters: var_chapters,
+            first_chapter: var_firstChapter,
+            parent: var_parent,
+            settings: var_settings,
+            people: var_people,
+        };
+    }
+}
+
+impl SseDecode for crate::api::book::PlaceStage {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_from = <u32>::sse_decode(deserializer);
+        let mut var_to = <u32>::sse_decode(deserializer);
+        let mut var_area = <u32>::sse_decode(deserializer);
+        let mut var_spots = <Vec<u32>>::sse_decode(deserializer);
+        return crate::api::book::PlaceStage {
+            from: var_from,
+            to: var_to,
+            area: var_area,
+            spots: var_spots,
         };
     }
 }
@@ -5635,46 +5761,47 @@ fn pde_ffi_dispatcher_primary_impl(
         }
         72 => wire__crate__api__book__open_book_impl(port, ptr, rust_vec_len, data_len),
         73 => wire__crate__api__stats__pace_speed_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__image__plate_chapters_impl(port, ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__image__plate_path_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__image__plates_drawn_impl(port, ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__tts__prepare_impl(port, ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
-        81 => {
+        74 => wire__crate__api__book__place_atlas_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__image__plate_chapters_impl(port, ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__image__plate_path_impl(port, ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__image__plates_drawn_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__tts__prepare_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
+        82 => {
             wire__crate__api__book__relationship_structure_impl(port, ptr, rust_vec_len, data_len)
         }
-        82 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__book__remove_person_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
-        86 => {
+        83 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__book__remove_person_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
+        87 => {
             wire__crate__api__cleanup__restore_original_text_impl(port, ptr, rust_vec_len, data_len)
         }
-        87 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
-        90 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
-        97 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
-        101 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
-        102 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
-        104 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
-        105 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
-        106 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
-        107 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
-        108 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
-        109 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
+        103 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
+        105 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
+        106 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
+        107 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
+        108 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
+        109 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
+        110 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6450,6 +6577,69 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::book::Paragraph>
     for crate::api::book::Paragraph
 {
     fn into_into_dart(self) -> crate::api::book::Paragraph {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::book::PlaceAtlas {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.places.into_into_dart().into_dart(),
+            self.stages.into_into_dart().into_dart(),
+            self.setting.into_into_dart().into_dart(),
+            self.upto.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::book::PlaceAtlas {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::book::PlaceAtlas>
+    for crate::api::book::PlaceAtlas
+{
+    fn into_into_dart(self) -> crate::api::book::PlaceAtlas {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::book::PlaceNode {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.name.into_into_dart().into_dart(),
+            self.mentions.into_into_dart().into_dart(),
+            self.chapters.into_into_dart().into_dart(),
+            self.first_chapter.into_into_dart().into_dart(),
+            self.parent.into_into_dart().into_dart(),
+            self.settings.into_into_dart().into_dart(),
+            self.people.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::book::PlaceNode {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::book::PlaceNode>
+    for crate::api::book::PlaceNode
+{
+    fn into_into_dart(self) -> crate::api::book::PlaceNode {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::book::PlaceStage {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.from.into_into_dart().into_dart(),
+            self.to.into_into_dart().into_dart(),
+            self.area.into_into_dart().into_dart(),
+            self.spots.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::book::PlaceStage {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::book::PlaceStage>
+    for crate::api::book::PlaceStage
+{
+    fn into_into_dart(self) -> crate::api::book::PlaceStage {
         self
     }
 }
@@ -7548,6 +7738,36 @@ impl SseEncode for Vec<crate::api::book::Paragraph> {
     }
 }
 
+impl SseEncode for Vec<crate::api::book::PlaceNode> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::book::PlaceNode>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::book::PlaceStage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::book::PlaceStage>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <i32>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<i64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7831,6 +8051,39 @@ impl SseEncode for crate::api::book::Paragraph {
         <String>::sse_encode(self.text, serializer);
         <i64>::sse_encode(self.start, serializer);
         <i64>::sse_encode(self.end, serializer);
+    }
+}
+
+impl SseEncode for crate::api::book::PlaceAtlas {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::book::PlaceNode>>::sse_encode(self.places, serializer);
+        <Vec<crate::api::book::PlaceStage>>::sse_encode(self.stages, serializer);
+        <Vec<i32>>::sse_encode(self.setting, serializer);
+        <u32>::sse_encode(self.upto, serializer);
+    }
+}
+
+impl SseEncode for crate::api::book::PlaceNode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.name, serializer);
+        <u32>::sse_encode(self.mentions, serializer);
+        <u32>::sse_encode(self.chapters, serializer);
+        <u32>::sse_encode(self.first_chapter, serializer);
+        <Option<u32>>::sse_encode(self.parent, serializer);
+        <u32>::sse_encode(self.settings, serializer);
+        <Vec<String>>::sse_encode(self.people, serializer);
+    }
+}
+
+impl SseEncode for crate::api::book::PlaceStage {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.from, serializer);
+        <u32>::sse_encode(self.to, serializer);
+        <u32>::sse_encode(self.area, serializer);
+        <Vec<u32>>::sse_encode(self.spots, serializer);
     }
 }
 

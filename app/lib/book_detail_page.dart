@@ -9,6 +9,7 @@ import 'cast_graph_page.dart';
 import 'cover.dart';
 import 'landmine_page.dart';
 import 'pace_page.dart';
+import 'place_graph_page.dart';
 import 'plate_page.dart';
 import 'platform_support.dart';
 import 'reader_state.dart';
@@ -667,6 +668,15 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 reader: widget.reader,
                 settings: widget.settings,
               ),
+            ),
+          ),
+          _line(t),
+          _entry(
+            t,
+            icon: Icons.map_outlined,
+            title: '地点图',
+            onTap: () => _open(
+              PlaceGraphPage(book: widget.book, settings: widget.settings),
             ),
           ),
           if (AppPlatformSupport.hasAiEngine && landmineEntryVisible) ...[

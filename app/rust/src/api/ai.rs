@@ -1569,6 +1569,7 @@ fn chat_once(
 /// ordinary one said a clause at most twice (numbers aside), a loop 17 to 62
 /// times; so the sixth time is a loop, 300–700 characters into the thinking.
 /// The few loops that reach an answer give one no better than a fresh try.
+#[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct LoopWatch {
     clause: String,

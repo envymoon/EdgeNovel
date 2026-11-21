@@ -260,6 +260,17 @@ CREATE TABLE IF NOT EXISTS cast_cache (
     built_at INTEGER NOT NULL
 );
 
+-- 地点图, whole, like cast_cache: built from the text and the cached cast,
+-- kept until the book is re-indexed or the place rules change (`version`).
+CREATE TABLE IF NOT EXISTS place_cache (
+    book_id  INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+    upto     INTEGER NOT NULL,
+    chapters INTEGER NOT NULL,
+    version  INTEGER NOT NULL,
+    json     TEXT NOT NULL,
+    built_at INTEGER NOT NULL
+);
+
 -- Coarse narrative focus. It scans the full decoded book, so the result is
 -- cached and rebuilt only when the rule version or basic book shape changes.
 CREATE TABLE IF NOT EXISTS narrative_focus (
@@ -1314,6 +1325,7 @@ impl Store {
             }
         }
         tx.execute("DELETE FROM cast_cache WHERE book_id = ?1", [id])?;
+        tx.execute("DELETE FROM place_cache WHERE book_id = ?1", [id])?;
         let moved_chapters = follow_split(&tx, id, &was, chapters)?;
         tx.commit()?;
         Ok(moved_chapters)
@@ -1568,6 +1580,31 @@ impl Store {
     pub fn drop_cast_cache(&self, book_id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM cast_cache WHERE book_id = ?1", [book_id])?;
+        self.conn
+            .execute("DELETE FROM place_cache WHERE book_id = ?1", [book_id])?;
+        Ok(())
+    }
+
+    /// The cached 地点图, if one was built for this many chapters by these rules.
+    pub fn place_cache(&self, book_id: i64, upto: i64, chapters: i64, version: i64) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT json FROM place_cache
+                 WHERE book_id = ?1 AND upto = ?2 AND chapters = ?3 AND version = ?4",
+                params![book_id, upto, chapters, version],
+                |r| r.get(0),
+            )
+            .optional()
+    }
+
+    pub fn set_place_cache(&self, book_id: i64, upto: i64, chapters: i64, version: i64, json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO place_cache (book_id, upto, chapters, version, json, built_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(book_id) DO UPDATE SET
+                 upto = ?2, chapters = ?3, version = ?4, json = ?5, built_at = ?6",
+            params![book_id, upto, chapters, version, json, now()],
+        )?;
         Ok(())
     }
 
@@ -2238,6 +2275,18 @@ mod tests {
         assert!(s.narrative_focus(id, 2, 100, 1).unwrap().is_none());
         assert!(s.narrative_focus(id, 1, 101, 1).unwrap().is_none());
         assert!(s.narrative_focus(id, 1, 100, 2).unwrap().is_none());
+    }
+
+    #[test]
+    fn place_cache_goes_with_the_rules_and_the_cast() {
+        let mut s = mem();
+        let id = s.upsert_book(&book("a.txt"), &[chapter(0, 111)]).unwrap();
+        s.set_place_cache(id, 1, 1, 1, "{}").unwrap();
+        assert_eq!(s.place_cache(id, 1, 1, 1).unwrap().as_deref(), Some("{}"));
+        assert!(s.place_cache(id, 1, 1, 2).unwrap().is_none());
+        assert!(s.place_cache(id, 1, 2, 1).unwrap().is_none());
+        s.drop_cast_cache(id).unwrap();
+        assert!(s.place_cache(id, 1, 1, 1).unwrap().is_none());
     }
 
     #[test]

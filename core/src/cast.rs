@@ -66,6 +66,12 @@ pub struct Cast {
     /// rebuilds on mismatch. `#[serde(default)]` reads pre-versioning rows as 0.
     #[serde(default)]
     pub version: u32,
+    /// Everyone the scan ranked before the graph was trimmed to
+    /// [`TOP_CAST`], name and aliases, most mentioned first: what
+    /// [`crate::places`] keeps out of its place names. Empty in a graph
+    /// cached before this was kept.
+    #[serde(default)]
+    pub ranked: Vec<(String, Vec<String>)>,
 }
 
 /// Mentions per chapter-appeared-in. A character is met repeatedly inside the
@@ -183,13 +189,13 @@ fn is_cjk(c: char) -> bool {
 /// Common surnames — used only to decide whether a longer candidate is shaped
 /// like a full name (for alias folding), never to find names: plenty of real
 /// characters (白兔, 罐头, 大王) carry no surname at all.
-const SURNAMES: &str = "李王张刘陈杨赵黄周吴徐孙胡朱高林何郭马罗梁宋郑谢韩唐冯于董萧程曹袁邓许\
+pub(crate) const SURNAMES: &str = "李王张刘陈杨赵黄周吴徐孙胡朱高林何郭马罗梁宋郑谢韩唐冯于董萧程曹袁邓许\
 傅沈曾彭吕苏卢蒋蔡贾丁魏薛叶阎余潘杜戴夏钟汪田任姜范方石姚谭廖邹熊金陆郝孔白崔康毛邱秦江史顾\
 侯邵孟龙万段雷钱汤尹黎易常武乔贺赖龚文洪庄严牛温季莫翟安路姬秋楚燕冷宁凌霍虞柳祁纪管卫花柯房\
 夜风云顾墨聂沐齐\
 简米仇闵祝俞章鲁葛韦倪滕殷骆尤艾鲍岳晏卓栾苗饶窦阮隋詹甄狄褚牟冉戚寇欧裴邢喻蔺邬伍";
 
-const COMPOUND_SURNAMES: &[&str] = &[
+pub(crate) const COMPOUND_SURNAMES: &[&str] = &[
     "慕容", "欧阳", "上官", "司马", "诸葛", "东方", "西门", "独孤", "南宫", "夏侯", "皇甫", "尉迟",
     "令狐", "长孙", "宇文", "轩辕", "百里", "呼延", "端木", "司徒", "司空", "公孙", "北堂", "东郭",
     "申屠",
@@ -1549,8 +1555,10 @@ pub fn scan_without(text: &str, chapters: &[Chapter], upto: usize, removed: &[St
     let (people, edges, n_chapters) = graph(&paras, members);
     let romance_focus = crate::focus::analyze(text, &chapters[..n]).romance.zh();
     let relationship = crate::romance::analyze(&paras, &people, &edges, n_chapters, romance_focus);
+    let ranked = people.iter().map(|p| (p.name.clone(), p.aliases.clone())).collect();
     let mut cast = prune(people, edges, n_chapters, removed);
     cast.relationship = Some(relationship);
+    cast.ranked = ranked;
     cast
 }
 
@@ -2571,6 +2579,7 @@ fn prune(people: Vec<Person>, edges: Vec<Edge>, n_chapters: usize, removed: &[St
         edges,
         relationship: None,
         version: SCAN_VERSION,
+        ranked: Vec::new(),
     }
 }
 

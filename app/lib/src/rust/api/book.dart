@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_records`, `chapter_titles`, `clip`, `cut_text`, `cuts_for`, `data_dir`, `db_path`, `decode_file`, `digest`, `ensure_loaded`, `excerpt`, `first_paragraph`, `is_cut`, `is_loaded`, `lead_of`, `lead_sentences`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `recut_book`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summary_excerpt`, `unjudged_names`, `verdicts_of`, `with_text`, `without_closing_title`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Called once at startup with a directory Flutter obtained from the platform.
 /// Rust must not guess where an app may write: it differs on every OS, and on
@@ -234,7 +234,9 @@ Future<List<double?>> chapterPace({required String path}) =>
     RustLib.instance.api.crateApiBookChapterPace(path: path);
 
 /// Take someone off a book's graph by hand, or put them back. The one in the
-/// middle stays: the graph is drawn around them.
+/// middle stays: the graph is drawn around them. Either way the book is
+/// scanned again on the next look, the seats filled by the usual rules;
+/// summaries and backgrounds already written are kept, by name.
 Future<void> removePerson({
   required String path,
   required PlatformInt64 bookId,
@@ -268,6 +270,19 @@ Future<CastGraph> castGraph({
   bookId: bookId,
   upToChapter: upToChapter,
   top: top,
+);
+
+/// The place graph, built once and kept against the book like the cast. It
+/// leans on the cast scan to keep people's names out, so a first look scans
+/// the cast too if the people graph never has.
+Future<PlaceAtlas> placeAtlas({
+  required String path,
+  required PlatformInt64 bookId,
+  required PlatformInt64 upToChapter,
+}) => RustLib.instance.api.crateApiBookPlaceAtlas(
+  path: path,
+  bookId: bookId,
+  upToChapter: upToChapter,
 );
 
 /// The pre-reading relationship structure always scans the whole available
@@ -776,6 +791,118 @@ class Paragraph {
           text == other.text &&
           start == other.start &&
           end == other.end;
+}
+
+class PlaceAtlas {
+  final List<PlaceNode> places;
+  final List<PlaceStage> stages;
+
+  /// Per chapter: where it is set, by index into `places`, or -1.
+  final Int32List setting;
+  final int upto;
+
+  const PlaceAtlas({
+    required this.places,
+    required this.stages,
+    required this.setting,
+    required this.upto,
+  });
+
+  @override
+  int get hashCode =>
+      places.hashCode ^ stages.hashCode ^ setting.hashCode ^ upto.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlaceAtlas &&
+          runtimeType == other.runtimeType &&
+          places == other.places &&
+          stages == other.stages &&
+          setting == other.setting &&
+          upto == other.upto;
+}
+
+class PlaceNode {
+  final String name;
+  final int mentions;
+  final int chapters;
+  final int firstChapter;
+
+  /// Index into [`PlaceAtlas::places`] of the place this one is inside.
+  final int? parent;
+
+  /// Chapters the story is set here.
+  final int settings;
+
+  /// The leads seen most in the chapters set here.
+  final List<String> people;
+
+  const PlaceNode({
+    required this.name,
+    required this.mentions,
+    required this.chapters,
+    required this.firstChapter,
+    this.parent,
+    required this.settings,
+    required this.people,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      mentions.hashCode ^
+      chapters.hashCode ^
+      firstChapter.hashCode ^
+      parent.hashCode ^
+      settings.hashCode ^
+      people.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlaceNode &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          mentions == other.mentions &&
+          chapters == other.chapters &&
+          firstChapter == other.firstChapter &&
+          parent == other.parent &&
+          settings == other.settings &&
+          people == other.people;
+}
+
+class PlaceStage {
+  /// First and last chapter, inclusive.
+  final int from;
+  final int to;
+
+  /// What the stage is named by, by index into [`PlaceAtlas::places`].
+  final int area;
+
+  /// The places said most here and least elsewhere, `area` first.
+  final Uint32List spots;
+
+  const PlaceStage({
+    required this.from,
+    required this.to,
+    required this.area,
+    required this.spots,
+  });
+
+  @override
+  int get hashCode =>
+      from.hashCode ^ to.hashCode ^ area.hashCode ^ spots.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlaceStage &&
+          runtimeType == other.runtimeType &&
+          from == other.from &&
+          to == other.to &&
+          area == other.area &&
+          spots == other.spots;
 }
 
 class ReadingEvent {

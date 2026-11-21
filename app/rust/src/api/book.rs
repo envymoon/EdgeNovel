@@ -1639,6 +1639,121 @@ pub fn cast_graph(
     })
 }
 
+// ── 地点图 ───────────────────────────────────────────────────────────────────
+//
+// Where the book happens, counted like the cast (novel_core::places): the
+// places, where each chapter is set, and the stages where the book changes
+// maps. Trips between places are read off `setting` by the page, so a stage
+// can show only its own.
+
+#[derive(Debug, Clone)]
+pub struct PlaceNode {
+    pub name: String,
+    pub mentions: u32,
+    pub chapters: u32,
+    pub first_chapter: u32,
+    /// Index into [`PlaceAtlas::places`] of the place this one is inside.
+    pub parent: Option<u32>,
+    /// Chapters the story is set here.
+    pub settings: u32,
+    /// The leads seen most in the chapters set here.
+    pub people: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaceStage {
+    /// First and last chapter, inclusive.
+    pub from: u32,
+    pub to: u32,
+    /// What the stage is named by, by index into [`PlaceAtlas::places`].
+    pub area: u32,
+    /// The places said most here and least elsewhere, `area` first.
+    pub spots: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaceAtlas {
+    pub places: Vec<PlaceNode>,
+    pub stages: Vec<PlaceStage>,
+    /// Per chapter: where it is set, by index into `places`, or -1.
+    pub setting: Vec<i32>,
+    pub upto: u32,
+}
+
+/// The place graph, built once and kept against the book like the cast. It
+/// leans on the cast scan to keep people's names out, so a first look scans
+/// the cast too if the people graph never has.
+pub fn place_atlas(path: String, book_id: i64, up_to_chapter: i64) -> Result<PlaceAtlas, String> {
+    ensure_loaded(&path)?;
+    let (upto, total) = {
+        let guard = cache().read().unwrap();
+        let l = guard.get(&path).ok_or("书未打开")?;
+        (scan_span(l, up_to_chapter), l.chapters.len() as i64)
+    };
+    let version = novel_core::places::PLACE_VERSION as i64;
+    let hit = with_store!(s => s.place_cache(book_id, upto as i64, total, version))
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<novel_core::places::Atlas>(&json).ok());
+    let atlas = match hit {
+        Some(atlas) => atlas,
+        None => {
+            let (cast, _) = scan_cached(&path, book_id, up_to_chapter)?;
+            let guard = cache().read().unwrap();
+            let l = guard.get(&path).ok_or("书未打开")?;
+            // A cast cached before it kept its ranked names: count them again.
+            let ranked = if cast.ranked.is_empty() {
+                novel_core::cast::scan_ranked(&l.text, &l.chapters, upto)
+                    .into_iter()
+                    .map(|p| (p.name, p.aliases))
+                    .collect()
+            } else {
+                cast.ranked
+            };
+            let atlas = novel_core::places::scan_ranked(&l.text, &l.chapters, upto, &ranked);
+            drop(guard);
+            if let Ok(json) = serde_json::to_string(&atlas) {
+                let _ = with_store!(s => s.set_place_cache(book_id, upto as i64, total, version, &json));
+            }
+            atlas
+        }
+    };
+    // Anyone the model or the reader said is not a person stays off.
+    let verdicts = verdicts_of(book_id)?;
+    Ok(PlaceAtlas {
+        places: atlas
+            .places
+            .into_iter()
+            .map(|p| PlaceNode {
+                name: p.name,
+                mentions: p.mentions,
+                chapters: p.chapters,
+                first_chapter: p.first_chapter as u32,
+                parent: p.parent.map(|i| i as u32),
+                settings: p.settings,
+                people: p
+                    .people
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .filter(|name| *verdicts.get(name).unwrap_or(&true))
+                    .collect(),
+            })
+            .collect(),
+        stages: atlas
+            .stages
+            .into_iter()
+            .map(|s| PlaceStage {
+                from: s.from as u32,
+                to: s.to as u32,
+                area: s.area as u32,
+                spots: s.spots.into_iter().map(|(i, _)| i as u32).collect(),
+            })
+            .collect(),
+        setting: atlas.setting.iter().map(|s| s.map_or(-1, |i| i as i32)).collect(),
+        upto: upto as u32,
+    })
+}
+
 /// A book's genre tags, and the chapter its reader is in: where 章间立绘
 /// takes its scene from, and where it starts drawing.
 pub(crate) fn plate_context(book_id: i64) -> Result<(Vec<String>, usize), String> {

@@ -263,6 +263,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Paragraph> dco_decode_list_paragraph(dynamic raw);
 
   @protected
+  List<PlaceNode> dco_decode_list_place_node(dynamic raw);
+
+  @protected
+  List<PlaceStage> dco_decode_list_place_stage(dynamic raw);
+
+  @protected
+  Int32List dco_decode_list_prim_i_32_strict(dynamic raw);
+
+  @protected
   Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
   @protected
@@ -352,6 +361,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Paragraph dco_decode_paragraph(dynamic raw);
+
+  @protected
+  PlaceAtlas dco_decode_place_atlas(dynamic raw);
+
+  @protected
+  PlaceNode dco_decode_place_node(dynamic raw);
+
+  @protected
+  PlaceStage dco_decode_place_stage(dynamic raw);
 
   @protected
   PlateProgress dco_decode_plate_progress(dynamic raw);
@@ -680,6 +698,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Paragraph> sse_decode_list_paragraph(SseDeserializer deserializer);
 
   @protected
+  List<PlaceNode> sse_decode_list_place_node(SseDeserializer deserializer);
+
+  @protected
+  List<PlaceStage> sse_decode_list_place_stage(SseDeserializer deserializer);
+
+  @protected
+  Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer);
+
+  @protected
   Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
   @protected
@@ -777,6 +804,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Paragraph sse_decode_paragraph(SseDeserializer deserializer);
+
+  @protected
+  PlaceAtlas sse_decode_place_atlas(SseDeserializer deserializer);
+
+  @protected
+  PlaceNode sse_decode_place_node(SseDeserializer deserializer);
+
+  @protected
+  PlaceStage sse_decode_place_stage(SseDeserializer deserializer);
 
   @protected
   PlateProgress sse_decode_plate_progress(SseDeserializer deserializer);
@@ -1175,6 +1211,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_place_node(
+    List<PlaceNode> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_place_stage(
+    List<PlaceStage> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_i_32_strict(
+    Int32List self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_i_64_strict(
     Int64List self,
     SseSerializer serializer,
@@ -1311,6 +1365,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_paragraph(Paragraph self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_place_atlas(PlaceAtlas self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_place_node(PlaceNode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_place_stage(PlaceStage self, SseSerializer serializer);
 
   @protected
   void sse_encode_plate_progress(PlateProgress self, SseSerializer serializer);

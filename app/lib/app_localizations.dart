@@ -253,6 +253,7 @@ const _english = <String, String>{
   '景物': 'Scenery',
   '语义索引': 'Semantic index',
   '人物构成与关系': 'Characters & relationships',
+  '地点图': 'Places',
   '人物、活跃章节与关系': 'Characters, active chapters and relationships',
   '感情结构': 'Relationship structure',
   '叙事侧重': 'Story focus',

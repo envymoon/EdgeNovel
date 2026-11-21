@@ -11,6 +11,7 @@ pub mod genre;
 pub mod interlude;
 pub mod meta;
 pub mod pace;
+pub mod places;
 pub mod reading_stats;
 pub mod relation;
 pub mod repair;
