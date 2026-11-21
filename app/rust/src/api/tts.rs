@@ -1048,6 +1048,13 @@ mod light {
             }
         };
         crate::api::image::release();
+        // A line per sentence on how long each stage took (kokoro.cpp), kept
+        // small; read over USB when the voice is slow.
+        let log = tts_dir()?.join("light.log");
+        if std::fs::metadata(&log).is_ok_and(|m| m.len() > 64 << 10) {
+            let _ = std::fs::remove_file(&log);
+        }
+        std::env::set_var("EDGE_KOKORO_LOG", &log);
         let path = CString::new(model.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string())?;
         let k = unsafe { edge_tts_kokoro_load(path.as_ptr(), gpu as c_int, 0) };
         if k.is_null() {

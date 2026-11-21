@@ -16,6 +16,7 @@
 #include "gguf.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -289,6 +290,26 @@ struct G {
     }
     bool has(const std::string & n) const { return k->w.count(n) != 0; }
 
+    // ConvTranspose1d of x [IL, IC] by w [K, OC, IC] with K = 2 * stride, as
+    // one matrix product and an overlap-add: each output step takes the
+    // first half of the kernel from one input step and the second half from
+    // the one before. ggml's own runs a single thread per output on Metal,
+    // which kept an iPhone GPU busy for most of a sentence. -> [(IL+1)*s, OC]
+    ggml_tensor * up(ggml_tensor * w, ggml_tensor * x, int s) const {
+        const int64_t K = w->ne[0], OC = w->ne[1], IC = w->ne[2], IL = x->ne[0];
+        if (K != 2 * s || x->ne[1] != IC) throw std::string("unexpected upsampling shape");
+        ggml_tensor * a = ggml_cont(ctx, ggml_transpose(ctx, ggml_reshape_2d(ctx, w, K * OC, IC)));  // [IC, K*OC]
+        ggml_tensor * y = ggml_mul_mat(ctx, a, ggml_cont(ctx, ggml_transpose(ctx, x)));             // [K*OC, IL]
+        y = ggml_reshape_3d(ctx, y, K, OC, IL);
+        auto half = [&](int64_t off) {
+            ggml_tensor * h = ggml_view_3d(ctx, y, s, OC, IL, y->nb[1], y->nb[2], off * y->nb[0]);
+            h = ggml_cont(ctx, ggml_permute(ctx, h, 0, 2, 1, 3));  // [s, IL, OC]
+            return ggml_reshape_2d(ctx, h, s * IL, OC);
+        };
+        return ggml_add(ctx, ggml_pad_ext(ctx, half(0), 0, s, 0, 0, 0, 0, 0, 0),
+                        ggml_pad_ext(ctx, half(s), s, 0, 0, 0, 0, 0, 0, 0));
+    }
+
     // y = x * w^T + b over the last axis; x: [in, T] (row per step).
     ggml_tensor * lin(const std::string & p, ggml_tensor * x) const {
         ggml_tensor * y = ggml_mul_mat(ctx, W(p + ".weight"), x);
@@ -444,6 +465,17 @@ std::vector<int> to_ids(const kokoro * k, const std::string & ps, int & chars) {
 }
 
 std::vector<float> speak(kokoro * k, const std::string & ps, const std::string & voice, float speed, unsigned seed) {
+    // How long each stage took, a line per sentence in EDGE_KOKORO_LOG when
+    // set: where the time goes on a phone's GPU.
+    auto t0 = std::chrono::steady_clock::now();
+    std::string took;
+    auto lap = [&](const char * n) {
+        const auto t = std::chrono::steady_clock::now();
+        char buf[48];
+        snprintf(buf, sizeof buf, " %s=%.3f", n, std::chrono::duration<double>(t - t0).count());
+        took += buf;
+        t0 = t;
+    };
     int chars = 0;
     const std::vector<int> ids = to_ids(k, ps, chars);
     const int T = (int) ids.size();
@@ -514,6 +546,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
         if (!k->debug_dir.empty()) dump(k, "bert", fetch(bert));
     }
 
+    lap("bert");
     // 2. Durations, on the CPU.
     const int S = 128, D = 512, DS = D + S;
     std::vector<float> d((size_t) T * DS), y((size_t) T * D), h(2 * D);
@@ -541,6 +574,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
     }
     if (!k->debug_dir.empty()) dump(k, "dur", std::vector<float>(dur.begin(), dur.end()));
 
+    lap("dur");
     // Text features stretched to the frames; the shared LSTM over them.
     std::vector<float> te_l((size_t) T * D);
     run_lstm(k->te_lstm, te.data(), T, te_l.data());
@@ -555,6 +589,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
     for (int f = 0; f < F; f++)
         for (int c = 0; c < D; c++) sh_t[(size_t) c * F + f] = shared[(size_t) f * D + c];
 
+    lap("shared_lstm");
     // 3. Pitch and energy curves, [2F] each.
     std::vector<float> f0, nn;
     {
@@ -593,6 +628,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
     given("F0", f0);
     given("N", nn);
 
+    lap("f0n");
     // 4. The harmonic source and its spectrum.
     std::vector<float> source = harmonic_source(k, f0, seed);
     given("har_source", source);
@@ -601,6 +637,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
     std::vector<float> har = stft(source, frames);
     given("har", har);
 
+    lap("source_stft");
     // 5. Decoder and vocoder -> [22][frames].
     std::vector<float> post;
     {
@@ -634,7 +671,7 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
             b.probe(i ? "noise_conv1" : "noise_conv0", xs);
             xs = b.res_blk1("decoder.generator.noise_res." + si, xs, s, noise_k[i]);
             b.probe(i ? "noise_res1" : "noise_res0", xs);
-            ggml_tensor * up = ggml_conv_transpose_1d(c, b.W("decoder.generator.ups." + si + ".weight"), x, rates[i], 0, 1);
+            ggml_tensor * up = b.up(b.W("decoder.generator.ups." + si + ".weight"), x, rates[i]);
             const int crop = (kernels[i] - rates[i]) / 2;
             up = ggml_cont(c, ggml_view_2d(c, up, up->ne[0] - 2 * crop, up->ne[1], up->nb[1], crop * sizeof(float)));
             x = ggml_add(c, up, b.row(b.W("decoder.generator.ups." + si + ".bias")));
@@ -666,7 +703,16 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
         if ((int) x->ne[0] != frames) throw std::string("frame count mismatch");
     }
     dump(k, "post", post);
+    lap("decoder");
     std::vector<float> audio = istft(post, frames);
+    lap("istft");
+    if (const char * log = getenv("EDGE_KOKORO_LOG")) {
+        if (FILE * f = fopen(log, "a")) {
+            fprintf(f, "%s audio=%.2f phonemes=%d%s\n", k->backend == k->cpu ? "cpu" : "gpu", audio.size() / 24000.0,
+                    chars, took.c_str());
+            fclose(f);
+        }
+    }
     dump(k, "audio", audio);
     return audio;
 }
