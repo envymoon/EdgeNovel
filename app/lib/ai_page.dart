@@ -54,37 +54,39 @@ class _AiPageState extends State<AiPage> {
   ImageStatus? _img;
   ManagedModelState? _chatModel;
   ManagedModelState? _embeddingModel;
-  double? _engineProgress;
-  double? _modelProgress;
-  double? _embedProgress;
-  double? _ttsEngineProgress;
-  double? _voiceProgress;
-  String? _engineError;
-  String? _modelError;
-  String? _embedError;
-  String? _modelStage;
-  String? _embedStage;
-  String? _ttsEngineError;
-  String? _voiceError;
-  int _voicePendingBytes = 0;
-  ResumableFileDownload? _voiceTransfer;
-  var _voiceCancelled = false;
-  double? _lightProgress;
-  String? _lightError;
-  int _lightPendingBytes = 0;
-  ResumableFileDownload? _lightTransfer;
-  var _lightCancelled = false;
-  int _chatPendingBytes = 0;
-  int _embedPendingBytes = 0;
-  ResumableFileDownload? _chatTransfer;
-  ResumableFileDownload? _embedTransfer;
-  double? _imgEngineProgress;
-  String? _imgEngineError;
-  double? _imgModelProgress;
-  String? _imgModelError;
-  int _imgPendingBytes = 0;
-  ResumableFileDownload? _imgTransfer;
-  var _imgCancelled = false;
+  // Downloads go on when the page is left; whichever page is open shows
+  // them (_live).
+  static double? _engineProgress;
+  static double? _modelProgress;
+  static double? _embedProgress;
+  static double? _ttsEngineProgress;
+  static double? _voiceProgress;
+  static String? _engineError;
+  static String? _modelError;
+  static String? _embedError;
+  static String? _modelStage;
+  static String? _embedStage;
+  static String? _ttsEngineError;
+  static String? _voiceError;
+  static int _voicePendingBytes = 0;
+  static ResumableFileDownload? _voiceTransfer;
+  static var _voiceCancelled = false;
+  static double? _lightProgress;
+  static String? _lightError;
+  static int _lightPendingBytes = 0;
+  static ResumableFileDownload? _lightTransfer;
+  static var _lightCancelled = false;
+  static int _chatPendingBytes = 0;
+  static int _embedPendingBytes = 0;
+  static ResumableFileDownload? _chatTransfer;
+  static ResumableFileDownload? _embedTransfer;
+  static double? _imgEngineProgress;
+  static String? _imgEngineError;
+  static double? _imgModelProgress;
+  static String? _imgModelError;
+  static int _imgPendingBytes = 0;
+  static ResumableFileDownload? _imgTransfer;
+  static var _imgCancelled = false;
 
   Timer? _poll;
   final _voiceRow = GlobalKey();
@@ -93,6 +95,7 @@ class _AiPageState extends State<AiPage> {
   @override
   void initState() {
     super.initState();
+    _live = this;
     _refresh();
     // The engine starts and dies outside this page (enrichment runs, crashes,
     // orphans); a status painted once at initState quietly turns into a lie.
@@ -102,12 +105,25 @@ class _AiPageState extends State<AiPage> {
   @override
   void dispose() {
     _poll?.cancel();
-    _chatTransfer?.pause();
-    _embedTransfer?.pause();
-    _imgTransfer?.pause();
-    _voiceTransfer?.pause();
-    _lightTransfer?.pause();
+    if (identical(_live, this)) _live = null;
     super.dispose();
+  }
+
+  static _AiPageState? _live;
+
+  /// Changes the download state and repaints the page open now, if any.
+  void _paint(VoidCallback fn) {
+    final page = _live;
+    if (page != null && page.mounted) {
+      page.setState(fn);
+    } else {
+      fn();
+    }
+  }
+
+  Future<void> _refreshLive() async {
+    final page = _live;
+    if (page != null && page.mounted) await page._refresh();
   }
 
   Future<void> _refresh() async {
@@ -196,7 +212,7 @@ class _AiPageState extends State<AiPage> {
   }
 
   Future<void> _downloadEngine() async {
-    setState(() {
+    _paint(() {
       _engineProgress = 0;
       _engineError = null;
     });
@@ -207,7 +223,7 @@ class _AiPageState extends State<AiPage> {
       await _fetchFirst(
         _llamaEngineUrls,
         zip,
-        (p) => setState(() => _engineProgress = p),
+        (p) => _paint(() => _engineProgress = p),
       );
 
       final archive = ZipDecoder().decodeBytes(await zip.readAsBytes());
@@ -235,12 +251,12 @@ class _AiPageState extends State<AiPage> {
     } finally {
       if (zip != null && await zip.exists()) await zip.delete();
       _engineProgress = null;
-      await _refresh();
+      await _refreshLive();
     }
   }
 
   Future<void> _downloadImageEngine() async {
-    setState(() {
+    _paint(() {
       _imgEngineProgress = 0;
       _imgEngineError = null;
     });
@@ -248,13 +264,13 @@ class _AiPageState extends State<AiPage> {
       await downloadEngineZip(_img!.dir, imageEngineZip, imageEngineFolder, (
         p,
       ) {
-        if (mounted) setState(() => _imgEngineProgress = p);
+        _paint(() => _imgEngineProgress = p);
       });
     } catch (e) {
       _imgEngineError = '$e';
     } finally {
       _imgEngineProgress = null;
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -263,14 +279,14 @@ class _AiPageState extends State<AiPage> {
     if (_imgTransfer != null) return;
     final transfer = _imgTransfer = ResumableFileDownload();
     _imgCancelled = false;
-    setState(() {
+    _paint(() {
       _imgModelProgress = 0;
       _imgModelError = null;
     });
     final dir = _img!.dir;
     try {
       await downloadHostedFiles(dir, imageModelFiles, transfer, (p) {
-        if (mounted) setState(() => _imgModelProgress = p);
+        _paint(() => _imgModelProgress = p);
       });
     } on DownloadStopped {
       // Paused or cancelled; what is left is shown on the button.
@@ -280,7 +296,7 @@ class _AiPageState extends State<AiPage> {
       _imgTransfer = null;
       _imgModelProgress = null;
       if (_imgCancelled) await discardHostedDownload(dir, imageModelFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -292,7 +308,7 @@ class _AiPageState extends State<AiPage> {
       transfer.pause();
     } else {
       await discardHostedDownload(_img!.dir, imageModelFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -319,7 +335,7 @@ class _AiPageState extends State<AiPage> {
     if (_transferFor(package) != null) return;
     final transfer = ResumableFileDownload();
     _setTransfer(package, transfer);
-    setState(() {
+    _paint(() {
       onProgress(0);
       onError(null);
       onStage('正在下载');
@@ -331,14 +347,13 @@ class _AiPageState extends State<AiPage> {
         package.urls,
         out,
         onProgress: (received, total) {
-          if (!mounted) return;
-          setState(
+          _paint(
             () =>
                 onProgress(total == null || total <= 0 ? 0 : received / total),
           );
         },
       );
-      if (mounted) setState(() => onStage('正在校验并切换'));
+      _paint(() => onStage('正在校验并切换'));
       await _models.installDownloaded(
         directory: directory,
         package: package,
@@ -346,31 +361,25 @@ class _AiPageState extends State<AiPage> {
         stopEngine: stopAi,
       );
     } on DownloadStopped catch (stopped) {
-      if (mounted) {
-        setState(() {
-          onError(null);
-          onStage(stopped.kind == DownloadStopKind.paused ? '已暂停，可继续' : null);
-        });
-      }
+      _paint(() {
+        onError(null);
+        onStage(stopped.kind == DownloadStopKind.paused ? '已暂停，可继续' : null);
+      });
     } catch (e) {
       // A completed but invalid file cannot be resumed. Anything else (a busy
       // engine, a full disk while switching) leaves a good file: kept, the
       // next try installs it without downloading again.
       if (e is ModelFileInvalid && await out.exists()) await out.delete();
-      if (mounted) {
-        setState(() {
-          onError('$e');
-          onStage('下载中断，可继续');
-        });
-      }
+      _paint(() {
+        onError('$e');
+        onStage('下载中断，可继续');
+      });
     } finally {
       _setTransfer(package, null);
-      if (mounted) {
-        setState(() {
-          onProgress(null);
-        });
-      }
-      await _refresh();
+      _paint(() {
+        onProgress(null);
+      });
+      await _refreshLive();
     }
   }
 
@@ -406,14 +415,12 @@ class _AiPageState extends State<AiPage> {
     } else {
       await transfer.cancel(target);
     }
-    if (mounted) {
-      setState(() {
-        onProgress(null);
-        onError(null);
-        onStage(null);
-      });
-    }
-    await _refresh();
+    _paint(() {
+      onProgress(null);
+      onError(null);
+      onStage(null);
+    });
+    await _refreshLive();
   }
 
   String _withPending(String subtitle, int bytes) =>
@@ -438,19 +445,19 @@ class _AiPageState extends State<AiPage> {
   }
 
   Future<void> _downloadTtsEngine() async {
-    setState(() {
+    _paint(() {
       _ttsEngineProgress = 0;
       _ttsEngineError = null;
     });
     try {
       await downloadEngineZip(_ts!.dir, ttsEngineZip, ttsEngineFolder, (p) {
-        if (mounted) setState(() => _ttsEngineProgress = p);
+        _paint(() => _ttsEngineProgress = p);
       });
     } catch (e) {
       _ttsEngineError = '$e';
     } finally {
       _ttsEngineProgress = null;
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -459,14 +466,14 @@ class _AiPageState extends State<AiPage> {
     if (_voiceTransfer != null) return;
     final transfer = _voiceTransfer = ResumableFileDownload();
     _voiceCancelled = false;
-    setState(() {
+    _paint(() {
       _voiceProgress = 0;
       _voiceError = null;
     });
     final dir = _ts!.dir;
     try {
       await downloadHostedFiles(dir, ttsModelFiles, transfer, (p) {
-        if (mounted) setState(() => _voiceProgress = p);
+        _paint(() => _voiceProgress = p);
       });
     } on DownloadStopped {
       // Paused or cancelled; what is left is shown on the button.
@@ -476,7 +483,7 @@ class _AiPageState extends State<AiPage> {
       _voiceTransfer = null;
       _voiceProgress = null;
       if (_voiceCancelled) await discardHostedDownload(dir, ttsModelFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -485,7 +492,7 @@ class _AiPageState extends State<AiPage> {
     if (_lightTransfer != null) return;
     final transfer = _lightTransfer = ResumableFileDownload();
     _lightCancelled = false;
-    setState(() {
+    _paint(() {
       _lightProgress = 0;
       _lightError = null;
     });
@@ -493,7 +500,7 @@ class _AiPageState extends State<AiPage> {
     try {
       await Directory(dir).create(recursive: true);
       await downloadHostedFiles(dir, lightVoiceFiles, transfer, (p) {
-        if (mounted) setState(() => _lightProgress = p);
+        _paint(() => _lightProgress = p);
       });
     } on DownloadStopped {
       // Paused or cancelled; what is left is shown on the button.
@@ -503,7 +510,7 @@ class _AiPageState extends State<AiPage> {
       _lightTransfer = null;
       _lightProgress = null;
       if (_lightCancelled) await discardHostedDownload(dir, lightVoiceFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -514,7 +521,7 @@ class _AiPageState extends State<AiPage> {
       transfer.pause();
     } else {
       await discardHostedDownload(lightVoiceDir(_ts!.dir), lightVoiceFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
@@ -525,7 +532,7 @@ class _AiPageState extends State<AiPage> {
       transfer.pause();
     } else {
       await discardHostedDownload(_ts!.dir, ttsModelFiles);
-      await _refresh();
+      await _refreshLive();
     }
   }
 
