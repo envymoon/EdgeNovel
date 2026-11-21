@@ -20,6 +20,7 @@ pub mod romance;
 pub mod sights;
 pub mod source;
 pub mod store;
+pub mod zh_g2p;
 
 /// Full-width ideographic space. Two of them are the canonical Chinese
 /// paragraph indent, and their presence is the strongest structural signal
