@@ -25,6 +25,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -72,6 +73,7 @@ struct kokoro {
     std::mutex m;
     std::condition_variable freed;
     std::map<std::string, ggml_tensor *> w;
+    std::set<std::string> taps;  // convolution weights, laid [Cin, K, Cout] at load
     std::map<std::string, int> vocab;
     std::vector<std::string> voice_names;
     std::map<std::string, std::vector<float>> voices;  // [510][256]
@@ -342,13 +344,17 @@ struct G {
     // which kept an iPhone GPU busy for most of a sentence. Undilated, the
     // windows overlap in one view and it is one product; dilated, one per tap.
     ggml_tensor * conv(const std::string & p, ggml_tensor * x, int s, int pad, int d) const {
-        ggml_tensor * w = W(p + ".weight");
-        const int64_t K = w->ne[0], IC = w->ne[1], OC = w->ne[2];
+        ggml_tensor * wt = W(p + ".weight");  // [IC, K, OC]
+        // [K, Cin, Cout] with one tap or one channel in is that order already.
+        if (!k->taps.count(p + ".weight")) {
+            if (wt->ne[0] != 1 && wt->ne[1] != 1) throw std::string("convolution weight not laid out: " + p);
+            wt = ggml_reshape_3d(ctx, wt, wt->ne[1], wt->ne[0], wt->ne[2]);
+        }
+        const int64_t IC = wt->ne[0], K = wt->ne[1], OC = wt->ne[2];
         if (x->ne[1] != IC || (d > 1 && s > 1)) throw std::string("unexpected convolution shape");
         if (pad) x = ggml_pad_ext(ctx, x, pad, pad, 0, 0, 0, 0, 0, 0);
         const int64_t OL = (x->ne[0] - d * (K - 1) - 1) / s + 1;
         ggml_tensor * xt = ggml_cont(ctx, ggml_transpose(ctx, x));                // [IC, L]
-        ggml_tensor * wt = ggml_cont(ctx, ggml_permute(ctx, w, 1, 0, 2, 3));      // [IC, K, OC]
         ggml_tensor * y;
         if (d == 1) {
             // Rows that overlap, which ggml_view_2d refuses: made a row, then
@@ -824,6 +830,26 @@ kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
             const size_t off = gguf_get_data_offset(g) + gguf_get_tensor_offset(g, i);
             if (fseek(f, (long) off, SEEK_SET) != 0 || fread(buf.data(), 1, buf.size(), f) != buf.size())
                 throw std::string("cannot read ") + ggml_get_name(t);
+            // A convolution's weight [K, Cin, Cout] laid [Cin, K, Cout], the
+            // order its windows are in (G::conv), once here.
+            const std::string name = ggml_get_name(t);
+            if (ggml_n_dims(t) == 3 && name.find(".ups.") == std::string::npos && name.find(".pool.") == std::string::npos &&
+                (t->type == GGML_TYPE_F16 || t->type == GGML_TYPE_F32)) {
+                const int64_t K = t->ne[0], IC = t->ne[1], OC = t->ne[2];
+                const size_t es = ggml_type_size(t->type);
+                std::vector<uint8_t> laid(buf.size());
+                for (int64_t o = 0; o < OC; o++)
+                    for (int64_t c = 0; c < IC; c++)
+                        for (int64_t j = 0; j < K; j++)
+                            memcpy(&laid[((o * K + j) * IC + c) * es], &buf[((o * IC + c) * K + j) * es], es);
+                buf.swap(laid);
+                t->ne[0] = IC;
+                t->ne[1] = K;
+                t->nb[1] = es * IC;
+                t->nb[2] = t->nb[1] * K;
+                t->nb[3] = t->nb[2] * OC;
+                k->taps.insert(name);
+            }
             ggml_backend_tensor_set(t, buf.data(), 0, buf.size());
         }
 
