@@ -256,7 +256,7 @@ class _TtsPanelState extends State<TtsPanel> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      for (final v in localVoices)
+                      for (final v in pickableVoices)
                         ChoiceChip(
                           label: Text(v.label),
                           selected: widget.settings.ttsLocalVoice == v.id,

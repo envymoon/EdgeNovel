@@ -184,7 +184,7 @@ class _HeldVoice extends TtsController {
 
 class _SilentSpeech implements LocalSpeechSynthesizer {
   @override
-  Future<bool> ready() async => true;
+  Future<bool> ready(String voice) async => true;
 
   @override
   Future<Uint8List> synthesize({

@@ -50,6 +50,11 @@ abstract final class AppPlatformSupport {
       defaultTargetPlatform == TargetPlatform.android ||
       (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
 
+  /// The light voice: a small model run in the app's own engine, so iPhone
+  /// alone, from the same 16.4.
+  static bool get hasLightVoice =>
+      defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable;
+
   /// The 听书 engine ships inside the app, so only the voice is a download.
   static bool get hasBundledTtsEngine => isMobile;
 

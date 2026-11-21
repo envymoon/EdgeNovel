@@ -78,6 +78,21 @@ const CACHE: &str = "cache";
 /// 24 kHz speech, so this is some fifty chapters ahead.
 const CACHE_CAP: u64 = 2 << 30;
 
+/// The light voice (iOS): Kokoro 1.1-zh, run by ios_tts/kokoro/ ([`light`]).
+/// A download of its own, in its own folder: the model with its voices, and
+/// the data its Chinese front end reads. Its speakers are named `k:<voice>`.
+const LIGHT: &str = "kokoro";
+const LIGHT_MODEL: &str = "kokoro-";
+const LIGHT_TEXT: &str = "zh-frontend.bin";
+const LIGHT_VOICE: &str = "k:";
+
+/// The light voice's model and front-end data, when both are there.
+fn light_files(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let d = dir.join(LIGHT);
+    let text = d.join(LIGHT_TEXT);
+    Some((find_model(&d, LIGHT_MODEL)?, text.is_file().then_some(text)?))
+}
+
 /// Called once at startup with `<app-support>/tts`. The engine and the voice
 /// model live here; the user can also drop files in by hand.
 pub fn init_tts(dir: String) -> Result<(), String> {
@@ -165,6 +180,10 @@ pub struct TtsStatus {
     pub voice: Option<String>,
     pub engine_bytes: i64,
     pub voice_bytes: i64,
+    /// The light voice is there, model and front end both.
+    pub light: bool,
+    /// What the light voice's files take, whole or not.
+    pub light_bytes: i64,
 }
 
 pub fn tts_status() -> Result<TtsStatus, String> {
@@ -181,7 +200,39 @@ pub fn tts_status() -> Result<TtsStatus, String> {
         voice,
         engine_bytes: find_engine(dir).as_deref().map(file_bytes).unwrap_or(0),
         voice_bytes: [talker, codec].iter().flatten().map(|p| file_bytes(p)).sum(),
+        light: light_files(dir).is_some(),
+        light_bytes: light_bytes(dir),
     })
+}
+
+fn light_bytes(dir: &Path) -> i64 {
+    std::fs::read_dir(dir.join(LIGHT))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .map(|p| file_bytes(&p))
+        .sum()
+}
+
+/// Whether [`synth`] can speak with this voice: the light voice's speakers
+/// need the light voice, the others the engine and the voice model.
+pub fn tts_voice_ready(voice: String) -> Result<bool, String> {
+    if voice.starts_with(LIGHT_VOICE) {
+        return Ok(cfg!(in_process_engine) && light_files(tts_dir()?).is_some());
+    }
+    tts_ready()
+}
+
+/// Delete the light voice: its folder, with any download left in it.
+pub fn delete_tts_light() -> Result<(), String> {
+    let dir = tts_dir()?.join(LIGHT);
+    if !dir.is_dir() {
+        return Err("轻量语音未安装".into());
+    }
+    stop_tts();
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("删除失败: {e}"))
 }
 
 /// True when the engine and both model files are present — the only state in
@@ -270,6 +321,7 @@ fn kill() {
 #[cfg(in_process_engine)]
 fn kill() {
     engine::unload();
+    light::unload();
 }
 
 /// The most sentences the GPU speaks at once (听书 同时合成).
@@ -312,6 +364,8 @@ fn ensure() -> Result<(), String> {
     let dir = tts_dir()?;
     let talker = find_model(dir, TALKER).ok_or("中文语音未安装")?;
     let codec = find_model(dir, CODEC).ok_or("中文语音未安装（缺编解码器）")?;
+    // One voice in memory at a time.
+    light::unload();
     let first = !engine::loaded();
     // Set for the load about to happen, not under a voice that is running.
     if engine::needs_load() {
@@ -515,7 +569,18 @@ pub fn synth(text: String, voice: String) -> Result<Vec<u8>, String> {
     if let Ok(wav) = std::fs::read(cached(&line, &voice)?) {
         return Ok(wav);
     }
-    speak(&line, &voice)
+    say(&line, &voice)
+}
+
+/// A sentence by whichever voice the speaker is of.
+fn say(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+    match voice.strip_prefix(LIGHT_VOICE) {
+        #[cfg(in_process_engine)]
+        Some(name) => light::speak(line, name),
+        #[cfg(not(in_process_engine))]
+        Some(_) => Err("此设备没有轻量语音".into()),
+        None => speak(line, voice),
+    }
 }
 
 /// Speak one sentence into the cache for later. False when it was already there.
@@ -525,7 +590,7 @@ pub fn prepare(text: String, voice: String) -> Result<bool, String> {
     if path.is_file() {
         return Ok(false);
     }
-    let wav = speak(&line, &voice)?;
+    let wav = say(&line, &voice)?;
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir).map_err(|e| format!("建缓存目录失败: {e}"))?;
     // Written aside and renamed, so a clip cut off by a crash is never played.
@@ -558,12 +623,15 @@ fn one_line(text: &str) -> Result<String, String> {
     Ok(line)
 }
 
-/// Where a sentence's clip lives in the cache. The talker's file name is part
+/// Where a sentence's clip lives in the cache. The model's file name is part
 /// of the key, so a different model never answers with the old one's voice.
 fn cached(line: &str, voice: &str) -> Result<PathBuf, String> {
     let dir = tts_dir()?;
-    let talker = find_model(dir, TALKER).ok_or("中文语音未安装")?;
-    let model = talker.file_name().unwrap_or_default().to_string_lossy();
+    let model = match voice.starts_with(LIGHT_VOICE) {
+        true => light_files(dir).ok_or("轻量语音未安装")?.0,
+        false => find_model(dir, TALKER).ok_or("中文语音未安装")?,
+    };
+    let model = model.file_name().unwrap_or_default().to_string_lossy();
     // Two FNV-1a passes with different seeds: 128 bits, so two sentences
     // never share a file however many are cached.
     let fnv = |seed: u64| {
@@ -872,9 +940,231 @@ mod engine {
     }
 }
 
+/// The most phonemes the model reads at once is 510; a longer sentence is
+/// said in pieces.
+#[cfg_attr(not(in_process_engine), allow(dead_code))]
+const PIECE: usize = 500;
+
+/// Phonemes in pieces the model can read, cut after a pause where there
+/// is one, else between words, else anywhere.
+#[cfg_attr(not(in_process_engine), allow(dead_code))]
+fn pieces(ps: &str) -> Vec<String> {
+    let chars: Vec<char> = ps.chars().collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while chars.len() - at > PIECE {
+        let window = &chars[at..at + PIECE];
+        let cut = window
+            .iter()
+            .rposition(|c| ",.!?;:".contains(*c))
+            .or_else(|| window.iter().rposition(|c| *c == '/' || *c == ' '))
+            .map_or(PIECE, |i| i + 1);
+        out.push(window[..cut].iter().collect::<String>().trim().to_string());
+        at += cut;
+    }
+    out.push(chars[at..].iter().collect::<String>().trim().to_string());
+    out.retain(|p| !p.is_empty());
+    out
+}
+
+/// The light voice (ios_tts/kokoro/), compiled into the app beside the
+/// other. Text goes to phonemes here (`Zh`, core/src/zh_g2p.rs), phonemes to
+/// sound there. Like the other voice: on the GPU on screen, on the CPU behind
+/// it, let go when idle, and never in memory together with it.
+#[cfg(in_process_engine)]
+mod light {
+    use super::{engine, last_used, light_files, pieces, tts_dir, wav, InFlight, BUSY, IDLE, LIFECYCLE};
+    use novel_core::zh_g2p::Zh;
+    use std::ffi::{c_char, c_int, CStr, CString};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    #[repr(C)]
+    struct Kokoro {
+        _private: [u8; 0],
+    }
+
+    extern "C" {
+        fn edge_tts_watch();
+        fn edge_tts_kokoro_load(path: *const c_char, gpu: c_int, threads: c_int) -> *mut Kokoro;
+        fn edge_tts_kokoro_free(k: *mut Kokoro);
+        fn edge_tts_kokoro_speak(
+            k: *mut Kokoro,
+            phonemes: *const c_char,
+            voice: *const c_char,
+            speed: f32,
+            seed: u32,
+            n: *mut c_int,
+        ) -> *mut f32;
+        fn edge_tts_kokoro_free_audio(samples: *mut f32);
+        fn edge_tts_kokoro_error(k: *const Kokoro) -> *const c_char;
+    }
+
+    /// The model, where it runs, and the front end. Held through a sentence,
+    /// so nothing lets it go mid-way.
+    struct Loaded {
+        k: *mut Kokoro,
+        gpu: bool,
+        zh: Zh,
+    }
+
+    unsafe impl Send for Loaded {}
+
+    static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
+
+    /// The GPU failed with the app on screen: this GPU cannot run it, so the
+    /// CPU from then on.
+    static NO_GPU: AtomicBool = AtomicBool::new(false);
+
+    pub fn unload() {
+        if let Some(l) = LOADED.lock().unwrap().take() {
+            unsafe { edge_tts_kokoro_free(l.k) };
+        }
+    }
+
+    fn loaded() -> bool {
+        LOADED.lock().unwrap().is_some()
+    }
+
+    fn wanted_gpu() -> bool {
+        !engine::background() && engine::gpu() && !NO_GPU.load(Ordering::SeqCst)
+    }
+
+    /// Loaded where it can run now; the front end stays across a move.
+    fn ensure(slot: &mut Option<Loaded>, gpu: bool) -> Result<(), String> {
+        if slot.as_ref().is_some_and(|l| l.gpu == gpu) {
+            return Ok(());
+        }
+        let (model, text) = light_files(tts_dir()?).ok_or("轻量语音未安装")?;
+        let zh = match slot.take() {
+            Some(l) => {
+                unsafe { edge_tts_kokoro_free(l.k) };
+                l.zh
+            }
+            None => {
+                let bytes = std::fs::read(&text).map_err(|e| format!("读取轻量语音失败: {e}"))?;
+                Zh::load(&bytes)?
+            }
+        };
+        crate::api::image::release();
+        let path = CString::new(model.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string())?;
+        let k = unsafe { edge_tts_kokoro_load(path.as_ptr(), gpu as c_int, 0) };
+        if k.is_null() {
+            return Err("启动轻量语音失败".into());
+        }
+        *slot = Some(Loaded { k, gpu, zh });
+        Ok(())
+    }
+
+    /// One sentence, every piece of it, as 16-bit 24 kHz mono; and whether it
+    /// ran on the GPU.
+    fn say(line: &str, voice: &CStr) -> Result<(Vec<u8>, bool), String> {
+        let mut slot = {
+            let _g = LIFECYCLE.lock().unwrap();
+            // One voice in memory at a time.
+            engine::unload();
+            let mut slot = LOADED.lock().unwrap();
+            let first = slot.is_none();
+            ensure(&mut slot, wanted_gpu())?;
+            if first {
+                watch_idle();
+            }
+            slot
+        };
+        let l = slot.as_mut().unwrap();
+        let mut pcm = Vec::new();
+        for piece in pieces(&l.zh.phonemes(line)) {
+            let ps = CString::new(piece).map_err(|_| "文本无效".to_string())?;
+            let mut n: c_int = 0;
+            let samples = unsafe { edge_tts_kokoro_speak(l.k, ps.as_ptr(), voice.as_ptr(), 1.0, 1, &mut n) };
+            if samples.is_null() {
+                let why = unsafe { CStr::from_ptr(edge_tts_kokoro_error(l.k)) }.to_string_lossy().into_owned();
+                return Err(format!("语音合成失败: {why}"));
+            }
+            for &x in unsafe { std::slice::from_raw_parts(samples, n.max(0) as usize) } {
+                let s = (x.clamp(-1.0, 1.0) * 32767.0).round_ties_even() as i16;
+                pcm.extend_from_slice(&s.to_le_bytes());
+            }
+            unsafe { edge_tts_kokoro_free_audio(samples) };
+        }
+        Ok((pcm, l.gpu))
+    }
+
+    pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+        unsafe { edge_tts_watch() };
+        let _busy = InFlight::new();
+        let voice = CString::new(voice).map_err(|_| "音色无效".to_string())?;
+        let mut tries = 0;
+        loop {
+            let started = Instant::now();
+            match say(line, &voice) {
+                Ok((pcm, _)) if pcm.is_empty() => return Err("语音合成为空".into()),
+                Ok((pcm, gpu)) => {
+                    // Behind the screen, on the CPU, it rests three times as
+                    // long as it worked: iOS ends an app there that keeps
+                    // most of a core busy for a minute. (Not in the
+                    // bench, which measures the speed itself.)
+                    if !gpu && engine::background() && !cfg!(test) {
+                        std::thread::sleep(started.elapsed() * 3);
+                    }
+                    return Ok(wav(&pcm));
+                }
+                Err(e) if tries < 2 && LOADED.lock().unwrap().as_ref().is_some_and(|l| l.gpu) => {
+                    tries += 1;
+                    // iOS refuses the GPU a moment before the app hears it
+                    // is behind the screen; if it never does, the GPU itself
+                    // could not do it.
+                    let deadline = Instant::now() + Duration::from_secs(3);
+                    while !engine::background() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    if !engine::background() {
+                        eprintln!("light voice: GPU failed on screen, CPU from now on: {e}");
+                        NO_GPU.store(true, Ordering::SeqCst);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Lets the voice go once nothing has been said for [`IDLE`], or for a
+    /// few seconds behind the screen.
+    fn watch_idle() {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(5));
+            if !loaded() {
+                return;
+            }
+            let idle = if engine::background() { Duration::from_secs(15) } else { IDLE };
+            if BUSY.load(Ordering::SeqCst) == 0 && last_used().lock().unwrap().elapsed() > idle {
+                unload();
+                return;
+            }
+        });
+    }
+
+    /// Where it is loaded: the GPU (true), the CPU (false), or not at all.
+    #[cfg(test)]
+    pub fn on_gpu() -> Option<bool> {
+        LOADED.lock().unwrap().as_ref().map(|l| l.gpu)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_phonemes_are_cut_after_a_pause() {
+        let long = "ㄋㄧ3/ㄏㄠ3, ".repeat(80);
+        let ps = pieces(&long);
+        assert!(ps.len() > 1);
+        assert!(ps.iter().all(|p| p.chars().count() <= PIECE && p.ends_with(',')));
+        assert_eq!(ps.concat().replace(' ', ""), long.replace(' ', ""));
+        assert_eq!(pieces("ㄋㄧ3"), ["ㄋㄧ3"]);
+    }
 
     #[test]
     fn the_cache_lets_the_oldest_clips_go() {
@@ -960,6 +1250,89 @@ mod tests {
         assert!(!engine::misplaced());
         stop_tts();
         assert!(!health());
+        memory("结束");
+    }
+
+    /// The light voice the same way (CI): NOVEL_TTS_DIR/kokoro holds it.
+    /// What it said goes to NOVEL_TTS_OUT, to be listened to.
+    #[cfg(in_process_engine)]
+    #[test]
+    #[ignore]
+    fn light_bench() {
+        extern "C" {
+            fn edge_tts_set_background(on: std::ffi::c_int);
+        }
+        let memory = |phase: &str| {
+            let (now, peak) = crate::engine_thread::footprint();
+            println!("[内存] {phase}：当前 {} MB · 最高 {} MB", now >> 20, peak >> 20);
+        };
+        init_tts(std::env::var("NOVEL_TTS_DIR").expect("set NOVEL_TTS_DIR")).unwrap();
+        let out = std::env::var("NOVEL_TTS_OUT").map(PathBuf::from).ok();
+        if let Some(o) = &out {
+            std::fs::create_dir_all(o).unwrap();
+        }
+        assert!(tts_voice_ready("k:zf_001".into()).unwrap());
+        assert!(tts_status().unwrap().light);
+        memory("开始");
+        let long = "他沿着河岸一直往前走，走过了石桥，走过了柳树，走过了村口那间早已没人住的老屋，".repeat(8) + "直到天黑。";
+        let lines = [
+            ("短句", "今天的风有点大，我们早点回家吧。".to_string()),
+            ("长句", "他把书合上，望着窗外的雨，很久都没有说话，直到天色暗了下来，才慢慢站起身，去厨房烧了一壶水。".to_string()),
+            ("数字", "第3章，2023年5月1日，他花了3.5元。".to_string()),
+            ("超长", long),
+        ];
+        let gpu = engine::gpu();
+        for (device, behind) in [("GPU", 0), ("CPU", 1)] {
+            if behind == 0 && !gpu {
+                println!("[GPU] 这块 GPU 跑不了，只测处理器");
+                continue;
+            }
+            unsafe { edge_tts_set_background(behind) };
+            let t = Instant::now();
+            for (i, (name, line)) in lines.iter().enumerate() {
+                let t1 = Instant::now();
+                let wav = say(line, "k:zf_001").unwrap();
+                let secs = (wav.len() - 44) as f64 / 48000.0;
+                let took = t1.elapsed().as_secs_f64();
+                if i == 0 {
+                    println!("[{device} 首句含载入] {:.1} 秒", t.elapsed().as_secs_f64());
+                    memory(&format!("{device} 载入后"));
+                }
+                println!("[{device} {name}] {secs:.1} 秒语音用 {took:.2} 秒 · RTF {:.2}", took / secs);
+                assert!(secs > 1.0);
+                if let Some(o) = &out {
+                    std::fs::write(o.join(format!("{device}-{i}.wav")), &wav).unwrap();
+                }
+            }
+            assert_eq!(light::on_gpu(), Some(behind == 0 && gpu));
+            memory(&format!("{device} 说完"));
+        }
+        unsafe { edge_tts_set_background(0) };
+
+        // Every voice, and the cache.
+        for v in ["zf_001", "zf_008", "zf_047", "zf_086", "zm_009", "zm_031", "zm_066"] {
+            let wav = say("你好，很高兴认识你。", &format!("k:{v}")).unwrap();
+            if let Some(o) = &out {
+                std::fs::write(o.join(format!("voice-{v}.wav")), &wav).unwrap();
+            }
+        }
+        assert!(say("你好。", "k:nobody").is_err());
+        let line = "提前合成的句子从缓存里读。";
+        let path = cached(line, "k:zm_009").unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(prepare(line.into(), "k:zm_009".into()).unwrap());
+        assert!(!prepare(line.into(), "k:zm_009".into()).unwrap());
+        assert_ne!(path, cached(line, "k:zf_001").unwrap());
+
+        // The other voice takes its place, and back.
+        if tts_ready().unwrap() {
+            ensure().unwrap();
+            assert_eq!(light::on_gpu(), None);
+            say("又换回来了。", "k:zf_001").unwrap();
+            assert!(!engine::loaded());
+        }
+        stop_tts();
+        assert_eq!(light::on_gpu(), None);
         memory("结束");
     }
 

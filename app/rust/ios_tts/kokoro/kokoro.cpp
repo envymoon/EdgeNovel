@@ -26,6 +26,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+
 namespace {
 
 constexpr int SR = 24000;
@@ -409,6 +413,14 @@ void dump(const kokoro * k, const char * name, const std::vector<float> & v) {
 }
 
 void compute(kokoro * k, Graph & g) {
+    // A GPU that lacks an operation says so here, and the caller loads the
+    // model on the CPU instead.
+    if (k->backend != k->cpu)
+        for (int i = 0; i < ggml_graph_n_nodes(g.gf); i++) {
+            ggml_tensor * n = ggml_graph_node(g.gf, i);
+            if (!ggml_backend_supports_op(k->backend, n))
+                throw std::string("GPU cannot run ") + ggml_op_desc(n) + " (" + ggml_get_name(n) + ")";
+        }
     if (!ggml_gallocr_alloc_graph(k->alloc, g.gf)) throw std::string("out of memory");
 }
 
@@ -663,9 +675,22 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
 
 extern "C" {
 
-kokoro * kokoro_load(const char * path, int gpu, int threads) {
+// As many threads as performance cores where the system says (an iPhone's
+// efficiency cores only slow the rest down), else four.
+static int default_threads() {
+#ifdef __APPLE__
+    for (const char * key : {"hw.perflevel0.physicalcpu", "hw.physicalcpu"}) {
+        int n = 0;
+        size_t len = sizeof(n);
+        if (sysctlbyname(key, &n, &len, nullptr, 0) == 0 && n > 0) return std::min(n, 8);
+    }
+#endif
+    return 4;
+}
+
+kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
     auto * k = new kokoro();
-    k->threads = threads > 0 ? threads : 4;
+    k->threads = threads > 0 ? threads : default_threads();
     gguf_context * g = nullptr;
     FILE * f = nullptr;
     try {
@@ -732,18 +757,18 @@ kokoro * kokoro_load(const char * path, int gpu, int threads) {
         fprintf(stderr, "kokoro: %s\n", e.c_str());
         if (f) fclose(f);
         if (g) gguf_free(g);
-        kokoro_free(k);
+        edge_tts_kokoro_free(k);
         return nullptr;
     } catch (const std::exception & e) {
         fprintf(stderr, "kokoro: %s\n", e.what());
         if (f) fclose(f);
         if (g) gguf_free(g);
-        kokoro_free(k);
+        edge_tts_kokoro_free(k);
         return nullptr;
     }
 }
 
-void kokoro_free(kokoro * k) {
+void edge_tts_kokoro_free(kokoro * k) {
     if (!k) return;
     if (k->alloc) ggml_gallocr_free(k->alloc);
     if (k->wbuf) ggml_backend_buffer_free(k->wbuf);
@@ -752,13 +777,13 @@ void kokoro_free(kokoro * k) {
     delete k;
 }
 
-int kokoro_voice_count(const kokoro * k) { return (int) k->voice_names.size(); }
+int edge_tts_kokoro_voice_count(const kokoro * k) { return (int) k->voice_names.size(); }
 
-const char * kokoro_voice_name(const kokoro * k, int i) {
+const char * edge_tts_kokoro_voice_name(const kokoro * k, int i) {
     return i >= 0 && i < (int) k->voice_names.size() ? k->voice_names[i].c_str() : nullptr;
 }
 
-float * kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed, unsigned seed, int * n) {
+float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed, unsigned seed, int * n) {
     *n = 0;
     try {
         std::vector<float> a = speak(k, phonemes, voice, speed > 0 ? speed : 1.0f, seed);
@@ -775,11 +800,11 @@ float * kokoro_speak(kokoro * k, const char * phonemes, const char * voice, floa
     return nullptr;
 }
 
-void kokoro_free_audio(float * samples) { free(samples); }
+void edge_tts_kokoro_free_audio(float * samples) { free(samples); }
 
-const char * kokoro_error(const kokoro * k) { return k->error.c_str(); }
+const char * edge_tts_kokoro_error(const kokoro * k) { return k->error.c_str(); }
 
-void kokoro_debug(kokoro * k, const char * dir, int quiet) {
+void edge_tts_kokoro_debug(kokoro * k, const char * dir, int quiet) {
     k->debug_dir = dir ? dir : "";
     k->quiet = quiet != 0;
 }

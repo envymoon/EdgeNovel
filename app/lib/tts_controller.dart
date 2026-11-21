@@ -178,7 +178,15 @@ class TtsController extends ChangeNotifier {
   Future<bool> aiVoiceReady() async {
     if (!AppPlatformSupport.hasAiVoice) return false;
     try {
-      return await _localSpeech.ready();
+      if (await _localSpeech.ready(settings.ttsLocalVoice)) return true;
+      // The chosen speaker's model is gone but another is there: that one.
+      for (final v in pickableVoices) {
+        if (await _localSpeech.ready(v.id)) {
+          settings.setTtsLocalVoice(v.id);
+          return true;
+        }
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -278,7 +286,7 @@ class TtsController extends ChangeNotifier {
       if (await aiVoiceReady()) return _startSpoken(fromIndex);
       return _startSystem(fromIndex);
     }
-    if (!settings.ttsRemote && !await _localSpeech.ready()) {
+    if (!settings.ttsRemote && !await _localSpeech.ready(settings.ttsLocalVoice)) {
       throw '朗读语音未安装';
     }
     if (_utts.isEmpty) _buildUtts();

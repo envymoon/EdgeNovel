@@ -1,3 +1,4 @@
+import 'platform_support.dart';
 import 'src/rust/api/book.dart';
 
 /// Turning a chapter into things to say. Nothing here touches audio or disk —
@@ -188,4 +189,21 @@ const localVoices = <LocalVoice>[
   LocalVoice('vivian', 'Vivian · 女声'),
   LocalVoice('dylan', 'Dylan · 京腔男声'),
   LocalVoice('eric', 'Eric · 川味男声'),
+];
+
+/// The light voice's speakers (iPhone), `k:` and the model's own name.
+const lightVoices = <LocalVoice>[
+  LocalVoice('k:zf_001', '轻量 · 女声 1'),
+  LocalVoice('k:zf_008', '轻量 · 女声 2'),
+  LocalVoice('k:zf_047', '轻量 · 女声 3'),
+  LocalVoice('k:zf_086', '轻量 · 女声 4'),
+  LocalVoice('k:zm_009', '轻量 · 男声 1'),
+  LocalVoice('k:zm_031', '轻量 · 男声 2'),
+  LocalVoice('k:zm_066', '轻量 · 男声 3'),
+];
+
+/// Every speaker this device can have.
+List<LocalVoice> get pickableVoices => [
+  ...localVoices,
+  if (AppPlatformSupport.hasLightVoice) ...lightVoices,
 ];

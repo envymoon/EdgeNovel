@@ -207,7 +207,8 @@ class NativeDeviceStatusReader implements DeviceStatusReader {
 }
 
 abstract interface class LocalSpeechSynthesizer {
-  Future<bool> ready();
+  /// Whether [voice] can speak: its model is there.
+  Future<bool> ready(String voice);
 
   Future<Uint8List> synthesize({required String text, required String voice});
 
@@ -225,7 +226,7 @@ class NativeLocalSpeechSynthesizer implements LocalSpeechSynthesizer {
   const NativeLocalSpeechSynthesizer();
 
   @override
-  Future<bool> ready() => native_tts.ttsReady();
+  Future<bool> ready(String voice) => native_tts.ttsVoiceReady(voice: voice);
 
   @override
   Future<Uint8List> synthesize({required String text, required String voice}) =>

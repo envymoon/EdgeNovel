@@ -117,6 +117,12 @@ extern "C" int edge_tts_background(void) {
     return g_background ? 1 : 0;
 }
 
+// Starts following the app behind the screen and back, for the light voice,
+// which may run before this voice ever loads.
+extern "C" void edge_tts_watch(void) {
+    watch_app();
+}
+
 // 1 when loaded. `gpu` 0, or a GPU that cannot run it, runs on the CPU.
 extern "C" int edge_tts_load(const char * talker, const char * codec, int gpu) {
     watch_app();

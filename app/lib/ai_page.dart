@@ -69,6 +69,11 @@ class _AiPageState extends State<AiPage> {
   int _voicePendingBytes = 0;
   ResumableFileDownload? _voiceTransfer;
   var _voiceCancelled = false;
+  double? _lightProgress;
+  String? _lightError;
+  int _lightPendingBytes = 0;
+  ResumableFileDownload? _lightTransfer;
+  var _lightCancelled = false;
   int _chatPendingBytes = 0;
   int _embedPendingBytes = 0;
   ResumableFileDownload? _chatTransfer;
@@ -101,6 +106,7 @@ class _AiPageState extends State<AiPage> {
     _embedTransfer?.pause();
     _imgTransfer?.pause();
     _voiceTransfer?.pause();
+    _lightTransfer?.pause();
     super.dispose();
   }
 
@@ -112,6 +118,9 @@ class _AiPageState extends State<AiPage> {
     final voicePending = ts == null
         ? 0
         : await pendingDownloadBytes(ts.dir, ttsModelFiles);
+    final lightPending = ts == null || !AppPlatformSupport.hasLightVoice
+        ? 0
+        : await pendingDownloadBytes(lightVoiceDir(ts.dir), lightVoiceFiles);
     final states = await Future.wait([
       _models.inspect(s.dir, chatModelPackage),
       _models.inspect(s.dir, embeddingModelPackage),
@@ -127,6 +136,7 @@ class _AiPageState extends State<AiPage> {
         _img = img;
         _imgPendingBytes = imgPending;
         _voicePendingBytes = voicePending;
+        _lightPendingBytes = lightPending;
         _chatModel = states[0];
         _embeddingModel = states[1];
         _chatPendingBytes = pending[0];
@@ -466,6 +476,44 @@ class _AiPageState extends State<AiPage> {
       _voiceTransfer = null;
       _voiceProgress = null;
       if (_voiceCancelled) await discardHostedDownload(dir, ttsModelFiles);
+      await _refresh();
+    }
+  }
+
+  /// The light voice, about 200 MB, the same way.
+  Future<void> _downloadLightVoice() async {
+    if (_lightTransfer != null) return;
+    final transfer = _lightTransfer = ResumableFileDownload();
+    _lightCancelled = false;
+    setState(() {
+      _lightProgress = 0;
+      _lightError = null;
+    });
+    final dir = lightVoiceDir(_ts!.dir);
+    try {
+      await Directory(dir).create(recursive: true);
+      await downloadHostedFiles(dir, lightVoiceFiles, transfer, (p) {
+        if (mounted) setState(() => _lightProgress = p);
+      });
+    } on DownloadStopped {
+      // Paused or cancelled; what is left is shown on the button.
+    } catch (e) {
+      _lightError = '$e';
+    } finally {
+      _lightTransfer = null;
+      _lightProgress = null;
+      if (_lightCancelled) await discardHostedDownload(dir, lightVoiceFiles);
+      await _refresh();
+    }
+  }
+
+  Future<void> _cancelLightVoice() async {
+    final transfer = _lightTransfer;
+    if (transfer != null) {
+      _lightCancelled = true;
+      transfer.pause();
+    } else {
+      await discardHostedDownload(lightVoiceDir(_ts!.dir), lightVoiceFiles);
       await _refresh();
     }
   }
@@ -831,6 +879,33 @@ class _AiPageState extends State<AiPage> {
                               ? () => _delete('中文语音', deleteTtsVoice)
                               : null,
                         ),
+                        if (AppPlatformSupport.hasLightVoice)
+                          _item(
+                            t,
+                            ok: _ts?.light ?? false,
+                            title: '轻量语音',
+                            subtitle: _withPending(
+                              (_ts?.light ?? false)
+                                  ? '已安装 · ${_size(_ts!.lightBytes)}'
+                                  : '约 200 MB',
+                              _lightPendingBytes,
+                            ),
+                            progress: _lightProgress,
+                            progressText: _lightProgress == null
+                                ? null
+                                : '正在下载',
+                            error: _lightError,
+                            onDownload: _downloadLightVoice,
+                            downloadLabel: _lightPendingBytes > 0
+                                ? '继续'
+                                : '下载',
+                            hasPendingDownload: _lightPendingBytes > 0,
+                            onPause: () => _lightTransfer?.pause(),
+                            onCancel: _cancelLightVoice,
+                            onDelete: (_ts?.light ?? false)
+                                ? () => _delete('轻量语音', deleteTtsLight)
+                                : null,
+                          ),
                       ],
                       const SizedBox(height: 16),
                       Row(

@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cache_files`, `cached`, `ensure`, `file_bytes`, `find_engine`, `find_model`, `has_engine`, `health`, `kill`, `last_used`, `max_frames`, `new`, `one_line`, `server`, `speak`, `start`, `trim_cache`, `tts_dir`, `watch_idle`, `wav`
+// These functions are ignored because they are not marked as `pub`: `cache_files`, `cached`, `ensure`, `file_bytes`, `find_engine`, `find_model`, `has_engine`, `health`, `kill`, `last_used`, `light_bytes`, `light_files`, `max_frames`, `new`, `one_line`, `pieces`, `say`, `server`, `speak`, `start`, `trim_cache`, `tts_dir`, `watch_idle`, `wav`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `InFlight`, `Sampling`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `drop`, `fmt`
 
@@ -16,6 +16,15 @@ Future<void> initTts({required String dir}) =>
     RustLib.instance.api.crateApiTtsInitTts(dir: dir);
 
 Future<TtsStatus> ttsStatus() => RustLib.instance.api.crateApiTtsTtsStatus();
+
+/// Whether [`synth`] can speak with this voice: the light voice's speakers
+/// need the light voice, the others the engine and the voice model.
+Future<bool> ttsVoiceReady({required String voice}) =>
+    RustLib.instance.api.crateApiTtsTtsVoiceReady(voice: voice);
+
+/// Delete the light voice: its folder, with any download left in it.
+Future<void> deleteTtsLight() =>
+    RustLib.instance.api.crateApiTtsDeleteTtsLight();
 
 /// True when the engine and both model files are present — the only state in
 /// which [`synth`] can succeed.
@@ -61,12 +70,20 @@ class TtsStatus {
   final PlatformInt64 engineBytes;
   final PlatformInt64 voiceBytes;
 
+  /// The light voice is there, model and front end both.
+  final bool light;
+
+  /// What the light voice's files take, whole or not.
+  final PlatformInt64 lightBytes;
+
   const TtsStatus({
     required this.dir,
     required this.engine,
     this.voice,
     required this.engineBytes,
     required this.voiceBytes,
+    required this.light,
+    required this.lightBytes,
   });
 
   @override
@@ -75,7 +92,9 @@ class TtsStatus {
       engine.hashCode ^
       voice.hashCode ^
       engineBytes.hashCode ^
-      voiceBytes.hashCode;
+      voiceBytes.hashCode ^
+      light.hashCode ^
+      lightBytes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -86,5 +105,7 @@ class TtsStatus {
           engine == other.engine &&
           voice == other.voice &&
           engineBytes == other.engineBytes &&
-          voiceBytes == other.voiceBytes;
+          voiceBytes == other.voiceBytes &&
+          light == other.light &&
+          lightBytes == other.lightBytes;
 }

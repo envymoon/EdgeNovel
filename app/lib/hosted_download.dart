@@ -99,6 +99,37 @@ const ttsEngineZip = HostedFile(
 
 const ttsEngineFolder = 'qwen-tts';
 
+const _light = 'ianhaimo/edgenovel-kokoro/resolve/main';
+
+/// The light read-aloud voice (iPhone): the model with its speakers, and the
+/// data its Chinese front end reads; see experiments/kokoro. A download of its
+/// own, into [lightVoiceFolder] of the voice dir.
+const lightVoiceFiles = [
+  HostedFile(
+    'kokoro-v1.1-zh-f16.gguf',
+    188526272,
+    'c7916ae191f494be0a2251ff67fb69a7cd35f6f54d40ead5e564474c30a0b69c',
+    [
+      'https://huggingface.co/$_light/kokoro-v1.1-zh-f16.gguf',
+      'https://hf-mirror.com/$_light/kokoro-v1.1-zh-f16.gguf',
+    ],
+  ),
+  HostedFile(
+    'zh-frontend.bin',
+    14551556,
+    '9c9700d8944479f994eecee40ced032cdcb134b2776a62a6112fdfb768d77542',
+    [
+      'https://huggingface.co/$_light/zh-frontend.bin',
+      'https://hf-mirror.com/$_light/zh-frontend.bin',
+    ],
+  ),
+];
+
+const lightVoiceFolder = 'kokoro';
+
+/// Where the light voice lives in the voice dir [ttsDir].
+String lightVoiceDir(String ttsDir) => _join(ttsDir, lightVoiceFolder);
+
 String _join(String dir, String name) => '$dir${Platform.pathSeparator}$name';
 
 /// Where a file downloads to before it is checked. Not a .gguf, so the app

@@ -42,7 +42,7 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
     }
     auto t0 = std::chrono::steady_clock::now();
-    kokoro * k = kokoro_load(argv[1], gpu ? 1 : 0, threads);
+    kokoro * k = edge_tts_kokoro_load(argv[1], gpu ? 1 : 0, threads);
     if (!k) return 1;
     auto t1 = std::chrono::steady_clock::now();
     printf("load %.2f s\n", std::chrono::duration<double>(t1 - t0).count());
@@ -54,23 +54,23 @@ int main(int argc, char ** argv) {
         if (line.empty()) continue;
         const std::string dir = std::string(argv[4]) + "/" + std::to_string(i);
         std::filesystem::create_directories(dir);
-        kokoro_debug(k, debug ? dir.c_str() : nullptr, debug ? 1 : 0);
+        edge_tts_kokoro_debug(k, debug ? dir.c_str() : nullptr, debug ? 1 : 0);
         int n = 0;
         auto a = std::chrono::steady_clock::now();
-        float * x = kokoro_speak(k, line.c_str(), argv[2], 1.0f, 1234 + i, &n);
+        float * x = edge_tts_kokoro_speak(k, line.c_str(), argv[2], 1.0f, 1234 + i, &n);
         double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
         if (!x) {
-            fprintf(stderr, "%d: %s\n", i, kokoro_error(k));
+            fprintf(stderr, "%d: %s\n", i, edge_tts_kokoro_error(k));
             i++;
             continue;
         }
         wav(std::string(argv[4]) + "/" + std::to_string(i) + ".wav", x, n);
         printf("%d: %.2f s audio in %.2f s (RTF %.3f)\n", i, n / 24000.0, dt, dt / (n / 24000.0));
         if (i > 0) { total += dt; audio += n / 24000.0; }
-        kokoro_free_audio(x);
+        edge_tts_kokoro_free_audio(x);
         i++;
     }
     if (audio > 0) printf("after the first: RTF %.3f\n", total / audio);
-    kokoro_free(k);
+    edge_tts_kokoro_free(k);
     return 0;
 }

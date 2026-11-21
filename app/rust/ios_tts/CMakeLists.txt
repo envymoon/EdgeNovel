@@ -66,7 +66,9 @@ add_library(edge_tts STATIC
     edge_tts.mm
     "${QT}/src/qwen.cpp"
     "${QT}/src/pipeline-tts.cpp"
-    "${QT}/src/pipeline-codec.cpp")
+    "${QT}/src/pipeline-codec.cpp"
+    # The light voice (kokoro/), on the same ggml.
+    kokoro/kokoro.cpp)
 target_compile_definitions(edge_tts PRIVATE QWEN_STATIC)
 target_include_directories(edge_tts PRIVATE "${QT}/src" "${QT}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(edge_tts PRIVATE ggml ggml-base ggml-cpu ggml-metal)
