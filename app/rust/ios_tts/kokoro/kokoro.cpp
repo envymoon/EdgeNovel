@@ -320,13 +320,37 @@ struct G {
         x = ggml_norm(ctx, x, eps);
         return ggml_add(ctx, ggml_mul(ctx, x, W(p + ".weight")), W(p + ".bias"));
     }
-    // Conv1d on x: [T, Cin] -> [T', Cout], weight [K, Cin, Cout].
+    // Conv1d on x: [T, Cin] -> [T', Cout], weight [K, Cin, Cout]. As matrix
+    // products over x laid [Cin, T], where the window of an output step is
+    // a run in memory: ggml's im2col runs a few threads per group on Metal,
+    // which kept an iPhone GPU busy for most of a sentence. Undilated, the
+    // windows overlap in one view and it is one product; dilated, one per tap.
     ggml_tensor * conv(const std::string & p, ggml_tensor * x, int s, int pad, int d) const {
         ggml_tensor * w = W(p + ".weight");
-        ggml_tensor * col = ggml_im2col(ctx, w, x, s, 0, pad, 0, d, 0, false,
-                                        w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
-        ggml_tensor * y = ggml_mul_mat(ctx, ggml_reshape_2d(ctx, col, col->ne[0], col->ne[1]),
-                                       ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1], w->ne[2]));
+        const int64_t K = w->ne[0], IC = w->ne[1], OC = w->ne[2];
+        if (x->ne[1] != IC || (d > 1 && s > 1)) throw std::string("unexpected convolution shape");
+        if (pad) x = ggml_pad_ext(ctx, x, pad, pad, 0, 0, 0, 0, 0, 0);
+        const int64_t OL = (x->ne[0] - d * (K - 1) - 1) / s + 1;
+        ggml_tensor * xt = ggml_cont(ctx, ggml_transpose(ctx, x));                // [IC, L]
+        ggml_tensor * wt = ggml_cont(ctx, ggml_permute(ctx, w, 1, 0, 2, 3));      // [IC, K, OC]
+        ggml_tensor * y;
+        if (d == 1) {
+            // Rows that overlap, which ggml_view_2d refuses: made a row, then
+            // given the rest.
+            ggml_tensor * col = ggml_view_2d(ctx, xt, K * IC, 1, s * xt->nb[1], 0);
+            col->ne[1] = OL;
+            col->nb[2] = col->nb[3] = col->nb[1] * OL;
+            y = ggml_mul_mat(ctx, ggml_reshape_2d(ctx, wt, K * IC, OC), col);       // [OC, OL]
+        } else {
+            y = nullptr;
+            for (int64_t i = 0; i < K; i++) {
+                ggml_tensor * wi = ggml_view_2d(ctx, wt, IC, OC, wt->nb[2], i * wt->nb[1]);
+                ggml_tensor * xi = ggml_view_2d(ctx, xt, IC, OL, xt->nb[1], i * d * xt->nb[1]);
+                ggml_tensor * yi = ggml_mul_mat(ctx, wi, xi);
+                y = y ? ggml_add(ctx, y, yi) : yi;
+            }
+        }
+        y = ggml_cont(ctx, ggml_transpose(ctx, y));  // [OL, OC]
         if (has(p + ".bias")) y = ggml_add(ctx, y, row(W(p + ".bias")));
         return y;
     }
