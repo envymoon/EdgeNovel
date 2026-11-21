@@ -24,8 +24,8 @@ HostedFile _data(String name, int bytes, String sha256, {bool cdn = false}) =>
 final dictionaryFiles = [
   _data(
     'word.json',
-    27499599,
-    '1e9a43c9adada412f21d0416a37242a2c2bea55adaf87d5648ab9b4116b7ed0c',
+    27354320,
+    '8ae3453eacc5b0f3fdfba47eac8bb686cd73914d278e8b851ae6ef81082f80e7',
   ),
   _data(
     'ci.json',
