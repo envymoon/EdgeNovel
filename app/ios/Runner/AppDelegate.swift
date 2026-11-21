@@ -1,3 +1,4 @@
+import ARKit
 import AVFoundation
 import BackgroundTasks
 import Flutter
@@ -854,11 +855,25 @@ final class NowPlaying: NSObject {
 /// Names: turnLeft / turnRight (head), nod, winkLeft / winkRight, blink (both
 /// eyes held shut), swipeLeft / swipeRight (a hand across the camera). Left
 /// and right are as on screen, the picture mirrored like a mirror.
-final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
+  ARSessionDelegate
+{
   static let shared = GestureWatch()
   var channel: FlutterMethodChannel?
 
   private let session = AVCaptureSession()
+  /// Phones with Face ID see the face by infrared, so in the dark too; the
+  /// hand is still looked for in the colour picture.
+  private let depth = ARFaceTrackingConfiguration.isSupported
+  private lazy var arSession: ARSession = {
+    let s = ARSession()
+    s.delegate = self
+    s.delegateQueue = queue
+    return s
+  }()
+  private var arRunning = false
+  /// Where the head rests, relative to the phone.
+  private var rest: simd_quatf?
   private let queue = DispatchQueue(label: "novel.gesture")
   private var configured = false
   /// Last asked for, on `queue`: a stop that overtakes a start still wins.
@@ -916,6 +931,10 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       queue.async {
         self.wanted = false
         if self.session.isRunning { self.session.stopRunning() }
+        if self.arRunning {
+          self.arSession.pause()
+          self.arRunning = false
+        }
       }
       result(nil)
     default:
@@ -929,6 +948,23 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
   private func begin() -> String? {
     guard wanted else { return nil }
+    if depth {
+      resetState()
+      if !arRunning {
+        let config = ARFaceTrackingConfiguration()
+        config.maximumNumberOfTrackedFaces = 1
+        config.isLightEstimationEnabled = false
+        // The slowest picture offered is plenty, and cheapest.
+        if let slow = ARFaceTrackingConfiguration.supportedVideoFormats.min(by: {
+          $0.framesPerSecond < $1.framesPerSecond
+        }) {
+          config.videoFormat = slow
+        }
+        arSession.run(config, options: [.resetTracking])
+        arRunning = true
+      }
+      return nil
+    }
     if !configured {
       guard
         let device = AVCaptureDevice.default(
@@ -968,16 +1004,109 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       }
       configured = true
     }
+    resetState()
+    if !session.isRunning { session.startRunning() }
+    return nil
+  }
+
+  private func resetState() {
     headArmed = true
     pitchBase = nil
+    rest = nil
     openLeft = 0
     openRight = 0
     shutLeft = nil
     shutRight = nil
     eyesArmed = true
     wrists = []
-    if !session.isRunning { session.startRunning() }
-    return nil
+  }
+
+  func session(_ session: ARSession, didUpdate frame: ARFrame) {
+    guard #available(iOS 15.0, *), arRunning else { return }
+    let now = Date()
+    if now.timeIntervalSince(lastFrame) < 0.1 { return }
+    lastFrame = now
+    var seenFace = false
+    if let face = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked {
+      seenFace = true
+      read(face: face, camera: frame.camera.transform, at: now)
+    } else {
+      rest = nil
+    }
+    var seenHand = false
+    if enabled.contains("swipeLeft") || enabled.contains("swipeRight") {
+      let handRequest = VNDetectHumanHandPoseRequest()
+      handRequest.maximumHandCount = 1
+      let handler = VNImageRequestHandler(
+        cvPixelBuffer: frame.capturedImage, orientation: .leftMirrored)
+      try? handler.perform([handRequest])
+      if let hand = handRequest.results?.first {
+        seenHand = true
+        read(hand: hand, at: now)
+      } else {
+        wrists.removeAll()
+      }
+    }
+    status(face: seenFace, hand: seenHand, at: now)
+  }
+
+  func session(_ session: ARSession, didFailWithError error: Error) {
+    arRunning = false
+  }
+
+  func sessionWasInterrupted(_ session: ARSession) {
+    rest = nil
+  }
+
+  /// The infrared face: how far the head has turned from where it rests,
+  /// and how shut each eye is.
+  private func read(face: ARFaceAnchor, camera: simd_float4x4, at now: Date) {
+    let toPhone = simd_mul(simd_inverse(camera), face.transform)
+    let turn = simd_quatf(
+      simd_float3x3(
+        simd_make_float3(toPhone.columns.0),
+        simd_make_float3(toPhone.columns.1),
+        simd_make_float3(toPhone.columns.2)))
+    let base = rest ?? turn
+    // Where the face points, seen from how it rests: +x is the face's own
+    // left, +y up, +z towards the phone.
+    let ahead = simd_act(simd_mul(base.inverse, turn), SIMD3<Float>(0, 0, 1))
+    let yaw = Double(atan2(ahead.x, ahead.z))
+    let pitch = Double(atan2(ahead.y, ahead.z))
+    if headArmed {
+      if yaw > 0.35 {
+        headArmed = false
+        fire("turnLeft", at: now)
+      } else if yaw < -0.35 {
+        headArmed = false
+        fire("turnRight", at: now)
+      } else if pitch < -0.3 {
+        headArmed = false
+        fire("nod", at: now)
+      }
+    } else if abs(yaw) < 0.15 && abs(pitch) < 0.12 {
+      headArmed = true
+    }
+    // The resting place follows slowly while the head is still.
+    if rest == nil {
+      rest = turn
+    } else if headArmed && abs(yaw) < 0.15 && abs(pitch) < 0.15 {
+      rest = simd_slerp(base, turn, 0.1)
+    }
+
+    guard headArmed, abs(yaw) < 0.2 else { return }
+    let left = face.blendShapes[.eyeBlinkLeft]?.doubleValue ?? 0
+    let right = face.blendShapes[.eyeBlinkRight]?.doubleValue ?? 0
+    eyes(leftShut: left > 0.6, rightShut: right > 0.6, at: now)
+  }
+
+  private func status(face: Bool, hand: Bool, at now: Date) {
+    if now.timeIntervalSince(lastStatus) > 0.5 {
+      lastStatus = now
+      DispatchQueue.main.async {
+        self.channel?.invokeMethod("seen", arguments: ["face": face, "hand": hand])
+      }
+    }
   }
 
   func captureOutput(
@@ -1010,12 +1139,7 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     } else {
       wrists.removeAll()
     }
-    if now.timeIntervalSince(lastStatus) > 0.5 {
-      lastStatus = now
-      DispatchQueue.main.async {
-        self.channel?.invokeMethod("seen", arguments: ["face": seenFace, "hand": seenHand])
-      }
-    }
+    status(face: seenFace, hand: seenHand, at: now)
   }
 
   private func fire(_ name: String, at now: Date) {
@@ -1059,8 +1183,11 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     openLeft = max(left, openLeft * 0.995)
     openRight = max(right, openRight * 0.995)
     guard openLeft > 0, openRight > 0 else { return }
-    let leftShut = left < openLeft * 0.5
-    let rightShut = right < openRight * 0.5
+    eyes(leftShut: left < openLeft * 0.5, rightShut: right < openRight * 0.5, at: now)
+  }
+
+  /// One shut a moment: a wink; both shut a longer moment: meant, not a blink.
+  private func eyes(leftShut: Bool, rightShut: Bool, at now: Date) {
     shutLeft = leftShut ? (shutLeft ?? now) : nil
     shutRight = rightShut ? (shutRight ?? now) : nil
     if !leftShut && !rightShut {
