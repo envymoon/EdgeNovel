@@ -18,6 +18,10 @@ class GestureTurn {
         case 'seen':
           final m = Map<String, dynamic>.from(call.arguments as Map);
           seen.value = (m['face'] == true, m['hand'] == true);
+          angles.value = (
+            (m['turn'] as num? ?? 0).toDouble(),
+            (m['nod'] as num? ?? 0).toDouble(),
+          );
       }
     });
   }
@@ -49,16 +53,23 @@ class GestureTurn {
   /// Whether a face and a hand are in view, said twice a second.
   final seen = ValueNotifier<(bool, bool)>((false, false));
 
+  /// How far the head is turned and dropped right now, in degrees.
+  final angles = ValueNotifier<(double, double)>((0, 0));
+
   var _users = 0;
 
   /// Start the camera for one more user, looking for [gestures] only (all
   /// when null); the reason it would not, or null.
-  Future<String?> start([Iterable<String>? gestures]) async {
+  Future<String?> start(
+    Map<String, int> lines, [
+    Iterable<String>? gestures,
+  ]) async {
     if (!available) return '此设备暂不支持';
     _users++;
     try {
       await _channel.invokeMethod('start', {
         'gestures': [...(gestures ?? names.keys)],
+        ...lines,
       });
       return null;
     } on PlatformException catch (e) {
@@ -68,10 +79,13 @@ class GestureTurn {
   }
 
   /// Look for these gestures from now on.
-  Future<void> watch(Iterable<String> gestures) async {
+  Future<void> watch(Map<String, int> lines, Iterable<String> gestures) async {
     if (_users == 0) return;
     try {
-      await _channel.invokeMethod('watch', {'gestures': [...gestures]});
+      await _channel.invokeMethod('watch', {
+        'gestures': [...gestures],
+        ...lines,
+      });
     } on PlatformException {
       // Stopped meanwhile.
     }

@@ -118,13 +118,19 @@ class _ReaderPageState extends State<ReaderPage> {
         widget.settings.gestureTurn &&
         actions.isNotEmpty;
     if (want == _gestureOn) {
-      if (want) unawaited(GestureTurn.instance.watch(actions.keys));
+      if (want) {
+        unawaited(
+          GestureTurn.instance.watch(widget.settings.gestureLines, actions.keys),
+        );
+      }
       return;
     }
     _gestureOn = want;
     if (want) {
       unawaited(
-        GestureTurn.instance.start(actions.keys).then((failed) {
+        GestureTurn.instance
+            .start(widget.settings.gestureLines, actions.keys)
+            .then((failed) {
           if (failed != null) _gestureOn = false;
         }),
       );

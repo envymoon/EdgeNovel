@@ -27,11 +27,26 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
   void initState() {
     super.initState();
     GestureTurn.instance.last.addListener(_onGesture);
+    widget.settings.addListener(_onLines);
     unawaited(_start());
   }
 
+  /// A slider moved: the camera counts by it at once.
+  void _onLines() {
+    if (_started) {
+      unawaited(
+        GestureTurn.instance.watch(
+          widget.settings.gestureLines,
+          GestureTurn.names.keys,
+        ),
+      );
+    }
+  }
+
   Future<void> _start() async {
-    final failed = await GestureTurn.instance.start();
+    final failed = await GestureTurn.instance.start(
+      widget.settings.gestureLines,
+    );
     if (!mounted) {
       if (failed == null) unawaited(GestureTurn.instance.stop());
       return;
@@ -46,6 +61,7 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
   void dispose() {
     _fade?.cancel();
     GestureTurn.instance.last.removeListener(_onGesture);
+    widget.settings.removeListener(_onLines);
     if (_started) unawaited(GestureTurn.instance.stop());
     super.dispose();
   }
@@ -113,6 +129,14 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
                             style: TextStyle(color: t.muted, fontSize: 12),
                           ),
                         ),
+                        const SizedBox(height: 4),
+                        ValueListenableBuilder(
+                          valueListenable: GestureTurn.instance.angles,
+                          builder: (context, a, _) => Text(
+                            '转头 ${a.$1.round()}°   低头 ${a.$2.round()}°',
+                            style: TextStyle(color: t.muted, fontSize: 12),
+                          ),
+                        ),
                       ],
                     ),
             ),
@@ -141,11 +165,85 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            Material(
+              clipBehavior: Clip.antiAlias,
+              color: t.surface,
+              shape: RoundedRectangleBorder(
+                side: BorderSide(color: t.outline),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  _slider(
+                    t,
+                    '转头角度',
+                    '${s.gestureTurnAngle}°',
+                    s.gestureTurnAngle,
+                    8,
+                    40,
+                    (v) => s.setGestureLines(turn: v),
+                  ),
+                  Divider(height: 1, color: t.outline),
+                  _slider(
+                    t,
+                    '点头角度',
+                    '${s.gestureNodAngle}°',
+                    s.gestureNodAngle,
+                    5,
+                    30,
+                    (v) => s.setGestureLines(nod: v),
+                  ),
+                  Divider(height: 1, color: t.outline),
+                  _slider(
+                    t,
+                    '闭眼时长',
+                    '${(s.gestureEyeHold / 1000).toStringAsFixed(2)} 秒',
+                    s.gestureEyeHold ~/ 50,
+                    4,
+                    30,
+                    (v) => s.setGestureLines(hold: v * 50),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+
+  Widget _slider(
+    ReadingTheme t,
+    String title,
+    String value,
+    int at,
+    int min,
+    int max,
+    ValueChanged<int> onChanged,
+  ) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(title, style: TextStyle(color: t.text, fontSize: 14)),
+            ),
+            Text(value, style: TextStyle(color: t.muted, fontSize: 13)),
+          ],
+        ),
+        Slider(
+          value: at.clamp(min, max).toDouble(),
+          min: min.toDouble(),
+          max: max.toDouble(),
+          divisions: max - min,
+          onChanged: (v) => onChanged(v.round()),
+        ),
+      ],
+    ),
+  );
 
   /// One gesture: on or off, and when on, which way it turns.
   Widget _gesture(ReadingTheme t, ReadingSettings s, String name) {

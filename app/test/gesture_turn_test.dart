@@ -72,7 +72,10 @@ void main() {
     expect(settings.gestureActions.containsKey('swipeRight'), isFalse);
 
     await tester.pumpWidget(const SizedBox());
-    expect(calls, ['start', 'stop']);
+    // Each change is sent while it runs.
+    expect(calls.toSet(), {'start', 'watch', 'stop'});
+    expect(calls.first, 'start');
+    expect(calls.last, 'stop');
     debugDefaultTargetPlatformOverride = null;
   });
 }

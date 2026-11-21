@@ -236,6 +236,12 @@ class ReadingSettings extends ChangeNotifier {
   bool gestureTurn = false;
   Map<String, int> gestureActions = {'turnRight': 1, 'turnLeft': -1};
 
+  /// How far the head turns or drops (degrees) and how long an eye stays
+  /// shut (milliseconds) before it counts.
+  int gestureTurnAngle = 20;
+  int gestureNodAngle = 12;
+  int gestureEyeHold = 450;
+
   /// The light theme the night switch goes back to.
   int dayThemeIndex = defaultThemeIndex;
 
@@ -334,6 +340,9 @@ class ReadingSettings extends ChangeNotifier {
           pair.split(':')[0]: int.tryParse(pair.split(':')[1]) ?? 1,
       };
     }
+    s.gestureTurnAngle = p.getInt('gestureTurnAngle') ?? s.gestureTurnAngle;
+    s.gestureNodAngle = p.getInt('gestureNodAngle') ?? s.gestureNodAngle;
+    s.gestureEyeHold = p.getInt('gestureEyeHold') ?? s.gestureEyeHold;
     s.dayThemeIndex = (p.getInt('dayThemeIndex') ?? s.dayThemeIndex).clamp(
       0,
       readingThemes.length - 1,
@@ -438,6 +447,29 @@ class ReadingSettings extends ChangeNotifier {
     _prefs?.setBool('gestureTurn', value);
     notifyListeners();
   }
+
+  void setGestureLines({int? turn, int? nod, int? hold}) {
+    if (turn != null) {
+      gestureTurnAngle = turn;
+      _prefs?.setInt('gestureTurnAngle', turn);
+    }
+    if (nod != null) {
+      gestureNodAngle = nod;
+      _prefs?.setInt('gestureNodAngle', nod);
+    }
+    if (hold != null) {
+      gestureEyeHold = hold;
+      _prefs?.setInt('gestureEyeHold', hold);
+    }
+    notifyListeners();
+  }
+
+  /// What the camera is told to count, as [GestureTurn] sends it.
+  Map<String, int> get gestureLines => {
+    'turn': gestureTurnAngle,
+    'nod': gestureNodAngle,
+    'hold': gestureEyeHold,
+  };
 
   /// Switch a gesture on to turn [way] (1 forward, -1 back), or off with 0.
   void setGestureAction(String name, int way) {

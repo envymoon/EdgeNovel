@@ -881,6 +881,14 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
   /// The gestures looked for, on `queue`. Nothing else is fired, and with no
   /// wave among them the hand is not looked for at all.
   private var enabled: Set<String> = []
+  /// The reader's own lines, on `queue`: how far the head turns or drops
+  /// (radians) and how long an eye stays shut (seconds) to count.
+  private var turnLine = 0.35
+  private var nodLine = 0.21
+  private var eyeHold = 0.45
+  /// What was measured last, said with the status so the lines can be set.
+  private var lastTurn = 0.0
+  private var lastNod = 0.0
   private var lastFrame = Date.distantPast
   private var lastFire = Date.distantPast
   private var lastStatus = Date.distantPast
@@ -905,9 +913,11 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         return
       }
       let gestures = GestureWatch.gestures(call)
+      let lines = GestureWatch.lines(call)
       queue.async {
         self.wanted = true
         self.enabled = gestures
+        self.setLines(lines)
       }
       AVCaptureDevice.requestAccess(for: .video) { granted in
         guard granted else {
@@ -925,7 +935,11 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       }
     case "watch":
       let gestures = GestureWatch.gestures(call)
-      queue.async { self.enabled = gestures }
+      let lines = GestureWatch.lines(call)
+      queue.async {
+        self.enabled = gestures
+        self.setLines(lines)
+      }
       result(nil)
     case "stop":
       queue.async {
@@ -944,6 +958,19 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
   private static func gestures(_ call: FlutterMethodCall) -> Set<String> {
     Set((call.arguments as? [String: Any])?["gestures"] as? [String] ?? [])
+  }
+
+  /// Degrees for the head, milliseconds for the eyes.
+  private static func lines(_ call: FlutterMethodCall) -> (Double?, Double?, Double?) {
+    let a = call.arguments as? [String: Any]
+    func n(_ k: String) -> Double? { (a?[k] as? NSNumber)?.doubleValue }
+    return (n("turn"), n("nod"), n("hold"))
+  }
+
+  private func setLines(_ l: (Double?, Double?, Double?)) {
+    if let t = l.0 { turnLine = t * .pi / 180 }
+    if let n = l.1 { nodLine = n * .pi / 180 }
+    if let h = l.2 { eyeHold = h / 1000 }
   }
 
   private func begin() -> String? {
@@ -1073,38 +1100,44 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     let ahead = simd_act(simd_mul(base.inverse, turn), SIMD3<Float>(0, 0, 1))
     let yaw = Double(atan2(ahead.x, ahead.z))
     let pitch = Double(atan2(ahead.y, ahead.z))
+    lastTurn = abs(yaw)
+    lastNod = max(0, -pitch)
     if headArmed {
-      if yaw > 0.35 {
+      if yaw > turnLine {
         headArmed = false
         fire("turnLeft", at: now)
-      } else if yaw < -0.35 {
+      } else if yaw < -turnLine {
         headArmed = false
         fire("turnRight", at: now)
-      } else if pitch < -0.3 {
+      } else if pitch < -nodLine {
         headArmed = false
         fire("nod", at: now)
       }
-    } else if abs(yaw) < 0.15 && abs(pitch) < 0.12 {
+    } else if abs(yaw) < turnLine * 0.4 && abs(pitch) < nodLine * 0.4 {
       headArmed = true
     }
-    // The resting place follows slowly while the head is still.
+    // The resting place follows, slowly, only a head that is quite still,
+    // so a slow nod is not followed down.
     if rest == nil {
       rest = turn
-    } else if headArmed && abs(yaw) < 0.15 && abs(pitch) < 0.15 {
-      rest = simd_slerp(base, turn, 0.1)
+    } else if headArmed && abs(yaw) < turnLine * 0.25 && abs(pitch) < nodLine * 0.25 {
+      rest = simd_slerp(base, turn, 0.03)
     }
 
-    guard headArmed, abs(yaw) < 0.2 else { return }
+    guard headArmed, abs(yaw) < turnLine * 0.6 else { return }
     let left = face.blendShapes[.eyeBlinkLeft]?.doubleValue ?? 0
     let right = face.blendShapes[.eyeBlinkRight]?.doubleValue ?? 0
     eyes(leftShut: left > 0.6, rightShut: right > 0.6, at: now)
   }
 
   private func status(face: Bool, hand: Bool, at now: Date) {
-    if now.timeIntervalSince(lastStatus) > 0.5 {
+    if now.timeIntervalSince(lastStatus) > 0.2 {
       lastStatus = now
+      let turn = face ? lastTurn * 180 / .pi : 0
+      let nod = face ? lastNod * 180 / .pi : 0
       DispatchQueue.main.async {
-        self.channel?.invokeMethod("seen", arguments: ["face": face, "hand": hand])
+        self.channel?.invokeMethod(
+          "seen", arguments: ["face": face, "hand": hand, "turn": turn, "nod": nod])
       }
     }
   }
@@ -1154,26 +1187,29 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
   private func read(face: VNFaceObservation, at now: Date) {
     let yaw = face.yaw?.doubleValue ?? 0
     let pitch = face.pitch?.doubleValue ?? 0
+    let drop = pitchBase.map { abs(pitch - $0) } ?? 0
+    lastTurn = abs(yaw)
+    lastNod = drop
     if headArmed {
-      if yaw > 0.35 {
+      if yaw > turnLine {
         headArmed = false
         fire("turnRight", at: now)
-      } else if yaw < -0.35 {
+      } else if yaw < -turnLine {
         headArmed = false
         fire("turnLeft", at: now)
-      } else if let base = pitchBase, abs(pitch - base) > 0.3 {
+      } else if drop > nodLine {
         headArmed = false
         fire("nod", at: now)
       }
-    } else if abs(yaw) < 0.15 && (pitchBase.map { abs(pitch - $0) < 0.12 } ?? true) {
+    } else if abs(yaw) < turnLine * 0.4 && drop < nodLine * 0.4 {
       headArmed = true
     }
-    // Where the head rests, followed slowly while it is still.
-    if headArmed && abs(yaw) < 0.15 {
-      pitchBase = pitchBase.map { $0 * 0.9 + pitch * 0.1 } ?? pitch
+    // Where the head rests, followed slowly while it is quite still.
+    if headArmed && abs(yaw) < turnLine * 0.25 && drop < nodLine * 0.25 {
+      pitchBase = pitchBase.map { $0 * 0.97 + pitch * 0.03 } ?? pitch
     }
 
-    guard headArmed, abs(yaw) < 0.2,
+    guard headArmed, abs(yaw) < turnLine * 0.6,
       let leftEye = face.landmarks?.leftEye,
       let rightEye = face.landmarks?.rightEye
     else { return }
@@ -1197,14 +1233,14 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     guard eyesArmed else { return }
     // A blink is over in a tenth of a second; held this long it is meant.
     if let l = shutLeft, let r = shutRight {
-      if now.timeIntervalSince(max(l, r)) > 0.6 {
+      if now.timeIntervalSince(max(l, r)) > eyeHold {
         eyesArmed = false
         fire("blink", at: now)
       }
-    } else if let l = shutLeft, now.timeIntervalSince(l) > 0.35 {
+    } else if let l = shutLeft, now.timeIntervalSince(l) > eyeHold {
       eyesArmed = false
       fire("winkLeft", at: now)
-    } else if let r = shutRight, now.timeIntervalSince(r) > 0.35 {
+    } else if let r = shutRight, now.timeIntervalSince(r) > eyeHold {
       eyesArmed = false
       fire("winkRight", at: now)
     }
