@@ -11,6 +11,8 @@ import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'bloom.dart';
+import 'dictionary.dart';
+import 'dictionary_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
@@ -26,6 +28,7 @@ import 'platform_support.dart';
 import 'reader_state.dart';
 import 'search_page.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/dict.dart';
 import 'src/rust/api/image.dart';
 import 'src/rust/api/stats.dart' as stats;
 import 'text_cleanup_page.dart';
@@ -152,6 +155,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   void dispose() {
+    _lookupTimer?.cancel();
     _unlistenGesture();
     widget.settings.removeListener(_syncGesture);
     if (_gestureOn) unawaited(GestureTurn.instance.stop());
@@ -189,6 +193,10 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _closing = false;
   bool _annotationMode = false;
   AnnotationDraft? _annotationDraft;
+
+  /// What the dictionary says about the selection, looked up once it rests.
+  List<DictEntry> _found = const [];
+  Timer? _lookupTimer;
   bool _chromeVisible = true;
 
   void _toggleChrome() {
@@ -429,6 +437,19 @@ class _ReaderPageState extends State<ReaderPage> {
     ],
   );
 
+  /// 字典: the text becomes selectable; a selection is looked up, and can be
+  /// kept as a 标注.
+  Future<void> _startSelecting() async {
+    if (_tts.playing || _tts.hasQueue) await _tts.stop();
+    if (!mounted) return;
+    setState(() {
+      _annotationMode = true;
+      _chromeVisible = true;
+    });
+    _setAnnotationDraft(null);
+  }
+
+  /// The 标注 kept so far.
   Future<void> _openAnnotations() async {
     final start = await Navigator.push<bool>(
       context,
@@ -437,26 +458,45 @@ class _ReaderPageState extends State<ReaderPage> {
             AnnotationPage(reader: widget.reader, settings: widget.settings),
       ),
     );
-    if (start == true && mounted) {
-      if (_tts.playing || _tts.hasQueue) await _tts.stop();
-      setState(() {
-        _annotationMode = true;
-        _annotationDraft = null;
-        _chromeVisible = true;
-      });
-    }
+    if (start == true && mounted) await _startSelecting();
+  }
+
+  Future<void> _openDictionary() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DictionaryPage(settings: widget.settings),
+      ),
+    );
+    if (mounted) await _lookUp();
   }
 
   void _setAnnotationDraft(AnnotationDraft? draft) {
     if (!_annotationMode || _annotationDraft == draft) return;
-    setState(() => _annotationDraft = draft);
+    setState(() {
+      _annotationDraft = draft;
+      if (draft == null) _found = const [];
+    });
+    _lookupTimer?.cancel();
+    if (draft != null) {
+      _lookupTimer = Timer(const Duration(milliseconds: 250), _lookUp);
+    }
+  }
+
+  Future<void> _lookUp() async {
+    final draft = _annotationDraft;
+    if (draft == null) return;
+    final found = await Dictionary.instance.lookup(draft.quote);
+    if (mounted && _annotationDraft == draft) setState(() => _found = found);
   }
 
   void _exitAnnotationMode() {
     if (!_annotationMode) return;
+    _lookupTimer?.cancel();
     setState(() {
       _annotationMode = false;
       _annotationDraft = null;
+      _found = const [];
       _chromeVisible = true;
     });
   }
@@ -471,7 +511,7 @@ class _ReaderPageState extends State<ReaderPage> {
       paragraph: draft.paragraph,
       draft: draft,
     );
-    if (mounted) setState(() => _annotationDraft = null);
+    if (mounted) _setAnnotationDraft(null);
   }
 
   /// The selection is the site's, not the book's: 文本整理 finds it, and the
@@ -480,7 +520,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final draft = _annotationDraft;
     final book = _currentBook;
     if (draft == null || book == null) return;
-    setState(() => _annotationDraft = null);
+    _setAnnotationDraft(null);
     _openPage(
       TextCleanupPage(
         book: book,
@@ -902,13 +942,14 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _readerIconButton({
     required String tooltip,
-    required IconData icon,
+    IconData? icon,
+    Widget? glyph,
     required Color color,
     required VoidCallback onPressed,
     required bool compact,
   }) => IconButton(
     tooltip: tooltip,
-    icon: Icon(icon),
+    icon: glyph ?? Icon(icon),
     color: color,
     padding: EdgeInsets.zero,
     constraints: BoxConstraints.tightFor(width: compact ? 40 : 48, height: 48),
@@ -968,8 +1009,8 @@ class _ReaderPageState extends State<ReaderPage> {
         icon: Icon(Icons.more_horiz, color: t.muted),
         onSelected: (value) {
           switch (value) {
-            case 'annotations':
-              _openAnnotations();
+            case 'dictionary':
+              _startSelecting();
               return;
             case 'tts':
               AppPlatformSupport.speaksByChapter
@@ -986,10 +1027,10 @@ class _ReaderPageState extends State<ReaderPage> {
         },
         itemBuilder: (_) => [
           const PopupMenuItem(
-            value: 'annotations',
+            value: 'dictionary',
             child: ListTile(
-              leading: Icon(Icons.comment_outlined),
-              title: Text('标注'),
+              leading: SizedBox(width: 24, child: Center(child: _Zi())),
+              title: Text('字典'),
               contentPadding: EdgeInsets.zero,
             ),
           ),
@@ -1117,12 +1158,10 @@ class _ReaderPageState extends State<ReaderPage> {
                           _narrowReaderMenu(t)
                         else ...[
                           _readerIconButton(
-                            tooltip: context.tr('标注'),
-                            icon: Icons.comment_outlined,
-                            color: widget.reader.annotations.isEmpty
-                                ? t.muted
-                                : t.text,
-                            onPressed: _openAnnotations,
+                            tooltip: context.tr('字典'),
+                            glyph: const _Zi(),
+                            color: t.muted,
+                            onPressed: _startSelecting,
                             compact: compact,
                           ),
                           if (AppPlatformSupport.hasReadAloud)
@@ -1309,28 +1348,49 @@ class _ReaderPageState extends State<ReaderPage> {
               top: BorderSide(color: t.muted.withValues(alpha: 0.16)),
             ),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.text_fields, size: 17, color: t.muted),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  selected ? '已选择正文' : '未选择正文',
-                  style: TextStyle(color: t.muted, fontSize: 12.5),
+              if (_found.isNotEmpty)
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
+                  child: SingleChildScrollView(
+                    child: DictionaryEntries(entries: _found, theme: t),
+                  ),
+                )
+              else if (selected && !Dictionary.instance.installed.value)
+                TextButton(
+                  onPressed: _openDictionary,
+                  child: const Text('下载字典'),
                 ),
-              ),
-              TextButton(
-                onPressed: _exitAnnotationMode,
-                child: const Text('退出'),
-              ),
-              TextButton(
-                onPressed: selected ? _markAsAd : null,
-                child: const Text('标为广告'),
-              ),
-              const SizedBox(width: 4),
-              FilledButton.tonal(
-                onPressed: selected ? _saveAnnotationDraft : null,
-                child: const Text('添加标注'),
+              Row(
+                children: [
+                  IconButton(
+                    tooltip: context.tr('标注'),
+                    icon: const Icon(Icons.comment_outlined),
+                    color: widget.reader.annotations.isEmpty
+                        ? t.muted
+                        : t.text,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _openAnnotations,
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _exitAnnotationMode,
+                    child: const Text('退出'),
+                  ),
+                  TextButton(
+                    onPressed: selected ? _markAsAd : null,
+                    child: const Text('标为广告'),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton.tonal(
+                    onPressed: selected ? _saveAnnotationDraft : null,
+                    child: const Text('添加标注'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2160,6 +2220,26 @@ class _Stepper extends StatelessWidget {
         ),
         OutlinedButton(style: style, onPressed: onMore, child: more),
       ],
+    );
+  }
+}
+
+/// 字典's mark: the character itself, in the icon's colour and size.
+class _Zi extends StatelessWidget {
+  const _Zi();
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = IconTheme.of(context);
+    return Text(
+      '字',
+      translate: false,
+      style: TextStyle(
+        color: icon.color,
+        fontSize: (icon.size ?? 24) * 0.8,
+        fontWeight: FontWeight.w600,
+        height: 1,
+      ),
     );
   }
 }

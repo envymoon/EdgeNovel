@@ -305,6 +305,7 @@ const _english = <String, String>{
   '标注': 'Annotations',
   '添加标注': 'Add annotation',
   '字典': 'Dictionary',
+  '下载字典': 'Download dictionary',
   '字、词、成语': 'Characters, words, idioms',
   '删除字典？': 'Delete the dictionary?',
   '正在下载字典': 'Downloading the dictionary',

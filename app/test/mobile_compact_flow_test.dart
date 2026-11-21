@@ -327,7 +327,7 @@ void main() {
 
     expect(find.byTooltip('目录'), findsOneWidget);
     expect(find.byTooltip('阅读助手'), findsOneWidget);
-    expect(find.byTooltip('标注'), findsOneWidget);
+    expect(find.byTooltip('字典'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('目录'));
@@ -820,14 +820,20 @@ void main() {
       ),
     );
     await tester.pump();
+    await tester.tap(find.byTooltip('字典'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('退出'), findsOneWidget);
+    // The 标注 kept so far open from the same bar.
     await tester.tap(find.byTooltip('标注'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('选择正文'), findsOneWidget);
     await tester.tap(find.byTooltip('选择正文'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('未选择正文'), findsOneWidget);
+    await tester.pumpAndSettle();
     expect(find.text('退出'), findsOneWidget);
+    await tester.tap(find.text('退出'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('字典'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
