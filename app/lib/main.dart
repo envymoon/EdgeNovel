@@ -9,6 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'data_guard.dart';
+import 'dictionary.dart';
 import 'font_manager.dart';
 import 'keep_alive.dart';
 import 'ai_runtime.dart';
@@ -89,6 +90,7 @@ Future<void> main() async {
     }
   }
   await ShelfCategories.instance.initialize();
+  await Dictionary.instance.check();
   await AiRuntimeSettings.instance.initialize(
     deviceStatus: services.deviceStatus,
   );

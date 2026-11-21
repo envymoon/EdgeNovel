@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
+import 'dictionary.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
+import 'src/rust/api/dict.dart';
 import 'theme.dart';
 
 class AnnotationDraft {
@@ -31,6 +33,9 @@ Future<void> showAnnotationEditor(
 }) async {
   final t = settings.theme;
   final controller = TextEditingController(text: annotation?.body ?? '');
+  final quote = annotation?.quote ?? draft?.quote ?? paragraph.text;
+  final looking = Dictionary.instance.installed.value;
+  final entries = Dictionary.instance.lookup(quote);
   final action = await showDialog<String>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -54,15 +59,32 @@ Future<void> showAnnotationEditor(
               ),
               child: SingleChildScrollView(
                 child: Text(
-                  annotation?.quote ?? draft?.quote ?? paragraph.text,
+                  quote,
                   style: TextStyle(color: t.muted, fontSize: 12, height: 1.5),
                 ),
               ),
             ),
+            if (looking)
+              FutureBuilder(
+                future: entries,
+                builder: (context, snap) {
+                  final found = snap.data ?? const <DictEntry>[];
+                  if (found.isEmpty) return const SizedBox.shrink();
+                  return Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    margin: const EdgeInsets.only(top: 10),
+                    child: SingleChildScrollView(
+                      child: DictionaryEntries(entries: found, theme: t),
+                    ),
+                  );
+                },
+              ),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
-              autofocus: true,
+              // With the dictionary there, the selection may be only to look
+              // it up: the keyboard waits for a tap.
+              autofocus: !looking,
               maxLength: 500,
               minLines: 3,
               maxLines: 7,
@@ -366,4 +388,57 @@ class AnnotationPage extends StatelessWidget {
       },
     );
   }
+}
+
+/// What the dictionary says, as shown under the selection.
+class DictionaryEntries extends StatelessWidget {
+  const DictionaryEntries({
+    super.key,
+    required this.entries,
+    required this.theme,
+  });
+
+  final List<DictEntry> entries;
+  final ReadingTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = theme;
+    final body = TextStyle(color: t.text, fontSize: 13, height: 1.55);
+    final head = body.copyWith(fontWeight: FontWeight.w600);
+    final note = TextStyle(color: t.muted, fontSize: 12, height: 1.5);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final e in entries) ...[
+          if (e != entries.first) const SizedBox(height: 10),
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: e.word, style: head.copyWith(fontSize: 15)),
+                if (e.pinyin.isNotEmpty && e.kind != DictKind.zi)
+                  TextSpan(text: '  ${e.pinyin}', style: note),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          for (final line in e.body.split('\n'))
+            Text(
+              line,
+              style: e.kind == DictKind.zi && _reading(e.word, line)
+                  ? head
+                  : body,
+            ),
+          if (e.source.isNotEmpty) Text('出处：${e.source}', style: note),
+          if (e.example.isNotEmpty) Text('例：${e.example}', style: note),
+        ],
+      ],
+    );
+  }
+
+  /// `行xíng`: a reading, which starts its meanings.
+  static bool _reading(String word, String line) =>
+      line.startsWith(word) &&
+      line.length < word.length + 10 &&
+      !line.contains(RegExp(r'[㐀-鿿]'), word.length);
 }

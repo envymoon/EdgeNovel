@@ -30,6 +30,7 @@ const storageKinds = <StorageKind>[
   StorageKind('书籍', ['books']),
   StorageKind('书架与阅读数据', ['library.db', 'library.db-wal', 'library.db-shm']),
   StorageKind('字体', ['fonts']),
+  StorageKind('字典', ['dict']),
   StorageKind('AI 模型与数据', ['ai']),
   StorageKind('语音模型', ['tts']),
   StorageKind('生图模型', ['image']),

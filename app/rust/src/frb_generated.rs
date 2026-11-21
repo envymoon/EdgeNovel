@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1666381092;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -303270792;
 
 // Section: executor
 
@@ -1365,6 +1365,73 @@ fn wire__crate__api__ai__describe_people_impl(
                         api_names,
                         api_sink,
                     )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__dict__dict_build_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dict_build",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::dict::dict_build(api_dir)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__dict__dict_lookup_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dict_lookup",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_text = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::dict::dict_lookup(api_path, api_text)?;
                     Ok(output_ok)
                 })())
             }
@@ -4481,6 +4548,39 @@ impl SseDecode for crate::api::ai::DescribeProgress {
     }
 }
 
+impl SseDecode for crate::api::dict::DictEntry {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <crate::api::dict::DictKind>::sse_decode(deserializer);
+        let mut var_word = <String>::sse_decode(deserializer);
+        let mut var_pinyin = <String>::sse_decode(deserializer);
+        let mut var_body = <String>::sse_decode(deserializer);
+        let mut var_source = <String>::sse_decode(deserializer);
+        let mut var_example = <String>::sse_decode(deserializer);
+        return crate::api::dict::DictEntry {
+            kind: var_kind,
+            word: var_word,
+            pinyin: var_pinyin,
+            body: var_body,
+            source: var_source,
+            example: var_example,
+        };
+    }
+}
+
+impl SseDecode for crate::api::dict::DictKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::dict::DictKind::Zi,
+            1 => crate::api::dict::DictKind::Ci,
+            2 => crate::api::dict::DictKind::Chengyu,
+            _ => unreachable!("Invalid variant for DictKind: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::source::DownloadProgress {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4772,6 +4872,18 @@ impl SseDecode for Vec<crate::api::image::CoverTagGroup> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::image::CoverTagGroup>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::dict::DictEntry> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::dict::DictEntry>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -5717,91 +5829,93 @@ fn pde_ffi_dispatcher_primary_impl(
         37 => wire__crate__api__tts__delete_tts_engine_impl(port, ptr, rust_vec_len, data_len),
         38 => wire__crate__api__tts__delete_tts_voice_impl(port, ptr, rust_vec_len, data_len),
         39 => wire__crate__api__ai__describe_people_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__source__download_book_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__image__draw_cover_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__image__draw_plates_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__book__drop_book_cache_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__ai__drop_index_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__book__drop_summaries_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__ai__enrich_book_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__cleanup__find_cleanup_impl(port, ptr, rust_vec_len, data_len),
-        48 => {
+        40 => wire__crate__api__dict__dict_build_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__dict__dict_lookup_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__source__download_book_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__image__draw_cover_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__image__draw_plates_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__book__drop_book_cache_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__ai__drop_index_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__book__drop_summaries_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__ai__enrich_book_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__cleanup__find_cleanup_impl(port, ptr, rust_vec_len, data_len),
+        50 => {
             wire__crate__api__cleanup__find_cleanup_phrase_impl(port, ptr, rust_vec_len, data_len)
         }
-        49 => wire__crate__api__book__forget_cast_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__ai__forget_relations_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__image__image_status_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__source__import_sources_impl(port, ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__source__import_sources_from_url_impl(
+        51 => wire__crate__api__book__forget_cast_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__ai__forget_relations_impl(port, ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__image__image_status_impl(port, ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__source__import_sources_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__source__import_sources_from_url_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__ai__index_book_impl(port, ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__ai__index_status_impl(port, ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__ai__init_ai_impl(port, ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__image__init_image_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__book__init_store_impl(port, ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__tts__init_tts_impl(port, ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__ai__label_relations_impl(port, ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__ai__landmines_impl(port, ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__book__list_annotations_impl(port, ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__book__list_books_impl(port, ptr, rust_vec_len, data_len),
-        66 => {
+        57 => wire__crate__api__ai__index_book_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__ai__index_status_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__ai__init_ai_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__image__init_image_impl(port, ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__book__init_store_impl(port, ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__tts__init_tts_impl(port, ptr, rust_vec_len, data_len),
+        64 => wire__crate__api__ai__label_relations_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__ai__landmines_impl(port, ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__book__list_annotations_impl(port, ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__book__list_books_impl(port, ptr, rust_vec_len, data_len),
+        68 => {
             wire__crate__api__book__list_completed_chapters_impl(port, ptr, rust_vec_len, data_len)
         }
-        67 => wire__crate__api__book__list_events_impl(port, ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__source__list_sources_impl(port, ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__book__log_event_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__stats__log_reading_window_impl(port, ptr, rust_vec_len, data_len),
-        71 => {
+        69 => wire__crate__api__book__list_events_impl(port, ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__source__list_sources_impl(port, ptr, rust_vec_len, data_len),
+        71 => wire__crate__api__book__log_event_impl(port, ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__stats__log_reading_window_impl(port, ptr, rust_vec_len, data_len),
+        73 => {
             wire__crate__api__book__mark_chapter_completed_impl(port, ptr, rust_vec_len, data_len)
         }
-        72 => wire__crate__api__book__open_book_impl(port, ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__stats__pace_speed_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__book__place_atlas_impl(port, ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__image__plate_chapters_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__image__plate_path_impl(port, ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__image__plates_drawn_impl(port, ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__tts__prepare_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
-        82 => {
+        74 => wire__crate__api__book__open_book_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__stats__pace_speed_impl(port, ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__book__place_atlas_impl(port, ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__image__plate_chapters_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__image__plate_path_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__image__plates_drawn_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__tts__prepare_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__source__probe_offers_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__stats__reader_portrait_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__stats__reading_insights_impl(port, ptr, rust_vec_len, data_len),
+        84 => {
             wire__crate__api__book__relationship_structure_impl(port, ptr, rust_vec_len, data_len)
         }
-        83 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__book__remove_person_impl(port, ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
-        87 => {
+        85 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__book__remove_person_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
+        89 => {
             wire__crate__api__cleanup__restore_original_text_impl(port, ptr, rust_vec_len, data_len)
         }
-        88 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
-        90 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
-        97 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
-        101 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
-        102 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
-        104 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
-        105 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
-        106 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
-        107 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
-        108 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
-        109 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
-        110 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
+        103 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
+        105 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
+        106 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
+        107 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
+        108 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
+        109 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
+        110 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
+        111 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
+        112 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -5814,7 +5928,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        51 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6320,6 +6434,45 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::ai::DescribeProgress>
     for crate::api::ai::DescribeProgress
 {
     fn into_into_dart(self) -> crate::api::ai::DescribeProgress {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dict::DictEntry {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.word.into_into_dart().into_dart(),
+            self.pinyin.into_into_dart().into_dart(),
+            self.body.into_into_dart().into_dart(),
+            self.source.into_into_dart().into_dart(),
+            self.example.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::dict::DictEntry {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dict::DictEntry>
+    for crate::api::dict::DictEntry
+{
+    fn into_into_dart(self) -> crate::api::dict::DictEntry {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dict::DictKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Zi => 0.into_dart(),
+            Self::Ci => 1.into_dart(),
+            Self::Chengyu => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::dict::DictKind {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dict::DictKind> for crate::api::dict::DictKind {
+    fn into_into_dart(self) -> crate::api::dict::DictKind {
         self
     }
 }
@@ -7470,6 +7623,35 @@ impl SseEncode for crate::api::ai::DescribeProgress {
     }
 }
 
+impl SseEncode for crate::api::dict::DictEntry {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::dict::DictKind>::sse_encode(self.kind, serializer);
+        <String>::sse_encode(self.word, serializer);
+        <String>::sse_encode(self.pinyin, serializer);
+        <String>::sse_encode(self.body, serializer);
+        <String>::sse_encode(self.source, serializer);
+        <String>::sse_encode(self.example, serializer);
+    }
+}
+
+impl SseEncode for crate::api::dict::DictKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::dict::DictKind::Zi => 0,
+                crate::api::dict::DictKind::Ci => 1,
+                crate::api::dict::DictKind::Chengyu => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::source::DownloadProgress {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7684,6 +7866,16 @@ impl SseEncode for Vec<crate::api::image::CoverTagGroup> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::image::CoverTagGroup>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::dict::DictEntry> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::dict::DictEntry>::sse_encode(item, serializer);
         }
     }
 }

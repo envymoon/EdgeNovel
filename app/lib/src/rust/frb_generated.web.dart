@@ -9,6 +9,7 @@
 import 'api/ai.dart';
 import 'api/book.dart';
 import 'api/cleanup.dart';
+import 'api/dict.dart';
 import 'api/image.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
@@ -184,6 +185,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DescribeProgress dco_decode_describe_progress(dynamic raw);
 
   @protected
+  DictEntry dco_decode_dict_entry(dynamic raw);
+
+  @protected
+  DictKind dco_decode_dict_kind(dynamic raw);
+
+  @protected
   DownloadProgress dco_decode_download_progress(dynamic raw);
 
   @protected
@@ -248,6 +255,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CoverTagGroup> dco_decode_list_cover_tag_group(dynamic raw);
+
+  @protected
+  List<DictEntry> dco_decode_list_dict_entry(dynamic raw);
 
   @protected
   List<FoundBookItem> dco_decode_list_found_book_item(dynamic raw);
@@ -605,6 +615,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DescribeProgress sse_decode_describe_progress(SseDeserializer deserializer);
 
   @protected
+  DictEntry sse_decode_dict_entry(SseDeserializer deserializer);
+
+  @protected
+  DictKind sse_decode_dict_kind(SseDeserializer deserializer);
+
+  @protected
   DownloadProgress sse_decode_download_progress(SseDeserializer deserializer);
 
   @protected
@@ -679,6 +695,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CoverTagGroup> sse_decode_list_cover_tag_group(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<DictEntry> sse_decode_list_dict_entry(SseDeserializer deserializer);
 
   @protected
   List<FoundBookItem> sse_decode_list_found_book_item(
@@ -1090,6 +1109,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_dict_entry(DictEntry self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dict_kind(DictKind self, SseSerializer serializer);
+
+  @protected
   void sse_encode_download_progress(
     DownloadProgress self,
     SseSerializer serializer,
@@ -1185,6 +1210,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cover_tag_group(
     List<CoverTagGroup> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_dict_entry(
+    List<DictEntry> self,
     SseSerializer serializer,
   );
 

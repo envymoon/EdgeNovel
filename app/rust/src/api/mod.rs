@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod book;
 pub mod cleanup;
+pub mod dict;
 pub mod image;
 pub mod simple;
 pub mod source;
