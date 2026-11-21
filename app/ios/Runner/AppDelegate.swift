@@ -3,6 +3,7 @@ import BackgroundTasks
 import Flutter
 import MediaPlayer
 import UIKit
+import Vision
 import os
 
 @main
@@ -138,6 +139,12 @@ import os
         name: "novel/speech", binaryMessenger: registrar.messenger())
       channel.setMethodCallHandler { call, result in SystemSpeech.shared.handle(call, result) }
       SystemSpeech.shared.channel = channel
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelGesture") {
+      let channel = FlutterMethodChannel(
+        name: "novel/gesture", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in GestureWatch.shared.handle(call, result) }
+      GestureWatch.shared.channel = channel
     }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NovelTransfer") {
       let channel = FlutterMethodChannel(
@@ -837,5 +844,254 @@ final class NowPlaying: NSObject {
       AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable
     else { return }
     send("pause")
+  }
+}
+
+/// 隔空翻页: the front camera, small and slow, read by the system's own face
+/// and hand recognition (Vision), so there is nothing to download. What it
+/// sees is said to Dart by name; Dart decides which names turn the page.
+///
+/// Names: turnLeft / turnRight (head), nod, winkLeft / winkRight, blink (both
+/// eyes held shut), swipeLeft / swipeRight (a hand across the camera). Left
+/// and right are as on screen, the picture mirrored like a mirror.
+final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+  static let shared = GestureWatch()
+  var channel: FlutterMethodChannel?
+
+  private let session = AVCaptureSession()
+  private let queue = DispatchQueue(label: "novel.gesture")
+  private var configured = false
+  /// Last asked for, on `queue`: a stop that overtakes a start still wins.
+  private var wanted = false
+  private var lastFrame = Date.distantPast
+  private var lastFire = Date.distantPast
+  private var lastStatus = Date.distantPast
+
+  // Head: an event when it goes past the line, again only after it is back.
+  private var headArmed = true
+  private var pitchBase: Double?
+  // Eyes: how open each is when open, and since when it has been shut.
+  private var openLeft: Double = 0
+  private var openRight: Double = 0
+  private var shutLeft: Date?
+  private var shutRight: Date?
+  private var eyesArmed = true
+  // Hand: where the wrist has been over the last moment.
+  private var wrists: [(Date, CGFloat)] = []
+
+  func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    switch call.method {
+    case "start":
+      guard #available(iOS 15.0, *) else {
+        result(FlutterError(code: "ios", message: "需要 iOS 15 或以上", details: nil))
+        return
+      }
+      queue.async { self.wanted = true }
+      AVCaptureDevice.requestAccess(for: .video) { granted in
+        guard granted else {
+          DispatchQueue.main.async {
+            result(FlutterError(code: "camera", message: "没有相机权限", details: nil))
+          }
+          return
+        }
+        self.queue.async {
+          let failure = self.begin()
+          DispatchQueue.main.async {
+            result(failure.map { FlutterError(code: "camera", message: $0, details: nil) })
+          }
+        }
+      }
+    case "stop":
+      queue.async {
+        self.wanted = false
+        if self.session.isRunning { self.session.stopRunning() }
+      }
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func begin() -> String? {
+    guard wanted else { return nil }
+    if !configured {
+      guard
+        let device = AVCaptureDevice.default(
+          .builtInWideAngleCamera, for: .video, position: .front),
+        let input = try? AVCaptureDeviceInput(device: device)
+      else { return "没有前置相机" }
+      session.beginConfiguration()
+      session.sessionPreset = .vga640x480
+      guard session.canAddInput(input) else {
+        session.commitConfiguration()
+        return "相机打不开"
+      }
+      session.addInput(input)
+      let output = AVCaptureVideoDataOutput()
+      output.alwaysDiscardsLateVideoFrames = true
+      output.videoSettings = [
+        kCVPixelBufferPixelFormatTypeKey as String:
+          kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+      ]
+      output.setSampleBufferDelegate(self, queue: queue)
+      guard session.canAddOutput(output) else {
+        session.commitConfiguration()
+        return "相机打不开"
+      }
+      session.addOutput(output)
+      session.commitConfiguration()
+      // Fifteen frames a second is plenty for a head turn, and cheap.
+      if (try? device.lockForConfiguration()) != nil {
+        let fifteen = CMTime(value: 1, timescale: 15)
+        if device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+          $0.minFrameDuration <= fifteen && fifteen <= $0.maxFrameDuration
+        }) {
+          device.activeVideoMinFrameDuration = fifteen
+          device.activeVideoMaxFrameDuration = fifteen
+        }
+        device.unlockForConfiguration()
+      }
+      configured = true
+    }
+    headArmed = true
+    pitchBase = nil
+    openLeft = 0
+    openRight = 0
+    shutLeft = nil
+    shutRight = nil
+    eyesArmed = true
+    wrists = []
+    if !session.isRunning { session.startRunning() }
+    return nil
+  }
+
+  func captureOutput(
+    _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+    from connection: AVCaptureConnection
+  ) {
+    guard #available(iOS 15.0, *) else { return }
+    let now = Date()
+    // At most ten a second are read.
+    if now.timeIntervalSince(lastFrame) < 0.1 { return }
+    lastFrame = now
+    guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+    let faceRequest = VNDetectFaceLandmarksRequest()
+    faceRequest.revision = VNDetectFaceLandmarksRequestRevision3
+    let handRequest = VNDetectHumanHandPoseRequest()
+    handRequest.maximumHandCount = 1
+    // The front camera, phone upright, shown as in a mirror.
+    let handler = VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .leftMirrored)
+    try? handler.perform([faceRequest, handRequest])
+    var seenFace = false
+    var seenHand = false
+    if let face = faceRequest.results?.first {
+      seenFace = true
+      read(face: face, at: now)
+    }
+    if let hand = handRequest.results?.first {
+      seenHand = true
+      read(hand: hand, at: now)
+    } else {
+      wrists.removeAll()
+    }
+    if now.timeIntervalSince(lastStatus) > 0.5 {
+      lastStatus = now
+      DispatchQueue.main.async {
+        self.channel?.invokeMethod("seen", arguments: ["face": seenFace, "hand": seenHand])
+      }
+    }
+  }
+
+  private func fire(_ name: String, at now: Date) {
+    // One gesture is one page: nothing more for a little while.
+    if now.timeIntervalSince(lastFire) < 0.8 { return }
+    lastFire = now
+    DispatchQueue.main.async { self.channel?.invokeMethod("gesture", arguments: name) }
+  }
+
+  @available(iOS 15.0, *)
+  private func read(face: VNFaceObservation, at now: Date) {
+    let yaw = face.yaw?.doubleValue ?? 0
+    let pitch = face.pitch?.doubleValue ?? 0
+    if headArmed {
+      if yaw > 0.35 {
+        headArmed = false
+        fire("turnRight", at: now)
+      } else if yaw < -0.35 {
+        headArmed = false
+        fire("turnLeft", at: now)
+      } else if let base = pitchBase, abs(pitch - base) > 0.3 {
+        headArmed = false
+        fire("nod", at: now)
+      }
+    } else if abs(yaw) < 0.15 && (pitchBase.map { abs(pitch - $0) < 0.12 } ?? true) {
+      headArmed = true
+    }
+    // Where the head rests, followed slowly while it is still.
+    if headArmed && abs(yaw) < 0.15 {
+      pitchBase = pitchBase.map { $0 * 0.9 + pitch * 0.1 } ?? pitch
+    }
+
+    guard headArmed, abs(yaw) < 0.2,
+      let leftEye = face.landmarks?.leftEye,
+      let rightEye = face.landmarks?.rightEye
+    else { return }
+    let left = openness(leftEye)
+    let right = openness(rightEye)
+    // How open an eye is when open: the highest lately, let down slowly.
+    openLeft = max(left, openLeft * 0.995)
+    openRight = max(right, openRight * 0.995)
+    guard openLeft > 0, openRight > 0 else { return }
+    let leftShut = left < openLeft * 0.5
+    let rightShut = right < openRight * 0.5
+    shutLeft = leftShut ? (shutLeft ?? now) : nil
+    shutRight = rightShut ? (shutRight ?? now) : nil
+    if !leftShut && !rightShut {
+      eyesArmed = true
+      return
+    }
+    guard eyesArmed else { return }
+    // A blink is over in a tenth of a second; held this long it is meant.
+    if let l = shutLeft, let r = shutRight {
+      if now.timeIntervalSince(max(l, r)) > 0.6 {
+        eyesArmed = false
+        fire("blink", at: now)
+      }
+    } else if let l = shutLeft, now.timeIntervalSince(l) > 0.35 {
+      eyesArmed = false
+      fire("winkLeft", at: now)
+    } else if let r = shutRight, now.timeIntervalSince(r) > 0.35 {
+      eyesArmed = false
+      fire("winkRight", at: now)
+    }
+  }
+
+  /// Height over width of an eye's outline.
+  private func openness(_ eye: VNFaceLandmarkRegion2D) -> Double {
+    let points = eye.normalizedPoints
+    guard let minX = points.map({ $0.x }).min(), let maxX = points.map({ $0.x }).max(),
+      let minY = points.map({ $0.y }).min(), let maxY = points.map({ $0.y }).max(),
+      maxX > minX
+    else { return 0 }
+    return Double((maxY - minY) / (maxX - minX))
+  }
+
+  @available(iOS 15.0, *)
+  private func read(hand: VNHumanHandPoseObservation, at now: Date) {
+    guard let wrist = try? hand.recognizedPoint(.wrist), wrist.confidence > 0.3 else {
+      wrists.removeAll()
+      return
+    }
+    wrists.append((now, wrist.location.x))
+    wrists.removeAll { now.timeIntervalSince($0.0) > 0.7 }
+    guard let first = wrists.first?.1, let last = wrists.last?.1 else { return }
+    // Across a third of the picture inside the moment: a swipe.
+    if last - first > 0.33 {
+      wrists.removeAll()
+      fire("swipeRight", at: now)
+    } else if first - last > 0.33 {
+      wrists.removeAll()
+      fire("swipeLeft", at: now)
+    }
   }
 }

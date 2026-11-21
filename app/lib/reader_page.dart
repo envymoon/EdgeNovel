@@ -14,6 +14,7 @@ import 'bloom.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
+import 'gesture_turn.dart';
 import 'night_toggle.dart';
 import 'pace_page.dart';
 import 'paged_reader.dart';
@@ -97,10 +98,44 @@ class _ReaderPageState extends State<ReaderPage> {
     spokenChapterWanted.addListener(_onSpokenWanted);
     // Opened for a chapter tapped in 已合成.
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSpokenWanted());
+    _unlistenGesture = GestureTurn.instance.listen(_onGesture);
+    widget.settings.addListener(_syncGesture);
+    _syncGesture();
+  }
+
+  /// 隔空翻页: the camera runs while a book is open with it switched on.
+  late final void Function() _unlistenGesture;
+  var _gestureOn = false;
+
+  void _syncGesture() {
+    final want = GestureTurn.available && widget.settings.gestureTurn;
+    if (want == _gestureOn) return;
+    _gestureOn = want;
+    if (want) {
+      unawaited(
+        GestureTurn.instance.start().then((failed) {
+          if (failed != null) _gestureOn = false;
+        }),
+      );
+    } else {
+      unawaited(GestureTurn.instance.stop());
+    }
+  }
+
+  void _onGesture(String name) {
+    if (!_gestureOn || !mounted) return;
+    if (name == widget.settings.gestureNext) {
+      _page(1);
+    } else if (name == widget.settings.gesturePrev) {
+      _page(-1);
+    }
   }
 
   @override
   void dispose() {
+    _unlistenGesture();
+    widget.settings.removeListener(_syncGesture);
+    if (_gestureOn) unawaited(GestureTurn.instance.stop());
     spokenChapterWanted.removeListener(_onSpokenWanted);
     widget.reader.removeListener(_onChapter);
     _positions.itemPositions.removeListener(_onScroll);

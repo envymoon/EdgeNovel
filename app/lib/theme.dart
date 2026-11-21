@@ -230,6 +230,12 @@ class ReadingSettings extends ChangeNotifier {
   /// opens straight into the text; the page is still in the reader's drawer.
   bool openBookToDetail = true;
 
+  /// 隔空翻页 (iPhone): off until the reader turns it on, and which gesture
+  /// turns forward and which back (names from GestureTurn.names).
+  bool gestureTurn = false;
+  String gestureNext = 'turnRight';
+  String gesturePrev = 'turnLeft';
+
   /// The light theme the night switch goes back to.
   int dayThemeIndex = defaultThemeIndex;
 
@@ -320,6 +326,9 @@ class ReadingSettings extends ChangeNotifier {
     s.uniformInterfaceWeight = p.getBool('uniformInterfaceWeight') ?? true;
     s.shelfCoverMode = p.getBool('shelfCoverMode') ?? false;
     s.openBookToDetail = p.getBool('openBookToDetail') ?? s.openBookToDetail;
+    s.gestureTurn = p.getBool('gestureTurn') ?? s.gestureTurn;
+    s.gestureNext = p.getString('gestureNext') ?? s.gestureNext;
+    s.gesturePrev = p.getString('gesturePrev') ?? s.gesturePrev;
     s.dayThemeIndex = (p.getInt('dayThemeIndex') ?? s.dayThemeIndex).clamp(
       0,
       readingThemes.length - 1,
@@ -416,6 +425,20 @@ class ReadingSettings extends ChangeNotifier {
   void setOpenBookToDetail(bool value) {
     openBookToDetail = value;
     _prefs?.setBool('openBookToDetail', value);
+    notifyListeners();
+  }
+
+  void setGestureTurn(bool value) {
+    gestureTurn = value;
+    _prefs?.setBool('gestureTurn', value);
+    notifyListeners();
+  }
+
+  void setGestures({String? next, String? prev}) {
+    if (next != null) gestureNext = next;
+    if (prev != null) gesturePrev = prev;
+    _prefs?.setString('gestureNext', gestureNext);
+    _prefs?.setString('gesturePrev', gesturePrev);
     notifyListeners();
   }
 

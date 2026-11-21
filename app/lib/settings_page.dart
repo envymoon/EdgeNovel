@@ -6,6 +6,8 @@ import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'feedback_page.dart';
 import 'font_page.dart';
+import 'gesture_turn.dart';
+import 'gesture_turn_page.dart';
 import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
@@ -135,6 +137,18 @@ class SettingsPage extends StatelessWidget {
                         onChanged: settings.setOpenBookToDetail,
                       ),
                     ),
+                    if (GestureTurn.available)
+                      _entry(
+                        t,
+                        icon: Icons.waving_hand_outlined,
+                        title: '隔空翻页',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => GestureTurnPage(settings: settings),
+                          ),
+                        ),
+                      ),
                     if (youshuOffered)
                       _entry(
                         t,
