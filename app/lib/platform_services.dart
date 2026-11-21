@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'platform_support.dart';
 import 'src/rust/api/ai.dart';
 import 'src/rust/api/tts.dart' as native_tts;
+import 'tts_text.dart';
 
 /// Directories owned by the application. Feature code asks for a named child
 /// instead of deciding where Android, iOS or Windows should write files.
@@ -218,6 +219,20 @@ abstract interface class LocalSpeechSynthesizer {
   Future<int> cacheBytes();
 
   Future<void> clearCache();
+}
+
+/// The speakers whose model is installed, a whole voice at a time.
+Future<List<LocalVoice>> installedVoices(LocalSpeechSynthesizer s) async {
+  final out = <LocalVoice>[];
+  for (final group in [
+    localVoices,
+    if (AppPlatformSupport.hasLightVoice) lightVoices,
+  ]) {
+    try {
+      if (await s.ready(group.first.id)) out.addAll(group);
+    } catch (_) {}
+  }
+  return out;
 }
 
 /// Keeps the bundled voice behind the same boundary as future iOS/Android

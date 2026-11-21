@@ -45,6 +45,9 @@ class TtsPanel extends StatefulWidget {
 class _TtsPanelState extends State<TtsPanel> {
   bool? _voiceReady;
 
+  /// The installed speakers, the only ones offered.
+  List<LocalVoice> _voices = const [];
+
   /// Whether the chapter open in the reader has been spoken.
   bool _spoken = false;
   int _bytes = 0;
@@ -100,7 +103,13 @@ class _TtsPanelState extends State<TtsPanel> {
 
   Future<void> _checkVoice() async {
     final ready = await widget.tts.aiVoiceReady();
-    if (mounted) setState(() => _voiceReady = ready);
+    final voices = await widget.tts.pickableInstalled();
+    if (mounted) {
+      setState(() {
+        _voiceReady = ready;
+        _voices = voices;
+      });
+    }
   }
 
   void _speak(int count) {
@@ -256,7 +265,7 @@ class _TtsPanelState extends State<TtsPanel> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      for (final v in pickableVoices)
+                      for (final v in _voices)
                         ChoiceChip(
                           label: Text(v.label),
                           selected: widget.settings.ttsLocalVoice == v.id,

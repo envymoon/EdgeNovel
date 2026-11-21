@@ -38,9 +38,14 @@ class _TtsServerPageState extends State<TtsServerPage> {
   /// Bytes of speech prepared ahead and waiting in the cache.
   int _cached = 0;
 
+  /// The installed speakers; all of this device's until known, or when
+  /// none is installed.
+  List<LocalVoice> _installed = pickableVoices;
+
   @override
   void initState() {
     super.initState();
+    _loadInstalled();
     if (widget.settings.ttsServerUrl.isNotEmpty) _loadVoices();
     TtsPrepare.instance.addListener(_loadCached);
     _loadCached();
@@ -63,6 +68,11 @@ class _TtsServerPageState extends State<TtsServerPage> {
     model: _model.text,
     voice: _voice.text,
   );
+
+  Future<void> _loadInstalled() async {
+    final there = await installedVoices(AppServices.instance.localSpeech);
+    if (mounted && there.isNotEmpty) setState(() => _installed = there);
+  }
 
   Future<void> _loadCached() async {
     int n;
@@ -199,7 +209,7 @@ class _TtsServerPageState extends State<TtsServerPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final v in pickableVoices)
+                  for (final v in _installed)
                     ChoiceChip(
                       label: Text(v.label),
                       selected: widget.settings.ttsLocalVoice == v.id,

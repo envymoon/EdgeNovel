@@ -175,18 +175,18 @@ class TtsController extends ChangeNotifier {
 
   /// Whether the AI voice is there to play chapters spoken ahead; where not,
   /// iPhone reads in its own voice.
+  /// The speakers that can be picked: those installed.
+  Future<List<LocalVoice>> pickableInstalled() => installedVoices(_localSpeech);
+
   Future<bool> aiVoiceReady() async {
     if (!AppPlatformSupport.hasAiVoice) return false;
     try {
       if (await _localSpeech.ready(settings.ttsLocalVoice)) return true;
       // The chosen speaker's model is gone but another is there: that one.
-      for (final v in pickableVoices) {
-        if (await _localSpeech.ready(v.id)) {
-          settings.setTtsLocalVoice(v.id);
-          return true;
-        }
-      }
-      return false;
+      final there = await installedVoices(_localSpeech);
+      if (there.isEmpty) return false;
+      settings.setTtsLocalVoice(there.first.id);
+      return true;
     } catch (_) {
       return false;
     }
