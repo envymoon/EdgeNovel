@@ -21,7 +21,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <map>
+#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -40,6 +42,10 @@ constexpr int BINS = NFFT / 2 + 1;
 constexpr int UPS = 300;  // samples per decoder frame: 10 * 6 * HOP
 constexpr int HARMONICS = 9;
 constexpr int GRAPH = 16384;
+// Phonemes spoken at once at most (about 30 s of speech, 500 MB), unless
+// one sentence alone is longer; and the memory a lane keeps between them.
+constexpr int BUDGET = 500;
+constexpr size_t KEEP = 128u << 20;
 
 struct Lstm {
     int in = 0, hid = 0;
@@ -48,12 +54,23 @@ struct Lstm {
 
 }  // namespace
 
-struct kokoro {
+// Where a sentence runs: a backend (a queue of its own on the GPU) and the
+// memory for what it computes. Sentences on different lanes run at once over
+// the one copy of the weights.
+struct Lane {
     ggml_backend_t backend = nullptr;
-    ggml_backend_t cpu = nullptr;
+    ggml_gallocr_t alloc = nullptr;
+};
+
+struct kokoro {
+    bool gpu = false;
     ggml_context * wctx = nullptr;
     ggml_backend_buffer_t wbuf = nullptr;
-    ggml_gallocr_t alloc = nullptr;
+    std::vector<Lane *> lanes, idle;
+    int most = 1;  // sentences at once
+    int inflight = 0;  // phonemes being spoken
+    std::mutex m;
+    std::condition_variable freed;
     std::map<std::string, ggml_tensor *> w;
     std::map<std::string, int> vocab;
     std::vector<std::string> voice_names;
@@ -64,7 +81,6 @@ struct kokoro {
     std::vector<float> ada_w[3], ada_b[3];  // duration encoder AdaLayerNorm fc
     std::vector<float> dur_w, dur_b;        // duration_proj [50][512]
     float src_w[HARMONICS] = {}, src_b = 0;
-    std::string error;
     std::string debug_dir;
     bool quiet = false;
 };
@@ -457,20 +473,20 @@ void dump(const kokoro * k, const char * name, const std::vector<float> & v) {
     }
 }
 
-void compute(kokoro * k, Graph & g) {
+void compute(const kokoro * k, Lane * l, Graph & g) {
     // A GPU that lacks an operation says so here, and the caller loads the
     // model on the CPU instead.
-    if (k->backend != k->cpu)
+    if (k->gpu)
         for (int i = 0; i < ggml_graph_n_nodes(g.gf); i++) {
             ggml_tensor * n = ggml_graph_node(g.gf, i);
-            if (!ggml_backend_supports_op(k->backend, n))
+            if (!ggml_backend_supports_op(l->backend, n))
                 throw std::string("GPU cannot run ") + ggml_op_desc(n) + " (" + ggml_get_name(n) + ")";
         }
-    if (!ggml_gallocr_alloc_graph(k->alloc, g.gf)) throw std::string("out of memory");
+    if (!ggml_gallocr_alloc_graph(l->alloc, g.gf)) throw std::string("out of memory");
 }
 
-void run(kokoro * k, Graph & g) {
-    if (ggml_backend_graph_compute(k->backend, g.gf) != GGML_STATUS_SUCCESS) throw std::string("compute failed");
+void run(Lane * l, Graph & g) {
+    if (ggml_backend_graph_compute(l->backend, g.gf) != GGML_STATUS_SUCCESS) throw std::string("compute failed");
 }
 
 std::vector<int> to_ids(const kokoro * k, const std::string & ps, int & chars) {
@@ -488,7 +504,7 @@ std::vector<int> to_ids(const kokoro * k, const std::string & ps, int & chars) {
     return ids;
 }
 
-std::vector<float> speak(kokoro * k, const std::string & ps, const std::string & voice, float speed, unsigned seed) {
+std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std::string & voice, float speed, unsigned seed) {
     // How long each stage took, a line per sentence in EDGE_KOKORO_LOG when
     // set: where the time goes on a phone's GPU.
     auto t0 = std::chrono::steady_clock::now();
@@ -559,12 +575,12 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
         g.output(den);
         g.output(e);
         if (!k->debug_dir.empty()) g.output(bert);
-        compute(k, g);
+        compute(k, l, g);
         std::vector<int> pos(T);
         for (int i = 0; i < T; i++) pos[i] = i;
         ggml_backend_tensor_set(in_ids, ids.data(), 0, T * sizeof(int));
         ggml_backend_tensor_set(in_pos, pos.data(), 0, T * sizeof(int));
-        run(k, g);
+        run(l, g);
         d_en = fetch(den);
         te = fetch(e);
         if (!k->debug_dir.empty()) dump(k, "bert", fetch(bert));
@@ -631,10 +647,10 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
             outs[i] = b.conv(p + "_proj", c, 1, 0, 1);
             g.output(outs[i]);
         }
-        compute(k, g);
+        compute(k, l, g);
         ggml_backend_tensor_set(x, sh_t.data(), 0, sh_t.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_pred.data(), 0, S * sizeof(float));
-        run(k, g);
+        run(l, g);
         f0 = fetch(outs[0]);
         nn = fetch(outs[1]);
     }
@@ -715,13 +731,13 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
         x = b.conv("decoder.generator.conv_post", x, 1, 3, 1);  // [frames, 22]
         g.output(x);
         for (auto & pr : probes) g.output(pr.second);
-        compute(k, g);
+        compute(k, l, g);
         ggml_backend_tensor_set(in_asr, asr.data(), 0, asr.size() * sizeof(float));
         ggml_backend_tensor_set(in_f0, f0.data(), 0, f0.size() * sizeof(float));
         ggml_backend_tensor_set(in_n, nn.data(), 0, nn.size() * sizeof(float));
         ggml_backend_tensor_set(in_har, har.data(), 0, har.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_dec.data(), 0, S * sizeof(float));
-        run(k, g);
+        run(l, g);
         post = fetch(x);
         for (auto & pr : probes) dump(k, pr.first.c_str(), fetch(pr.second));
         if ((int) x->ne[0] != frames) throw std::string("frame count mismatch");
@@ -732,8 +748,9 @@ std::vector<float> speak(kokoro * k, const std::string & ps, const std::string &
     lap("istft");
     if (const char * log = getenv("EDGE_KOKORO_LOG")) {
         if (FILE * f = fopen(log, "a")) {
-            fprintf(f, "%s audio=%.2f phonemes=%d%s\n", k->backend == k->cpu ? "cpu" : "gpu", audio.size() / 24000.0,
-                    chars, took.c_str());
+            fprintf(f, "%s audio=%.2f phonemes=%d%s lanes=%d mem=%zuMB\n", k->gpu ? "gpu" : "cpu",
+                    audio.size() / 24000.0, chars, took.c_str(), k->most,
+                    ggml_gallocr_get_buffer_size(l->alloc, 0) >> 20);
             fclose(f);
         }
     }
@@ -758,6 +775,23 @@ static int default_threads() {
     return 4;
 }
 
+// A new lane; with k->m held, or at load.
+static Lane * add_lane(kokoro * k) {
+    auto * l = new Lane();
+    l->backend = k->gpu ? ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr) : ggml_backend_cpu_init();
+    if (!l->backend) {
+        delete l;
+        throw std::string("cannot start the backend");
+    }
+    // On the CPU the lanes share the cores.
+    if (!k->gpu) ggml_backend_cpu_set_n_threads(l->backend, std::max(1, k->threads / k->most));
+    l->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(l->backend));
+    k->lanes.push_back(l);
+    return l;
+}
+
+static thread_local std::string error;
+
 kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
     auto * k = new kokoro();
     k->threads = threads > 0 ? threads : default_threads();
@@ -767,15 +801,19 @@ kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
         gguf_init_params ip = {true, &k->wctx};
         g = gguf_init_from_file(path, ip);
         if (!g) throw std::string("cannot open ") + path;
-        if (gpu) k->backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
-        if (!k->backend) {
-            k->cpu = ggml_backend_cpu_init();
-            ggml_backend_cpu_set_n_threads(k->cpu, k->threads);
-            k->backend = k->cpu;
+        k->gpu = gpu != 0;
+        if (k->gpu) {
+            try {
+                add_lane(k);
+            } catch (const std::string &) {
+                k->gpu = false;
+            }
         }
+        if (!k->gpu) add_lane(k);
+        k->idle.push_back(k->lanes[0]);
         for (ggml_tensor * t = ggml_get_first_tensor(k->wctx); t; t = ggml_get_next_tensor(k->wctx, t))
             k->w[ggml_get_name(t)] = t;
-        k->wbuf = ggml_backend_alloc_ctx_tensors(k->wctx, k->backend);
+        k->wbuf = ggml_backend_alloc_ctx_tensors(k->wctx, k->lanes[0]->backend);
         if (!k->wbuf) throw std::string("out of memory for weights");
         f = fopen(path, "rb");
         if (!f) throw std::string("cannot open ") + path;
@@ -819,7 +857,6 @@ kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
         for (int i = 0; i < HARMONICS; i++) k->src_w[i] = sw[i];
         k->src_b = sb[0];
 
-        k->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(k->backend));
         fclose(f);
         gguf_free(g);
         return k;
@@ -840,10 +877,14 @@ kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
 
 void edge_tts_kokoro_free(kokoro * k) {
     if (!k) return;
-    if (k->alloc) ggml_gallocr_free(k->alloc);
+    for (Lane * l : k->lanes)
+        if (l->alloc) ggml_gallocr_free(l->alloc);
     if (k->wbuf) ggml_backend_buffer_free(k->wbuf);
     if (k->wctx) ggml_free(k->wctx);
-    if (k->backend) ggml_backend_free(k->backend);
+    for (Lane * l : k->lanes) {
+        ggml_backend_free(l->backend);
+        delete l;
+    }
     delete k;
 }
 
@@ -853,26 +894,78 @@ const char * edge_tts_kokoro_voice_name(const kokoro * k, int i) {
     return i >= 0 && i < (int) k->voice_names.size() ? k->voice_names[i].c_str() : nullptr;
 }
 
+void edge_tts_kokoro_lanes(kokoro * k, int n) {
+    {
+        std::lock_guard<std::mutex> g(k->m);
+        k->most = std::clamp(n, 1, 4);
+    }
+    k->freed.notify_all();
+}
+
 float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed, unsigned seed, int * n) {
     *n = 0;
+    // What a sentence computes takes memory by its length, about 17 MB a
+    // second of speech: long ones wait until the others leave room.
+    int cost = 0;
+    for (const char * c = phonemes; *c; c++) cost += ((unsigned char) *c & 0xC0) != 0x80;
+    Lane * l = nullptr;
+    {
+        std::unique_lock<std::mutex> g(k->m);
+        k->freed.wait(g, [&] {
+            return (int) (k->lanes.size() - k->idle.size()) < k->most &&
+                   (k->inflight == 0 || k->inflight + cost <= BUDGET);
+        });
+        k->inflight += cost;
+        if (!k->idle.empty()) {
+            l = k->idle.back();
+            k->idle.pop_back();
+        } else {
+            try {
+                l = add_lane(k);
+            } catch (const std::string & e) {
+                k->inflight -= cost;
+                error = e;
+                return nullptr;
+            }
+        }
+    }
+    struct Back {
+        kokoro * k;
+        Lane * l;
+        int cost;
+        ~Back() {
+            // A lane keeps no more than a usual sentence's memory between
+            // sentences.
+            if (ggml_gallocr_get_buffer_size(l->alloc, 0) > KEEP) {
+                ggml_gallocr_free(l->alloc);
+                l->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(l->backend));
+            }
+            {
+                std::lock_guard<std::mutex> g(k->m);
+                k->idle.push_back(l);
+                k->inflight -= cost;
+            }
+            k->freed.notify_all();
+        }
+    } back{k, l, cost};
     try {
-        std::vector<float> a = speak(k, phonemes, voice, speed > 0 ? speed : 1.0f, seed);
+        std::vector<float> a = speak(k, l, phonemes, voice, speed > 0 ? speed : 1.0f, seed);
         float * out = (float *) malloc(std::max<size_t>(1, a.size()) * sizeof(float));
         if (!a.empty()) memcpy(out, a.data(), a.size() * sizeof(float));
         *n = (int) a.size();
-        k->error.clear();
+        error.clear();
         return out;
     } catch (const std::string & e) {
-        k->error = e;
+        error = e;
     } catch (const std::exception & e) {
-        k->error = e.what();
+        error = e.what();
     }
     return nullptr;
 }
 
 void edge_tts_kokoro_free_audio(float * samples) { free(samples); }
 
-const char * edge_tts_kokoro_error(const kokoro * k) { return k->error.c_str(); }
+const char * edge_tts_kokoro_error(const kokoro *) { return error.c_str(); }
 
 void edge_tts_kokoro_debug(kokoro * k, const char * dir, int quiet) {
     k->debug_dir = dir ? dir : "";

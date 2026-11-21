@@ -1,16 +1,18 @@
 // PC check of the engine: one WAV per line of phonemes, and with --debug the
 // intermediates of each for compare.py.
 //
-// usage: kokoro-cli <model.gguf> <voice> <phonemes.txt> <out dir> [--gpu] [--debug] [--threads N]
+// usage: kokoro-cli <model.gguf> <voice> <phonemes.txt> <out dir> [--gpu] [--debug] [--threads N] [--lanes N]
 #include "kokoro.h"
 
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 static void wav(const std::string & path, const float * x, int n) {
@@ -31,15 +33,16 @@ static void wav(const std::string & path, const float * x, int n) {
 
 int main(int argc, char ** argv) {
     if (argc < 5) {
-        fprintf(stderr, "usage: kokoro-cli <model.gguf> <voice> <phonemes.txt> <out dir> [--gpu] [--debug] [--threads N]\n");
+        fprintf(stderr, "usage: kokoro-cli <model.gguf> <voice> <phonemes.txt> <out dir> [--gpu] [--debug] [--threads N] [--lanes N]\n");
         return 2;
     }
     bool gpu = false, debug = false;
-    int threads = 8;
+    int threads = 8, lanes = 1;
     for (int i = 5; i < argc; i++) {
         if (!strcmp(argv[i], "--gpu")) gpu = true;
         else if (!strcmp(argv[i], "--debug")) debug = true;
         else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--lanes") && i + 1 < argc) lanes = atoi(argv[++i]);
     }
     auto t0 = std::chrono::steady_clock::now();
     kokoro * k = edge_tts_kokoro_load(argv[1], gpu ? 1 : 0, threads);
@@ -48,6 +51,36 @@ int main(int argc, char ** argv) {
     printf("load %.2f s\n", std::chrono::duration<double>(t1 - t0).count());
     std::ifstream in(argv[3]);
     std::string line;
+    if (lanes > 1) {
+        // Every line at once on that many lanes: the same audio, sooner.
+        edge_tts_kokoro_lanes(k, lanes);
+        std::vector<std::string> lines;
+        while (std::getline(in, line))
+            if (!line.empty()) lines.push_back(line);
+        std::atomic<int> next{0};
+        std::atomic<long long> samples{0};
+        auto a = std::chrono::steady_clock::now();
+        std::vector<std::thread> ts;
+        for (int t = 0; t < lanes; t++)
+            ts.emplace_back([&] {
+                for (int j; (j = next++) < (int) lines.size();) {
+                    int n = 0;
+                    float * x = edge_tts_kokoro_speak(k, lines[j].c_str(), argv[2], 1.0f, 1234 + j, &n);
+                    if (!x) {
+                        fprintf(stderr, "%d: %s\n", j, edge_tts_kokoro_error(k));
+                        continue;
+                    }
+                    wav(std::string(argv[4]) + "/" + std::to_string(j) + ".wav", x, n);
+                    samples += n;
+                    edge_tts_kokoro_free_audio(x);
+                }
+            });
+        for (auto & t : ts) t.join();
+        double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
+        printf("%d lanes: %.2f s audio in %.2f s (RTF %.3f)\n", lanes, samples / 24000.0, dt, dt / (samples / 24000.0));
+        edge_tts_kokoro_free(k);
+        return 0;
+    }
     int i = 0;
     double total = 0, audio = 0;
     while (std::getline(in, line)) {

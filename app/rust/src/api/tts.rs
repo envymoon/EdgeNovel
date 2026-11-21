@@ -973,11 +973,11 @@ fn pieces(ps: &str) -> Vec<String> {
 /// it, let go when idle, and never in memory together with it.
 #[cfg(in_process_engine)]
 mod light {
-    use super::{engine, last_used, light_files, pieces, tts_dir, wav, InFlight, BUSY, IDLE, LIFECYCLE};
+    use super::{engine, last_used, light_files, pieces, tts_dir, tuned, wav, InFlight, BUSY, IDLE, LIFECYCLE};
     use novel_core::zh_g2p::Zh;
     use std::ffi::{c_char, c_int, CStr, CString};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     #[repr(C)]
@@ -989,6 +989,7 @@ mod light {
         fn edge_tts_watch();
         fn edge_tts_kokoro_load(path: *const c_char, gpu: c_int, threads: c_int) -> *mut Kokoro;
         fn edge_tts_kokoro_free(k: *mut Kokoro);
+        fn edge_tts_kokoro_lanes(k: *mut Kokoro, n: c_int);
         fn edge_tts_kokoro_speak(
             k: *mut Kokoro,
             phonemes: *const c_char,
@@ -1001,15 +1002,27 @@ mod light {
         fn edge_tts_kokoro_error(k: *const Kokoro) -> *const c_char;
     }
 
-    /// The model, where it runs, and the front end. Held through a sentence,
-    /// so nothing lets it go mid-way.
-    struct Loaded {
+    /// The model and where it runs. Several sentences go through it at once
+    /// (kokoro.cpp's lanes), each holding it, so nothing lets it go mid-way.
+    struct Model {
         k: *mut Kokoro,
         gpu: bool,
-        zh: Zh,
     }
 
-    unsafe impl Send for Loaded {}
+    unsafe impl Send for Model {}
+    unsafe impl Sync for Model {}
+
+    impl Drop for Model {
+        fn drop(&mut self) {
+            unsafe { edge_tts_kokoro_free(self.k) };
+        }
+    }
+
+    /// The model and the front end.
+    struct Loaded {
+        model: Arc<Model>,
+        zh: Arc<Zh>,
+    }
 
     static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
 
@@ -1017,9 +1030,13 @@ mod light {
     /// CPU from then on.
     static NO_GPU: AtomicBool = AtomicBool::new(false);
 
+    /// Lets it go once the sentences under way are done, so it is never in
+    /// memory together with the other voice.
     pub fn unload() {
-        if let Some(l) = LOADED.lock().unwrap().take() {
-            unsafe { edge_tts_kokoro_free(l.k) };
+        let Some(l) = LOADED.lock().unwrap().take() else { return };
+        let model = l.model;
+        while Arc::strong_count(&model) > 1 {
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -1033,18 +1050,16 @@ mod light {
 
     /// Loaded where it can run now; the front end stays across a move.
     fn ensure(slot: &mut Option<Loaded>, gpu: bool) -> Result<(), String> {
-        if slot.as_ref().is_some_and(|l| l.gpu == gpu) {
+        if slot.as_ref().is_some_and(|l| l.model.gpu == gpu) {
             return Ok(());
         }
         let (model, text) = light_files(tts_dir()?).ok_or("轻量语音未安装")?;
+        // Sentences still on the old one finish there; it goes with them.
         let zh = match slot.take() {
-            Some(l) => {
-                unsafe { edge_tts_kokoro_free(l.k) };
-                l.zh
-            }
+            Some(l) => l.zh,
             None => {
                 let bytes = std::fs::read(&text).map_err(|e| format!("读取轻量语音失败: {e}"))?;
-                Zh::load(&bytes)?
+                Arc::new(Zh::load(&bytes)?)
             }
         };
         crate::api::image::release();
@@ -1060,14 +1075,19 @@ mod light {
         if k.is_null() {
             return Err("启动轻量语音失败".into());
         }
-        *slot = Some(Loaded { k, gpu, zh });
+        // As many sentences at once as the reader chose for the other voice,
+        // on the GPU; one at a time on the CPU, where it works behind the
+        // screen and must stay light.
+        let lanes = if gpu { tuned(&tts_dir()?).0 } else { 1 };
+        unsafe { edge_tts_kokoro_lanes(k, lanes as c_int) };
+        *slot = Some(Loaded { model: Arc::new(Model { k, gpu }), zh });
         Ok(())
     }
 
     /// One sentence, every piece of it, as 16-bit 24 kHz mono; and whether it
     /// ran on the GPU.
     fn say(line: &str, voice: &CStr) -> Result<(Vec<u8>, bool), String> {
-        let mut slot = {
+        let (model, zh) = {
             let _g = LIFECYCLE.lock().unwrap();
             // One voice in memory at a time.
             engine::unload();
@@ -1077,16 +1097,16 @@ mod light {
             if first {
                 watch_idle();
             }
-            slot
+            let l = slot.as_ref().unwrap();
+            (l.model.clone(), l.zh.clone())
         };
-        let l = slot.as_mut().unwrap();
         let mut pcm = Vec::new();
-        for piece in pieces(&l.zh.phonemes(line)) {
+        for piece in pieces(&zh.phonemes(line)) {
             let ps = CString::new(piece).map_err(|_| "文本无效".to_string())?;
             let mut n: c_int = 0;
-            let samples = unsafe { edge_tts_kokoro_speak(l.k, ps.as_ptr(), voice.as_ptr(), 1.0, 1, &mut n) };
+            let samples = unsafe { edge_tts_kokoro_speak(model.k, ps.as_ptr(), voice.as_ptr(), 1.0, 1, &mut n) };
             if samples.is_null() {
-                let why = unsafe { CStr::from_ptr(edge_tts_kokoro_error(l.k)) }.to_string_lossy().into_owned();
+                let why = unsafe { CStr::from_ptr(edge_tts_kokoro_error(model.k)) }.to_string_lossy().into_owned();
                 return Err(format!("语音合成失败: {why}"));
             }
             for &x in unsafe { std::slice::from_raw_parts(samples, n.max(0) as usize) } {
@@ -1095,7 +1115,7 @@ mod light {
             }
             unsafe { edge_tts_kokoro_free_audio(samples) };
         }
-        Ok((pcm, l.gpu))
+        Ok((pcm, model.gpu))
     }
 
     pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
@@ -1117,7 +1137,7 @@ mod light {
                     }
                     return Ok(wav(&pcm));
                 }
-                Err(e) if tries < 2 && LOADED.lock().unwrap().as_ref().is_some_and(|l| l.gpu) => {
+                Err(e) if tries < 2 && LOADED.lock().unwrap().as_ref().is_some_and(|l| l.model.gpu) => {
                     tries += 1;
                     // iOS refuses the GPU a moment before the app hears it
                     // is behind the screen; if it never does, the GPU itself
@@ -1155,7 +1175,7 @@ mod light {
     /// Where it is loaded: the GPU (true), the CPU (false), or not at all.
     #[cfg(test)]
     pub fn on_gpu() -> Option<bool> {
-        LOADED.lock().unwrap().as_ref().map(|l| l.gpu)
+        LOADED.lock().unwrap().as_ref().map(|l| l.model.gpu)
     }
 }
 
@@ -1315,6 +1335,18 @@ mod tests {
             memory(&format!("{device} 说完"));
         }
         unsafe { edge_tts_set_background(0) };
+
+        // Four at once, as the 听书 prepare sends them: each as when alone.
+        let alone: Vec<Vec<u8>> = lines[..3].iter().map(|(_, l)| say(l, "k:zf_001").unwrap()).collect();
+        let t = Instant::now();
+        let together: Vec<Vec<u8>> = std::thread::scope(|s| {
+            let hs: Vec<_> = lines[..3].iter().map(|(_, l)| s.spawn(move || say(l, "k:zf_001").unwrap())).collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let secs: f64 = together.iter().map(|w| (w.len() - 44) as f64 / 48000.0).sum();
+        println!("[同时三句] {secs:.1} 秒语音用 {:.2} 秒 · RTF {:.2}", t.elapsed().as_secs_f64(), t.elapsed().as_secs_f64() / secs);
+        assert!(alone == together);
+        memory("同时三句后");
 
         // Every voice, and the cache.
         for v in ["zf_001", "zf_008", "zf_047", "zf_086", "zm_009", "zm_031", "zm_066"] {

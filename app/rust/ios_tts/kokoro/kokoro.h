@@ -16,10 +16,15 @@ void edge_tts_kokoro_free(kokoro * k);
 int edge_tts_kokoro_voice_count(const kokoro * k);
 const char * edge_tts_kokoro_voice_name(const kokoro * k, int i);
 
+// How many sentences may be spoken at once, from as many threads (1 to 4;
+// 1 at first). Each has memory of its own for what it computes; the weights
+// are shared. On the CPU they share the threads.
+void edge_tts_kokoro_lanes(kokoro * k, int n);
+
 // phonemes: the model's own alphabet (UTF-8), at most 510 of them.
 // speed: 1 is the voice's own pace. seed: the source noise.
 // Returns malloc'd samples (free with kokoro_free_audio) and their count in
-// *n, or NULL with the reason in kokoro_error.
+// *n, or NULL with the reason in kokoro_error (asked on the same thread).
 float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed,
                      unsigned seed, int * n);
 void edge_tts_kokoro_free_audio(float * samples);
