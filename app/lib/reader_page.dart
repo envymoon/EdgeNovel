@@ -15,6 +15,7 @@ import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
 import 'gesture_turn.dart';
+import 'gesture_turn_page.dart';
 import 'night_toggle.dart';
 import 'pace_page.dart';
 import 'paged_reader.dart';
@@ -129,8 +130,22 @@ class _ReaderPageState extends State<ReaderPage> {
     }
   }
 
+  /// Its page watches every gesture while open; the book goes back to the
+  /// ones switched on after.
+  Future<void> _openGestureTurn() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GestureTurnPage(settings: widget.settings),
+      ),
+    );
+    if (mounted) _syncGesture();
+  }
+
   void _onGesture(String name) {
     if (!_gestureOn || !mounted) return;
+    // Not while a page is open over the book.
+    if (ModalRoute.of(context)?.isCurrent != true) return;
     final way = widget.settings.gestureActions[name];
     if (way != null) _page(way);
   }
@@ -1153,6 +1168,7 @@ class _ReaderPageState extends State<ReaderPage> {
                     reader: widget.reader,
                   ),
                 ),
+                onGestureTurn: GestureTurn.available ? _openGestureTurn : null,
               ),
               body: _withPlate(
                 t,

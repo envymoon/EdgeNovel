@@ -12,6 +12,7 @@ class ReadingAssistantDrawer extends StatelessWidget {
   final VoidCallback onBookDetail;
   final VoidCallback onAppearance;
   final VoidCallback onAiRuntime;
+  final VoidCallback? onGestureTurn;
 
   const ReadingAssistantDrawer({
     super.key,
@@ -21,6 +22,7 @@ class ReadingAssistantDrawer extends StatelessWidget {
     required this.onBookDetail,
     required this.onAppearance,
     required this.onAiRuntime,
+    this.onGestureTurn,
   });
 
   void _run(BuildContext context, VoidCallback action) {
@@ -115,6 +117,13 @@ class ReadingAssistantDrawer extends StatelessWidget {
                     title: '阅读外观',
                     onTap: () => _run(context, onAppearance),
                   ),
+                  if (onGestureTurn case final open?)
+                    _entry(
+                      t,
+                      icon: Icons.waving_hand_outlined,
+                      title: '隔空翻页',
+                      onTap: () => _run(context, open),
+                    ),
                 ],
               ),
             ],
