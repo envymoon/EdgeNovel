@@ -51,16 +51,29 @@ class GestureTurn {
 
   var _users = 0;
 
-  /// Start the camera for one more user; the reason it would not, or null.
-  Future<String?> start() async {
+  /// Start the camera for one more user, looking for [gestures] only (all
+  /// when null); the reason it would not, or null.
+  Future<String?> start([Iterable<String>? gestures]) async {
     if (!available) return '此设备暂不支持';
     _users++;
     try {
-      await _channel.invokeMethod('start');
+      await _channel.invokeMethod('start', {
+        'gestures': [...(gestures ?? names.keys)],
+      });
       return null;
     } on PlatformException catch (e) {
       _users--;
       return e.message ?? '相机打不开';
+    }
+  }
+
+  /// Look for these gestures from now on.
+  Future<void> watch(Iterable<String> gestures) async {
+    if (_users == 0) return;
+    try {
+      await _channel.invokeMethod('watch', {'gestures': [...gestures]});
+    } on PlatformException {
+      // Stopped meanwhile.
     }
   }
 

@@ -134,10 +134,10 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
                     value: s.gestureTurn,
                     onChanged: s.setGestureTurn,
                   ),
-                  Divider(height: 1, color: t.outline),
-                  _pick(t, '下一页', s.gestureNext, (v) => s.setGestures(next: v)),
-                  Divider(height: 1, color: t.outline),
-                  _pick(t, '上一页', s.gesturePrev, (v) => s.setGestures(prev: v)),
+                  for (final name in GestureTurn.names.keys) ...[
+                    Divider(height: 1, color: t.outline),
+                    _gesture(t, s, name),
+                  ],
                 ],
               ),
             ),
@@ -147,27 +147,34 @@ class _GestureTurnPageState extends State<GestureTurnPage> {
     );
   }
 
-  Widget _pick(
-    ReadingTheme t,
-    String title,
-    String value,
-    ValueChanged<String> onChanged,
-  ) => ListTile(
-    title: Text(title, style: TextStyle(color: t.text, fontSize: 14)),
-    trailing: DropdownButton<String>(
-      value: GestureTurn.names.containsKey(value) ? value : null,
-      underline: const SizedBox.shrink(),
-      dropdownColor: t.surface,
-      items: [
-        for (final e in GestureTurn.names.entries)
-          DropdownMenuItem(
-            value: e.key,
-            child: Text(e.value, style: TextStyle(color: t.text, fontSize: 14)),
-          ),
-      ],
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-    ),
-  );
+  /// One gesture: on or off, and when on, which way it turns.
+  Widget _gesture(ReadingTheme t, ReadingSettings s, String name) {
+    final way = s.gestureActions[name];
+    Widget choice(String label, int value) => ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      selected: way == value,
+      onSelected: (_) => s.setGestureAction(name, value),
+    );
+    return ListTile(
+      title: Text(
+        GestureTurn.names[name]!,
+        style: TextStyle(color: t.text, fontSize: 14),
+      ),
+      subtitle: way == null
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Wrap(
+                spacing: 8,
+                children: [choice('下一页', 1), choice('上一页', -1)],
+              ),
+            ),
+      trailing: Switch(
+        value: way != null,
+        onChanged: (on) => s.setGestureAction(name, on ? 1 : 0),
+      ),
+    );
+  }
 }

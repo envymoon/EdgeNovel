@@ -230,11 +230,11 @@ class ReadingSettings extends ChangeNotifier {
   /// opens straight into the text; the page is still in the reader's drawer.
   bool openBookToDetail = true;
 
-  /// 隔空翻页 (iPhone): off until the reader turns it on, and which gesture
-  /// turns forward and which back (names from GestureTurn.names).
+  /// 隔空翻页 (iPhone): off until the reader turns it on. The gestures
+  /// switched on, each with the way it turns: 1 forward, -1 back (names from
+  /// GestureTurn.names). One not here is not even looked for.
   bool gestureTurn = false;
-  String gestureNext = 'turnRight';
-  String gesturePrev = 'turnLeft';
+  Map<String, int> gestureActions = {'turnRight': 1, 'turnLeft': -1};
 
   /// The light theme the night switch goes back to.
   int dayThemeIndex = defaultThemeIndex;
@@ -327,8 +327,13 @@ class ReadingSettings extends ChangeNotifier {
     s.shelfCoverMode = p.getBool('shelfCoverMode') ?? false;
     s.openBookToDetail = p.getBool('openBookToDetail') ?? s.openBookToDetail;
     s.gestureTurn = p.getBool('gestureTurn') ?? s.gestureTurn;
-    s.gestureNext = p.getString('gestureNext') ?? s.gestureNext;
-    s.gesturePrev = p.getString('gesturePrev') ?? s.gesturePrev;
+    final actions = p.getString('gestureActions');
+    if (actions != null) {
+      s.gestureActions = {
+        for (final pair in actions.split(',').where((e) => e.contains(':')))
+          pair.split(':')[0]: int.tryParse(pair.split(':')[1]) ?? 1,
+      };
+    }
     s.dayThemeIndex = (p.getInt('dayThemeIndex') ?? s.dayThemeIndex).clamp(
       0,
       readingThemes.length - 1,
@@ -434,11 +439,18 @@ class ReadingSettings extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setGestures({String? next, String? prev}) {
-    if (next != null) gestureNext = next;
-    if (prev != null) gesturePrev = prev;
-    _prefs?.setString('gestureNext', gestureNext);
-    _prefs?.setString('gesturePrev', gesturePrev);
+  /// Switch a gesture on to turn [way] (1 forward, -1 back), or off with 0.
+  void setGestureAction(String name, int way) {
+    gestureActions = {...gestureActions};
+    if (way == 0) {
+      gestureActions.remove(name);
+    } else {
+      gestureActions[name] = way;
+    }
+    _prefs?.setString(
+      'gestureActions',
+      [for (final e in gestureActions.entries) '${e.key}:${e.value}'].join(','),
+    );
     notifyListeners();
   }
 

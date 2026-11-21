@@ -108,12 +108,19 @@ class _ReaderPageState extends State<ReaderPage> {
   var _gestureOn = false;
 
   void _syncGesture() {
-    final want = GestureTurn.available && widget.settings.gestureTurn;
-    if (want == _gestureOn) return;
+    final actions = widget.settings.gestureActions;
+    final want =
+        GestureTurn.available &&
+        widget.settings.gestureTurn &&
+        actions.isNotEmpty;
+    if (want == _gestureOn) {
+      if (want) unawaited(GestureTurn.instance.watch(actions.keys));
+      return;
+    }
     _gestureOn = want;
     if (want) {
       unawaited(
-        GestureTurn.instance.start().then((failed) {
+        GestureTurn.instance.start(actions.keys).then((failed) {
           if (failed != null) _gestureOn = false;
         }),
       );
@@ -124,11 +131,8 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _onGesture(String name) {
     if (!_gestureOn || !mounted) return;
-    if (name == widget.settings.gestureNext) {
-      _page(1);
-    } else if (name == widget.settings.gesturePrev) {
-      _page(-1);
-    }
+    final way = widget.settings.gestureActions[name];
+    if (way != null) _page(way);
   }
 
   @override

@@ -863,6 +863,9 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
   private var configured = false
   /// Last asked for, on `queue`: a stop that overtakes a start still wins.
   private var wanted = false
+  /// The gestures looked for, on `queue`. Nothing else is fired, and with no
+  /// wave among them the hand is not looked for at all.
+  private var enabled: Set<String> = []
   private var lastFrame = Date.distantPast
   private var lastFire = Date.distantPast
   private var lastStatus = Date.distantPast
@@ -886,7 +889,11 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         result(FlutterError(code: "ios", message: "需要 iOS 15 或以上", details: nil))
         return
       }
-      queue.async { self.wanted = true }
+      let gestures = GestureWatch.gestures(call)
+      queue.async {
+        self.wanted = true
+        self.enabled = gestures
+      }
       AVCaptureDevice.requestAccess(for: .video) { granted in
         guard granted else {
           DispatchQueue.main.async {
@@ -901,6 +908,10 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
           }
         }
       }
+    case "watch":
+      let gestures = GestureWatch.gestures(call)
+      queue.async { self.enabled = gestures }
+      result(nil)
     case "stop":
       queue.async {
         self.wanted = false
@@ -910,6 +921,10 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  private static func gestures(_ call: FlutterMethodCall) -> Set<String> {
+    Set((call.arguments as? [String: Any])?["gestures"] as? [String] ?? [])
   }
 
   private func begin() -> String? {
@@ -979,16 +994,17 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     faceRequest.revision = VNDetectFaceLandmarksRequestRevision3
     let handRequest = VNDetectHumanHandPoseRequest()
     handRequest.maximumHandCount = 1
+    let wantHand = enabled.contains("swipeLeft") || enabled.contains("swipeRight")
     // The front camera, phone upright, shown as in a mirror.
     let handler = VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .leftMirrored)
-    try? handler.perform([faceRequest, handRequest])
+    try? handler.perform(wantHand ? [faceRequest, handRequest] : [faceRequest])
     var seenFace = false
     var seenHand = false
     if let face = faceRequest.results?.first {
       seenFace = true
       read(face: face, at: now)
     }
-    if let hand = handRequest.results?.first {
+    if wantHand, let hand = handRequest.results?.first {
       seenHand = true
       read(hand: hand, at: now)
     } else {
@@ -1003,6 +1019,7 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
   }
 
   private func fire(_ name: String, at now: Date) {
+    guard enabled.contains(name) else { return }
     // One gesture is one page: nothing more for a little while.
     if now.timeIntervalSince(lastFire) < 0.8 { return }
     lastFire = now

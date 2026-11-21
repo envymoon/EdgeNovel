@@ -32,6 +32,10 @@ void main() {
     });
     GestureTurn.instance; // installs its handler
     final settings = ReadingSettings();
+    // Tall enough for every row.
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
       MaterialApp(home: GestureTurnPage(settings: settings)),
@@ -42,20 +46,30 @@ void main() {
     await _say('seen', {'face': true, 'hand': false});
     await _say('gesture', 'nod');
     await tester.pump();
-    expect(find.text('点头'), findsOneWidget);
+    // Shown in the box, besides its own row in the list.
+    expect(find.text('点头'), findsNWidgets(2));
     expect(find.text('脸 ✓   手 —'), findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
-    expect(find.text('点头'), findsNothing);
+    expect(find.text('点头'), findsOneWidget);
 
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byType(Switch).first);
     await tester.pump();
     expect(settings.gestureTurn, isTrue);
 
-    await tester.tap(find.text('向右转头'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('向右挥手').last);
-    await tester.pumpAndSettle();
-    expect(settings.gestureNext, 'swipeRight');
+    // A wave switched on turns forward; it can be made to turn back.
+    final wave = find.ancestor(
+      of: find.text('向右挥手'),
+      matching: find.byType(ListTile),
+    );
+    await tester.tap(find.descendant(of: wave, matching: find.byType(Switch)));
+    await tester.pump();
+    expect(settings.gestureActions['swipeRight'], 1);
+    await tester.tap(find.descendant(of: wave, matching: find.text('上一页')));
+    await tester.pump();
+    expect(settings.gestureActions['swipeRight'], -1);
+    await tester.tap(find.descendant(of: wave, matching: find.byType(Switch)));
+    await tester.pump();
+    expect(settings.gestureActions.containsKey('swipeRight'), isFalse);
 
     await tester.pumpWidget(const SizedBox());
     expect(calls, ['start', 'stop']);
