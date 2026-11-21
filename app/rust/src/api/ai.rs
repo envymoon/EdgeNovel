@@ -998,6 +998,38 @@ pub(crate) fn http(
     body: Option<&Value>,
     timeout_secs: u64,
 ) -> Result<(u16, Vec<u8>), String> {
+    let mut s = send(port, method, path, body, timeout_secs)?;
+    let mut raw = Vec::new();
+    s.read_to_end(&mut raw)
+        .map_err(|e| format!("读取响应失败: {e}"))?;
+
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or("坏响应：没有头部结束符")?;
+    let head = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or("坏响应：没有状态码")?;
+    let rest = &raw[split + 4..];
+    let body = if head.contains("transfer-encoding: chunked") {
+        dechunk(rest).ok_or("响应不完整")?
+    } else {
+        rest.to_vec()
+    };
+    Ok((status, body))
+}
+
+/// Connects to the engine and writes one request.
+fn send(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    timeout_secs: u64,
+) -> Result<TcpStream, String> {
     let mut s = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(2))
         .map_err(|e| format!("连不上引擎: {e}"))?;
     s.set_read_timeout(Some(Duration::from_secs(timeout_secs)))
@@ -1022,28 +1054,107 @@ pub(crate) fn http(
     );
     s.write_all(req.as_bytes())
         .map_err(|e| format!("请求失败: {e}"))?;
+    Ok(s)
+}
 
-    let mut raw = Vec::new();
-    s.read_to_end(&mut raw)
-        .map_err(|e| format!("读取响应失败: {e}"))?;
-
-    let split = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or("坏响应：没有头部结束符")?;
-    let head = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
+/// A chat completion read as it is written (`"stream": true`). Every piece of
+/// text, thinking or answer, goes to `stop`; when it says so the connection is
+/// dropped, which the engine takes as a cancel and frees the slot at once.
+/// Returns the status, the answer text, and whether `stop` ended it.
+fn chat_stream(
+    port: u16,
+    body: &Value,
+    timeout_secs: u64,
+    stop: &mut dyn FnMut(&str) -> bool,
+) -> Result<(u16, String, bool), String> {
+    let mut body = body.clone();
+    body["stream"] = json!(true);
+    let mut s = send(port, "POST", "/v1/chat/completions", Some(&body), timeout_secs)?;
+    let more = |s: &mut TcpStream, buf: &mut Vec<u8>| -> Result<bool, String> {
+        let mut tmp = [0u8; 4096];
+        let n = s.read(&mut tmp).map_err(|e| format!("读取响应失败: {e}"))?;
+        buf.extend_from_slice(&tmp[..n]);
+        Ok(n > 0)
+    };
+    let mut buf: Vec<u8> = Vec::new();
+    let split = loop {
+        if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break p;
+        }
+        if !more(&mut s, &mut buf)? {
+            return Err("坏响应：没有头部结束符".into());
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..split]).to_ascii_lowercase();
     let status: u16 = head
         .split_whitespace()
         .nth(1)
         .and_then(|s| s.parse().ok())
         .ok_or("坏响应：没有状态码")?;
-    let rest = &raw[split + 4..];
-    let body = if head.contains("transfer-encoding: chunked") {
-        dechunk(rest).ok_or("响应不完整")?
-    } else {
-        rest.to_vec()
-    };
-    Ok((status, body))
+    let chunked = head.contains("transfer-encoding: chunked");
+    let mut wire: Vec<u8> = buf.split_off(split + 4);
+    if status != 200 {
+        while more(&mut s, &mut wire)? {}
+        let rest = if chunked { dechunk(&wire).unwrap_or_default() } else { wire };
+        return Ok((status, String::from_utf8_lossy(&rest).into_owned(), false));
+    }
+    // Chunk framing off, then server-sent events line by line.
+    let mut events: Vec<u8> = Vec::new();
+    let mut answer = String::new();
+    loop {
+        let mut ended = false;
+        if chunked {
+            while let Some(pos) = wire.windows(2).position(|w| w == b"\r\n") {
+                let size = std::str::from_utf8(&wire[..pos])
+                    .ok()
+                    .and_then(|t| usize::from_str_radix(t.trim(), 16).ok())
+                    .ok_or("坏响应：分块长度")?;
+                if size == 0 {
+                    ended = true;
+                    break;
+                }
+                if wire.len() < pos + 2 + size + 2 {
+                    break;
+                }
+                events.extend_from_slice(&wire[pos + 2..pos + 2 + size]);
+                wire.drain(..pos + 2 + size + 2);
+            }
+        } else {
+            events.append(&mut wire);
+        }
+        while let Some(nl) = events.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = events.drain(..=nl).collect();
+            let line = String::from_utf8_lossy(&line);
+            let Some(data) = line.trim().strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                return Ok((status, answer, false));
+            }
+            let Ok(v) = serde_json::from_str::<Value>(data) else {
+                continue;
+            };
+            let delta = &v["choices"][0]["delta"];
+            for key in ["reasoning_content", "content"] {
+                if let Some(t) = delta[key].as_str() {
+                    if key == "content" {
+                        answer.push_str(t);
+                    }
+                    if stop(t) {
+                        let _ = s.shutdown(std::net::Shutdown::Both);
+                        return Ok((status, answer, true));
+                    }
+                }
+            }
+        }
+        if ended {
+            return Ok((status, answer, false));
+        }
+        if !more(&mut s, &mut wire)? {
+            return Err("响应不完整".into());
+        }
+    }
 }
 
 /// None when the body stops before its last chunk: a server that failed
@@ -1078,6 +1189,13 @@ trait LocalInferenceBackend: Sync {
     #[flutter_rust_bridge::frb(ignore)]
     fn chat_completion(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
     #[flutter_rust_bridge::frb(ignore)]
+    fn chat_completion_stream(
+        &self,
+        body: &Value,
+        timeout_secs: u64,
+        stop: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<(u16, String, bool), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn embeddings(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
 }
 
@@ -1106,6 +1224,15 @@ impl LocalInferenceBackend for LlamaServerBackend {
             Some(body),
             timeout_secs,
         )
+    }
+
+    fn chat_completion_stream(
+        &self,
+        body: &Value,
+        timeout_secs: u64,
+        stop: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<(u16, String, bool), String> {
+        chat_stream(PORT, body, timeout_secs, stop)
     }
 
     fn embeddings(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String> {
@@ -1409,6 +1536,10 @@ pub fn enrich_book(
 
 /// One chat turn, raw assistant text. Temperature is a parameter because the
 /// vote needs the three samples to actually differ.
+///
+/// Read as it is written, so a turn caught in a loop ends there: empty, as a
+/// turn that ran out of tokens already came back, and each caller already
+/// tries again on that.
 fn chat_once(
     system: &str,
     user: &str,
@@ -1423,15 +1554,61 @@ fn chat_once(
         "temperature": temperature,
         "max_tokens": max_tokens,
     });
-    let (status, resp) = inference_backend().chat_completion(&body, 300)?;
+    let mut watch = LoopWatch::default();
+    let (status, answer, looped) =
+        inference_backend().chat_completion_stream(&body, 300, &mut |t| watch.feed(t))?;
     if status != 200 {
         return Err(format!("引擎返回 {status}"));
     }
-    let v: Value = serde_json::from_slice(&resp).map_err(|e| format!("引擎响应不是 JSON: {e}"))?;
-    Ok(v["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string())
+    Ok(if looped { String::new() } else { answer })
+}
+
+/// The one way the thinking passes fail: the model walks the numbered passages
+/// with one sentence it keeps saying, 第46段提到她可能在某个位置 … 第47段…, most
+/// often to the token limit with no answer. Over 400-odd background passes an
+/// ordinary one said a clause at most twice (numbers aside), a loop 17 to 62
+/// times; so the sixth time is a loop, 300–700 characters into the thinking.
+/// The few loops that reach an answer give one no better than a fresh try.
+#[derive(Default)]
+struct LoopWatch {
+    clause: String,
+    seen: std::collections::HashMap<String, u32>,
+}
+
+const LOOP_REPEATS: u32 = 6;
+
+impl LoopWatch {
+    /// True once some clause has come round [LOOP_REPEATS] times.
+    fn feed(&mut self, text: &str) -> bool {
+        for c in text.chars() {
+            if !"。\n；;！？".contains(c) {
+                self.clause.push(c);
+                continue;
+            }
+            let clause = std::mem::take(&mut self.clause);
+            let clause = clause.trim();
+            if clause.chars().count() < 6 {
+                continue;
+            }
+            // Numbers are the one thing a loop changes: 第46段, 第47段.
+            let mut key = String::new();
+            for ch in clause.chars() {
+                if ch.is_ascii_digit() || "０１２３４５６７８９一二三四五六七八九十百零两".contains(ch) {
+                    if !key.ends_with('#') {
+                        key.push('#');
+                    }
+                } else {
+                    key.push(ch);
+                }
+            }
+            let n = self.seen.entry(key).or_insert(0);
+            *n += 1;
+            if *n >= LOOP_REPEATS {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// The conclusion after a </think> block: the last allowed word in the tail. The
@@ -2394,6 +2571,26 @@ mod tests {
                 "f16",
             ]
         );
+    }
+
+    #[test]
+    fn a_loop_is_caught_and_ordinary_thinking_is_not() {
+        let mut w = LoopWatch::default();
+        let ordinary = "首先，通读所有片段，找出关键信息。第1段提到她习惯睡前静音手机。第2段提到张述桐知道她是指路青怜。综合这些信息，可以得出结论。";
+        assert!(!w.feed(ordinary));
+        let mut w = LoopWatch::default();
+        let mut caught = None;
+        for i in 40..60 {
+            // Fed in small pieces, as the engine streams it.
+            let line = format!("第{i}段提到她可能在某个位置，这可能与她的位置有关。\n");
+            let chars: Vec<char> = line.chars().collect();
+            for piece in chars.chunks(3) {
+                if w.feed(&piece.iter().collect::<String>()) {
+                    caught.get_or_insert(i);
+                }
+            }
+        }
+        assert_eq!(caught, Some(45));
     }
 
     #[test]
