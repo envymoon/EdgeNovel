@@ -901,8 +901,9 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
   private var openRight: Double = 0
   private var shutLeft: Date?
   private var shutRight: Date?
+  private var shutBoth: Date?
   private var eyesArmed = true
-  // Hand: where the wrist has been over the last moment.
+  // Hand: where it has been over the last moment.
   private var wrists: [(Date, CGFloat)] = []
 
   func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
@@ -1044,6 +1045,7 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     openRight = 0
     shutLeft = nil
     shutRight = nil
+    shutBoth = nil
     eyesArmed = true
     wrists = []
   }
@@ -1067,11 +1069,11 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       let handler = VNImageRequestHandler(
         cvPixelBuffer: frame.capturedImage, orientation: .leftMirrored)
       try? handler.perform([handRequest])
+      // A frame missed in the blur of a wave does not end it; the moment
+      // it is measured over does.
       if let hand = handRequest.results?.first {
         seenHand = true
         read(hand: hand, at: now)
-      } else {
-        wrists.removeAll()
       }
     }
     status(face: seenFace, hand: seenHand, at: now)
@@ -1124,10 +1126,13 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       rest = simd_slerp(base, turn, 0.03)
     }
 
-    guard headArmed, abs(yaw) < turnLine * 0.6 else { return }
+    // Eyes are read unless the head is turned well away. Waiting for it to
+    // be back where it rests kept them unread with a nod line of a few
+    // degrees, the head never quite that still.
+    guard abs(yaw) < turnLine * 0.6 else { return }
     let left = face.blendShapes[.eyeBlinkLeft]?.doubleValue ?? 0
     let right = face.blendShapes[.eyeBlinkRight]?.doubleValue ?? 0
-    eyes(leftShut: left > 0.6, rightShut: right > 0.6, at: now)
+    eyes(left: left, right: right, at: now)
   }
 
   private func status(face: Bool, hand: Bool, at now: Date) {
@@ -1169,7 +1174,7 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     if wantHand, let hand = handRequest.results?.first {
       seenHand = true
       read(hand: hand, at: now)
-    } else {
+    } else if !wantHand {
       wrists.removeAll()
     }
     status(face: seenFace, hand: seenHand, at: now)
@@ -1209,7 +1214,7 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
       pitchBase = pitchBase.map { $0 * 0.97 + pitch * 0.03 } ?? pitch
     }
 
-    guard headArmed, abs(yaw) < turnLine * 0.6,
+    guard abs(yaw) < turnLine * 0.6,
       let leftEye = face.landmarks?.leftEye,
       let rightEye = face.landmarks?.rightEye
     else { return }
@@ -1219,24 +1224,28 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     openLeft = max(left, openLeft * 0.995)
     openRight = max(right, openRight * 0.995)
     guard openLeft > 0, openRight > 0 else { return }
-    eyes(leftShut: left < openLeft * 0.5, rightShut: right < openRight * 0.5, at: now)
+    eyes(left: 1 - left / openLeft, right: 1 - right / openRight, at: now)
   }
 
-  /// One shut a moment: a wink; both shut a longer moment: meant, not a blink.
-  private func eyes(leftShut: Bool, rightShut: Bool, at now: Date) {
+  /// How shut each eye is, 0 open to 1 shut. Both shut a moment: meant, not
+  /// a blink. One clearly more shut than the other: a wink, though the other
+  /// narrows with it.
+  private func eyes(left: Double, right: Double, at now: Date) {
+    let both = left > 0.5 && right > 0.5 && abs(left - right) < 0.3
+    let leftShut = !both && left > 0.5 && left - right > 0.25
+    let rightShut = !both && right > 0.5 && right - left > 0.25
+    shutBoth = both ? (shutBoth ?? now) : nil
     shutLeft = leftShut ? (shutLeft ?? now) : nil
     shutRight = rightShut ? (shutRight ?? now) : nil
-    if !leftShut && !rightShut {
-      eyesArmed = true
+    if !both && !leftShut && !rightShut {
+      if left < 0.4 && right < 0.4 { eyesArmed = true }
       return
     }
     guard eyesArmed else { return }
     // A blink is over in a tenth of a second; held this long it is meant.
-    if let l = shutLeft, let r = shutRight {
-      if now.timeIntervalSince(max(l, r)) > eyeHold {
-        eyesArmed = false
-        fire("blink", at: now)
-      }
+    if let b = shutBoth, now.timeIntervalSince(b) > eyeHold {
+      eyesArmed = false
+      fire("blink", at: now)
     } else if let l = shutLeft, now.timeIntervalSince(l) > eyeHold {
       eyesArmed = false
       fire("winkLeft", at: now)
@@ -1258,18 +1267,20 @@ final class GestureWatch: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
   @available(iOS 15.0, *)
   private func read(hand: VNHumanHandPoseObservation, at now: Date) {
-    guard let wrist = try? hand.recognizedPoint(.wrist), wrist.confidence > 0.3 else {
-      wrists.removeAll()
-      return
-    }
-    wrists.append((now, wrist.location.x))
-    wrists.removeAll { now.timeIntervalSince($0.0) > 0.7 }
+    // The middle of what is seen of it: a hand waved close to the camera
+    // often has its wrist out of the picture.
+    guard let points = try? hand.recognizedPoints(.all) else { return }
+    let seen = points.values.filter { $0.confidence > 0.3 }
+    guard seen.count >= 3 else { return }
+    let x = seen.map { $0.location.x }.reduce(0, +) / CGFloat(seen.count)
+    wrists.append((now, x))
+    wrists.removeAll { now.timeIntervalSince($0.0) > 1.0 }
     guard let first = wrists.first?.1, let last = wrists.last?.1 else { return }
-    // Across a third of the picture inside the moment: a swipe.
-    if last - first > 0.33 {
+    // Across a quarter of the picture inside the moment: a swipe.
+    if last - first > 0.25 {
       wrists.removeAll()
       fire("swipeRight", at: now)
-    } else if first - last > 0.33 {
+    } else if first - last > 0.25 {
       wrists.removeAll()
       fire("swipeLeft", at: now)
     }
