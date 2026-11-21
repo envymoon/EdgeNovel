@@ -28,7 +28,7 @@ class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.settings});
 
   /// Keep in step with `version:` in pubspec.yaml.
-  static const appVersion = '1.5.2';
+  static const appVersion = '1.5.4';
 
   Future<bool> _confirmClearHistory(
     BuildContext context,
