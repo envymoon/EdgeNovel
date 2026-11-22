@@ -3,13 +3,10 @@ import 'package:flutter/material.dart' hide Text;
 import 'app_localizations.dart';
 import 'appearance_page.dart';
 import 'dictionary_page.dart';
-import 'easter_eggs_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'feedback_page.dart';
 import 'font_page.dart';
-import 'gesture_turn.dart';
-import 'gesture_turn_page.dart';
 import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
@@ -139,18 +136,6 @@ class SettingsPage extends StatelessWidget {
                         onChanged: settings.setOpenBookToDetail,
                       ),
                     ),
-                    if (GestureTurn.available)
-                      _entry(
-                        t,
-                        icon: Icons.waving_hand_outlined,
-                        title: '隔空翻页',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => GestureTurnPage(settings: settings),
-                          ),
-                        ),
-                      ),
                     _entry(
                       t,
                       icon: Icons.translate,
@@ -159,17 +144,6 @@ class SettingsPage extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (_) => DictionaryPage(settings: settings),
-                        ),
-                      ),
-                    ),
-                    _entry(
-                      t,
-                      icon: Icons.auto_awesome_mosaic_outlined,
-                      title: '彩蛋',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => EasterEggsPage(settings: settings),
                         ),
                       ),
                     ),

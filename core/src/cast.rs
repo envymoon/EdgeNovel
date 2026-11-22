@@ -34,6 +34,10 @@ pub struct Person {
     /// beside it. See [`BACKGROUND_CUES`].
     #[serde(default)]
     pub evidence: Vec<(usize, String)>,
+    /// Mention counts per equal-chapter bucket across the scanned range, for
+    /// the character appearance view.
+    #[serde(default)]
+    pub timeline: Vec<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -137,7 +141,8 @@ const EARLY_FLOOR: usize = 40;
 /// Bumped whenever a scan-shape change (cast size, evidence depth, fields) makes
 /// an older cached `Cast` wrong to reuse. `scan_cached` treats a mismatch as a
 /// miss and rebuilds, so a new binary never serves a graph built by the old one.
-pub const SCAN_VERSION: u32 = 27;
+pub const SCAN_VERSION: u32 = 28;
+pub const TIMELINE_BUCKETS: usize = 24;
 
 /// Verbs that attribute speech. The name stands directly before the verb
 /// cluster; manner characters that slip into the run (吕树笑道) are cleaned up
@@ -2383,6 +2388,7 @@ fn select(cands: &[(String, Stat)], paras: &[(usize, &str)]) -> Vec<Member> {
 }
 
 fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edge>, usize) {
+    let n_chapters = paras.iter().map(|&(c, _)| c).max().map_or(0, |c| c + 1);
     let mut people: Vec<Person> = members
         .iter()
         .map(|m| Person {
@@ -2393,6 +2399,7 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
             first_chapter: 0,
             uncertain: false,
             evidence: Vec::new(),
+            timeline: vec![0u32; TIMELINE_BUCKETS],
         })
         .collect();
 
@@ -2458,7 +2465,13 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
             continue;
         }
 
+        let bucket = if n_chapters == 0 {
+            0
+        } else {
+            (ci * TIMELINE_BUCKETS / n_chapters).min(TIMELINE_BUCKETS - 1)
+        };
         for &(_, _, pid) in &kept {
+            people[pid].timeline[bucket] += 1;
             if last_seen[pid] != Some(ci) {
                 last_seen[pid] = Some(ci);
                 people[pid].chapters += 1;
@@ -2571,8 +2584,6 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
         ev.sort_by_key(|&(ci, _)| ci);
         p.evidence = ev;
     }
-    let n_chapters = paras.iter().map(|&(c, _)| c).max().map_or(0, |c| c + 1);
-
     let mut out: Vec<Edge> = edges
         .into_iter()
         .filter(|(_, acc)| acc.weight >= MIN_EDGE)

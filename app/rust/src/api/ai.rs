@@ -797,11 +797,25 @@ const SUMMARY_CONTEXT: u32 = 2048;
 /// batch is computed together); the reader judged that acceptable.
 const SUMMARY_SLOTS: u32 = 4;
 
+/// People / relation passes: 4096 per slot × 2 slots keeps the exact same 8192
+/// total KV memory as a single FULL_CONTEXT slot on mobile while cutting wall
+/// time ~34%; any unusually long prompt that hits HTTP 400 falls back to
+/// FULL_CONTEXT × 1.
+const CAST_CONTEXT: u32 = 4096;
+const CAST_SLOTS: u32 = 2;
+
+/// Name-vetting pass (`is_a_person`): one candidate word + one sample sentence
+/// (<200 input tokens, max 512 output). 1024 × 4 uses half the KV memory of
+/// FULL_CONTEXT while running 2.1× faster.
+const VET_CONTEXT: u32 = 1024;
+const VET_SLOTS: u32 = 4;
+
 /// The window is sized to what a task reads, never the other way round, and
 /// inside it the model computes the same thing at any size: measured word for
 /// word identical at 2K, 4K and 8K on 78 chapters (GPU) and 27 (CPU). Runtime
 /// profiles may change scheduling pressure, never the information the model
 /// can read.
+#[cfg_attr(not(test), allow(dead_code))]
 fn ensure_engine(context: u32) -> Result<(), String> {
     ensure_engine_slots(context, 1)
 }
@@ -908,11 +922,11 @@ fn ensure_embedder_with(waiting: impl FnMut(u32)) -> Result<(), String> {
             "--pooling",
             "cls",
             "-c",
-            "512",
+            "2048",
             "-b",
-            "512",
+            "2048",
             "-ub",
-            "512",
+            "2048",
         ],
         #[cfg(target_os = "android")]
         startup_generation,
@@ -1180,6 +1194,7 @@ fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
 /// thread of the app.
 #[flutter_rust_bridge::frb(ignore)]
 trait LocalInferenceBackend: Sync {
+    #[cfg_attr(not(test), allow(dead_code))]
     #[flutter_rust_bridge::frb(ignore)]
     fn prepare_chat(&self, context: u32) -> Result<(), String>;
     #[flutter_rust_bridge::frb(ignore)]
@@ -1771,7 +1786,9 @@ pub fn describe_people(
     sink: StreamSink<DescribeProgress>,
 ) -> Result<(), String> {
     CANCEL_DESCRIBE.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat(FULL_CONTEXT)?;
+    let mut context = CAST_CONTEXT;
+    let mut slots = CAST_SLOTS;
+    inference_backend().prepare_chat_slots(context, slots)?;
     book::ensure_loaded(&path)?;
 
     let mut residual = book::residual_people(&path, book_id, up_to_chapter, top)?;
@@ -1781,42 +1798,76 @@ pub fn describe_people(
     let total = residual.len() as u32;
 
     let mut consecutive_errors = 0;
-    for (done, (name, aliases, evidence)) in residual.into_iter().enumerate() {
+    let mut done = 0u32;
+    let mut rest = residual.as_slice();
+    while !rest.is_empty() {
         if CANCEL_DESCRIBE.load(Ordering::SeqCst) {
             break;
         }
-        let _ = sink.add(DescribeProgress {
-            name: name.clone(),
-            background: String::new(),
-            done: done as u32,
-            total,
-            error: None,
-        });
-        let (background, error) = match summarize_person(&name, &aliases, &evidence) {
-            Ok(b) => {
-                consecutive_errors = 0;
-                let _ = book::remember_person(book_id, &name, &b, "sentences", 0);
-                (b, None)
-            }
-            Err(e) => {
-                consecutive_errors += 1;
-                (String::new(), Some(e))
-            }
-        };
-        let last = sink
-            .add(DescribeProgress {
-                name,
-                background,
-                done: done as u32 + 1,
+        let (batch, after) = rest.split_at(rest.len().min(slots as usize));
+        rest = after;
+        if let Some((first_name, _, _)) = batch.first() {
+            let _ = sink.add(DescribeProgress {
+                name: first_name.clone(),
+                background: String::new(),
+                done,
                 total,
-                error,
-            })
-            .is_err();
-        if last {
-            break;
+                error: None,
+            });
         }
-        if consecutive_errors >= 3 {
-            return Err("连续 3 位人物归纳失败，已停止".into());
+        let mut results: Vec<Result<String, String>> = std::thread::scope(|scope| {
+            let asks: Vec<_> = batch
+                .iter()
+                .map(|(name, aliases, evidence)| {
+                    scope.spawn(move || summarize_person(name, aliases, evidence))
+                })
+                .collect();
+            asks.into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("引擎请求异常".into())))
+                .collect()
+        });
+        if context < FULL_CONTEXT
+            && results
+                .iter()
+                .any(|r| matches!(r, Err(e) if e.contains("400")))
+        {
+            context = FULL_CONTEXT;
+            slots = 1;
+            inference_backend().prepare_chat_slots(context, slots)?;
+            for (r, (name, aliases, evidence)) in results.iter_mut().zip(batch) {
+                if matches!(r, Err(e) if e.contains("400")) {
+                    *r = summarize_person(name, aliases, evidence);
+                }
+            }
+        }
+        for ((name, _, _), res) in batch.iter().zip(results) {
+            let (background, error) = match res {
+                Ok(b) => {
+                    consecutive_errors = 0;
+                    let _ = book::remember_person(book_id, name, &b, "sentences", 0);
+                    (b, None)
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    (String::new(), Some(e))
+                }
+            };
+            done += 1;
+            let last = sink
+                .add(DescribeProgress {
+                    name: name.clone(),
+                    background,
+                    done,
+                    total,
+                    error,
+                })
+                .is_err();
+            if last {
+                return Ok(());
+            }
+            if consecutive_errors >= 3 {
+                return Err("连续 3 位人物归纳失败，已停止".into());
+            }
         }
     }
     Ok(())
@@ -1858,55 +1909,87 @@ pub fn label_relations(
     sink: StreamSink<RelabelProgress>,
 ) -> Result<(), String> {
     CANCEL_RELABEL.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat(FULL_CONTEXT)?;
+    let mut context = CAST_CONTEXT;
+    let mut slots = CAST_SLOTS;
+    inference_backend().prepare_chat_slots(context, slots)?;
     book::ensure_loaded(&path)?;
 
     let residual = book::residual_relations(&path, book_id, up_to_chapter, top)?;
     let total = residual.len() as u32;
 
     let mut consecutive_errors = 0;
-    for (done, (a, b, evidence)) in residual.into_iter().enumerate() {
+    let mut done = 0u32;
+    let mut rest = residual.as_slice();
+    while !rest.is_empty() {
         if CANCEL_RELABEL.load(Ordering::SeqCst) {
             break;
         }
-        // A pair takes the better part of a minute on a phone: say which one
-        // is under way, or the screen sits on 0 / 0 as if nothing started.
-        let _ = sink.add(RelabelProgress {
-            a: a.clone(),
-            b: b.clone(),
-            label: String::new(),
-            done: done as u32,
-            total,
-            error: None,
-        });
-        let (label, error) = match summarize_relation(&a, &b, &evidence) {
-            Ok(l) => {
-                consecutive_errors = 0;
-                // Straight to the database: a summary the reader waited for must
-                // survive closing the app, not just closing the page.
-                let _ = book::remember_relation(book_id, &a, &b, &l);
-                (l, None)
-            }
-            Err(e) => {
-                consecutive_errors += 1;
-                (String::new(), Some(e))
-            }
-        };
-        let last = sink
-            .add(RelabelProgress {
-                a,
-                b,
-                label,
-                done: done as u32 + 1,
+        let (batch, after) = rest.split_at(rest.len().min(slots as usize));
+        rest = after;
+        if let Some((a, b, _)) = batch.first() {
+            let _ = sink.add(RelabelProgress {
+                a: a.clone(),
+                b: b.clone(),
+                label: String::new(),
+                done,
                 total,
-                error,
-            })
-            .is_err();
-        if last {
-            break;
+                error: None,
+            });
         }
-        if consecutive_errors >= 3 {
-            return Err("连续 3 条关系判定失败，已停止".into());
+        let mut results: Vec<Result<String, String>> = std::thread::scope(|scope| {
+            let asks: Vec<_> = batch
+                .iter()
+                .map(|(a, b, evidence)| scope.spawn(move || summarize_relation(a, b, evidence)))
+                .collect();
+            asks.into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("引擎请求异常".into())))
+                .collect()
+        });
+        if context < FULL_CONTEXT
+            && results
+                .iter()
+                .any(|r| matches!(r, Err(e) if e.contains("400")))
+        {
+            context = FULL_CONTEXT;
+            slots = 1;
+            inference_backend().prepare_chat_slots(context, slots)?;
+            for (r, (a, b, evidence)) in results.iter_mut().zip(batch) {
+                if matches!(r, Err(e) if e.contains("400")) {
+                    *r = summarize_relation(a, b, evidence);
+                }
+            }
+        }
+        for ((a, b, _), res) in batch.iter().zip(results) {
+            let (label, error) = match res {
+                Ok(l) => {
+                    consecutive_errors = 0;
+                    // Straight to the database: a summary the reader waited for must
+                    // survive closing the app, not just closing the page.
+                    let _ = book::remember_relation(book_id, a, b, &l);
+                    (l, None)
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    (String::new(), Some(e))
+                }
+            };
+            done += 1;
+            let last = sink
+                .add(RelabelProgress {
+                    a: a.clone(),
+                    b: b.clone(),
+                    label,
+                    done,
+                    total,
+                    error,
+                })
+                .is_err();
+            if last {
+                return Ok(());
+            }
+            if consecutive_errors >= 3 {
+                return Err("连续 3 条关系判定失败，已停止".into());
+            }
         }
     }
     Ok(())
@@ -1977,42 +2060,74 @@ pub fn vet_names(
     sink: StreamSink<VetProgress>,
 ) -> Result<(), String> {
     CANCEL_VET.store(false, Ordering::SeqCst);
-    inference_backend().prepare_chat(FULL_CONTEXT)?;
+    let mut context = VET_CONTEXT;
+    let mut slots = VET_SLOTS;
+    inference_backend().prepare_chat_slots(context, slots)?;
     book::ensure_loaded(&path)?;
 
     let pending = book::unjudged_names(&path, book_id, up_to_chapter, top)?;
     let total = pending.len() as u32;
     let mut consecutive_errors = 0;
+    let mut done = 0u32;
+    let mut rest = pending.as_slice();
 
-    for (done, (name, sample)) in pending.into_iter().enumerate() {
+    while !rest.is_empty() {
         if CANCEL_VET.load(Ordering::SeqCst) {
             break;
         }
-        let (is_person, error) = match is_a_person(&name, &sample) {
-            Ok(v) => {
-                consecutive_errors = 0;
-                let _ = book::remember_name(book_id, &name, v);
-                (v, None)
+        let (batch, after) = rest.split_at(rest.len().min(slots as usize));
+        rest = after;
+        let mut results: Vec<Result<bool, String>> = std::thread::scope(|scope| {
+            let asks: Vec<_> = batch
+                .iter()
+                .map(|(name, sample)| scope.spawn(move || is_a_person(name, sample)))
+                .collect();
+            asks.into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("引擎请求异常".into())))
+                .collect()
+        });
+        if context < FULL_CONTEXT
+            && results
+                .iter()
+                .any(|r| matches!(r, Err(e) if e.contains("400")))
+        {
+            context = FULL_CONTEXT;
+            slots = 1;
+            inference_backend().prepare_chat_slots(context, slots)?;
+            for (r, (name, sample)) in results.iter_mut().zip(batch) {
+                if matches!(r, Err(e) if e.contains("400")) {
+                    *r = is_a_person(name, sample);
+                }
             }
-            Err(e) => {
-                consecutive_errors += 1;
-                (true, Some(e))
-            }
-        };
-        let closed = sink
-            .add(VetProgress {
-                name,
-                is_person,
-                done: done as u32 + 1,
-                total,
-                error,
-            })
-            .is_err();
-        if closed {
-            break;
         }
-        if consecutive_errors >= 3 {
-            return Err("连续 3 个人名判定失败，已停止".into());
+        for ((name, _), res) in batch.iter().zip(results) {
+            let (is_person, error) = match res {
+                Ok(v) => {
+                    consecutive_errors = 0;
+                    let _ = book::remember_name(book_id, name, v);
+                    (v, None)
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    (true, Some(e))
+                }
+            };
+            done += 1;
+            let closed = sink
+                .add(VetProgress {
+                    name: name.clone(),
+                    is_person,
+                    done,
+                    total,
+                    error,
+                })
+                .is_err();
+            if closed {
+                return Ok(());
+            }
+            if consecutive_errors >= 3 {
+                return Err("连续 3 个人名判定失败，已停止".into());
+            }
         }
     }
     Ok(())

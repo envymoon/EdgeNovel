@@ -39,13 +39,13 @@ Color _ticsAccent(ReadingTheme t) =>
 class TicsPage extends StatefulWidget {
   final BookInfo info;
   final ReadingSettings settings;
-  final ValueChanged<int> onOpenChapter;
+  final ValueChanged<int>? onOpenChapter;
 
   const TicsPage({
     super.key,
     required this.info,
     required this.settings,
-    required this.onOpenChapter,
+    this.onOpenChapter,
   });
 
   @override
@@ -61,6 +61,7 @@ class _TicsPageState extends State<TicsPage> {
     '全部',
     '神态动作',
     '说话腔调',
+    '心理情绪',
     '转折推进',
     '夸张惊叹',
     '口头禅',
@@ -104,7 +105,7 @@ class _TicsPageState extends State<TicsPage> {
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
         title: Text(
-          '作者口癖 · ${widget.info.title}',
+          '文风 · ${widget.info.title}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: t.text, fontSize: 17),
@@ -136,7 +137,7 @@ class _TicsPageState extends State<TicsPage> {
             children: [
               Bloom(color: t.muted, size: 34),
               const SizedBox(height: 16),
-              Text('正在扫描作者笔癖…', style: TextStyle(color: t.muted, fontSize: 13)),
+              Text('正在扫描文风…', style: TextStyle(color: t.muted, fontSize: 13)),
             ],
           ),
   );
@@ -191,7 +192,7 @@ class _TicsPageState extends State<TicsPage> {
         Row(
           children: [
             Text(
-              '高频招牌写法',
+              '高频写法',
               style: TextStyle(
                 color: t.text,
                 fontSize: 14.5,
@@ -200,7 +201,7 @@ class _TicsPageState extends State<TicsPage> {
             ),
             const Spacer(),
             Text(
-              '共 ${filtered.length} 项 · 点例句可跳转',
+              '共 ${filtered.length} 项',
               style: TextStyle(color: t.muted, fontSize: 11.5),
             ),
           ],
@@ -211,7 +212,7 @@ class _TicsPageState extends State<TicsPage> {
             padding: const EdgeInsets.symmetric(vertical: 32),
             child: Center(
               child: Text(
-                '当前分类下暂无高频笔癖',
+                '当前分类下暂无高频写法',
                 style: TextStyle(color: t.muted, fontSize: 13),
               ),
             ),
@@ -237,55 +238,16 @@ class _TicsPageState extends State<TicsPage> {
         children: [
           Row(
             children: [
-              Text(
-                '写作指纹',
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                '约 $charsWan 万字 · ${data.chapterCount} 章',
-                style: TextStyle(color: t.muted, fontSize: 11.5),
-              ),
-            ],
-          ),
-          if (data.styleTags.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final tag in data.styleTags)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      tag,
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 14),
-          Row(
-            children: [
               _metric(t, '${(data.dialogueRatio * 100).round()}%', '对话占比'),
               _metric(t, '${data.avgSentenceLen.toStringAsFixed(1)} 字', '平均句长'),
+              _metric(t, '$charsWan 万字', '共 ${data.chapterCount} 章'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
               _metric(t, data.exclamPer10K.toStringAsFixed(0), '叹号 / 万字'),
+              _metric(t, data.questionPer10K.toStringAsFixed(0), '问号 / 万字'),
               _metric(t, data.ellipsisPer10K.toStringAsFixed(0), '省略号 / 万字'),
             ],
           ),
@@ -397,48 +359,37 @@ class _TicsPageState extends State<TicsPage> {
                 ),
               ),
               const SizedBox(width: 12),
-              InkWell(
-                onTap: () => widget.onOpenChapter(peakIdx),
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  child: Text(
-                    '最密: 第${peakIdx + 1}章(${item.peakCount}次)',
-                    style: TextStyle(color: accent, fontSize: 11),
-                  ),
-                ),
+              Text(
+                '最密: 第${peakIdx + 1}章(${item.peakCount}次)',
+                style: TextStyle(color: accent, fontSize: 11),
               ),
             ],
           ),
           if (item.sample.isNotEmpty) ...[
             const SizedBox(height: 8),
-            InkWell(
-              onTap: () => widget.onOpenChapter(sampleIdx),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(
-                  color: t.background.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _highlightedSample(item.sample, item.phrase, t, accent),
-                    const SizedBox(height: 3),
-                    Text(
-                      '— ${_chapterTitle(sampleIdx)}',
-                      translate: false,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: t.muted.withValues(alpha: 0.8),
-                        fontSize: 10.5,
-                      ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: t.background.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _highlightedSample(item.sample, item.phrase, t, accent),
+                  const SizedBox(height: 3),
+                  Text(
+                    '— ${_chapterTitle(sampleIdx)}',
+                    translate: false,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: t.muted.withValues(alpha: 0.8),
+                      fontSize: 10.5,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],

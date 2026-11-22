@@ -85,13 +85,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('写作指纹'), findsOneWidget);
-    expect(find.text('对话密集'), findsOneWidget);
+    expect(find.text('写作指纹'), findsNothing);
+    expect(find.text('对话密集'), findsNothing);
+    expect(find.text('高频写法'), findsOneWidget);
     expect(find.text('倒吸一口凉气'), findsOneWidget);
+    expect(find.text('对话占比'), findsOneWidget);
+    expect(find.text('平均句长'), findsOneWidget);
 
     await tester.tap(find.textContaining('最密: 第4章'));
     await tester.pumpAndSettle();
-    expect(opened, 3);
+    expect(opened, isNull);
   });
 
   testWidgets('EasterEggsPage hides locked eggs as ??? and unlocks on trigger', (
@@ -104,15 +107,15 @@ void main() {
     await tester.pumpAndSettle();
 
     final total = EasterEggEngine.catalog.length;
-    expect(total, greaterThanOrEqualTo(28));
+    expect(total, greaterThanOrEqualTo(40));
     expect(find.text('已发现 0 / $total'), findsOneWidget);
     expect(find.text('???'), findsWidgets);
     expect(find.text('记忆回溯'), findsNothing);
 
-    // Trigger rewind_memory (6 backward turns within 30s).
+    // Trigger rewind_memory (5 backward turns within 35s).
     final engine = EasterEggEngine.instance;
     engine.onBookOpen(bookId: 1, bookTitle: '诡秘', enabled: true);
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 5; i++) {
       engine.onPageTurn(
         backward: true,
         visibleText: '',

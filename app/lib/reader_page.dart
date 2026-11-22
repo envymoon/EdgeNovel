@@ -15,6 +15,7 @@ import 'bloom.dart';
 import 'dictionary.dart';
 import 'dictionary_page.dart';
 import 'easter_eggs.dart';
+import 'easter_eggs_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
@@ -1298,6 +1299,9 @@ class _ReaderPageState extends State<ReaderPage> {
                     settings: widget.settings,
                     reader: widget.reader,
                   ),
+                ),
+                onEasterEggs: () => _openPage(
+                  EasterEggsPage(settings: widget.settings),
                 ),
                 onGestureTurn: null,
               ),

@@ -4519,8 +4519,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CastPerson dco_decode_cast_person(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return CastPerson(
       name: dco_decode_String(arr[0]),
       aliases: dco_decode_list_String(arr[1]),
@@ -4532,6 +4532,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       backgroundSource: dco_decode_opt_String(arr[7]),
       backgroundOutdated: dco_decode_bool(arr[8]),
       evidence: dco_decode_list_rel_evidence(arr[9]),
+      timeline: dco_decode_list_prim_u_32_strict(arr[10]),
     );
   }
 
@@ -5977,6 +5978,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_backgroundSource = sse_decode_opt_String(deserializer);
     var var_backgroundOutdated = sse_decode_bool(deserializer);
     var var_evidence = sse_decode_list_rel_evidence(deserializer);
+    var var_timeline = sse_decode_list_prim_u_32_strict(deserializer);
     return CastPerson(
       name: var_name,
       aliases: var_aliases,
@@ -5988,6 +5990,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       backgroundSource: var_backgroundSource,
       backgroundOutdated: var_backgroundOutdated,
       evidence: var_evidence,
+      timeline: var_timeline,
     );
   }
 
@@ -7813,6 +7816,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.backgroundSource, serializer);
     sse_encode_bool(self.backgroundOutdated, serializer);
     sse_encode_list_rel_evidence(self.evidence, serializer);
+    sse_encode_list_prim_u_32_strict(self.timeline, serializer);
   }
 
   @protected

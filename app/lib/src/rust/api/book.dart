@@ -672,6 +672,9 @@ class CastPerson {
   /// about a character can always be traced back to the book.
   final List<RelEvidence> evidence;
 
+  /// Mention counts per equal-chapter bucket across the scanned range.
+  final Uint32List timeline;
+
   const CastPerson({
     required this.name,
     required this.aliases,
@@ -683,6 +686,7 @@ class CastPerson {
     this.backgroundSource,
     required this.backgroundOutdated,
     required this.evidence,
+    required this.timeline,
   });
 
   @override
@@ -696,7 +700,8 @@ class CastPerson {
       background.hashCode ^
       backgroundSource.hashCode ^
       backgroundOutdated.hashCode ^
-      evidence.hashCode;
+      evidence.hashCode ^
+      timeline.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -712,7 +717,8 @@ class CastPerson {
           background == other.background &&
           backgroundSource == other.backgroundSource &&
           backgroundOutdated == other.backgroundOutdated &&
-          evidence == other.evidence;
+          evidence == other.evidence &&
+          timeline == other.timeline;
 }
 
 class CastRelation {

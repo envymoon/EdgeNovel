@@ -48,6 +48,8 @@ class _CastGraphPageState extends State<CastGraphPage> {
 
   List<Offset> _pos = const [];
   int? _selected;
+  int _tab = 0; // 0: 关系图, 1: 出场
+  (int person, int bucket)? _pickedCell;
 
   final Map<String, String> _modelLabel = {};
   final Map<String, String> _modelBackground = {};
@@ -371,7 +373,7 @@ class _CastGraphPageState extends State<CastGraphPage> {
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
         title: Text(
-          '人物图谱 · ${widget.book.title}',
+          '人物构成 · ${widget.book.title}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: t.text, fontSize: 17),
@@ -439,25 +441,277 @@ class _CastGraphPageState extends State<CastGraphPage> {
     }
     return Column(
       children: [
-        _bar(t, g),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (_, box) => GestureDetector(
-              onTapUp: (d) => _tap(d.localPosition, box.biggest),
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _GraphPainter(
-                  graph: g,
-                  pos: _pos,
-                  labelOf: _labelOf,
-                  selected: _selected,
-                  theme: t,
+        _tabBar(t),
+        if (_tab == 0) ...[
+          _bar(t, g),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (_, box) => GestureDetector(
+                onTapUp: (d) => _tap(d.localPosition, box.biggest),
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _GraphPainter(
+                    graph: g,
+                    pos: _pos,
+                    labelOf: _labelOf,
+                    selected: _selected,
+                    theme: t,
+                  ),
                 ),
               ),
             ),
           ),
+          _panel(t, g),
+        ] else
+          Expanded(child: _appearanceView(t, g)),
+      ],
+    );
+  }
+
+  Widget _tabBar(ReadingTheme t) {
+    final accent = Color.lerp(const Color(0xFF4A7C6F), t.text, 0.15)!;
+    Widget item(int idx, String label) {
+      final active = _tab == idx;
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() {
+            _tab = idx;
+            if (idx == 0) _pickedCell = null;
+          }),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: active ? accent.withValues(alpha: 0.16) : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: active ? accent : t.muted,
+                fontSize: 13,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
         ),
-        _panel(t, g),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: t.muted.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            item(0, '关系图'),
+            item(1, '出场'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _appearanceView(ReadingTheme t, CastGraph g) {
+    final accent = Color.lerp(const Color(0xFF4A7C6F), t.text, 0.12)!;
+    final totalCh = math.max(g.upto, 1);
+    final buckets = g.people.isNotEmpty && g.people.first.timeline.isNotEmpty
+        ? g.people.first.timeline.length
+        : 24;
+
+    String rangeLabel(int b) {
+      final start = (b * totalCh ~/ buckets) + 1;
+      final end = math.max(start, ((b + 1) * totalCh ~/ buckets));
+      return start == end ? '第 $start 章' : '第 $start–$end 章';
+    }
+
+    final picked = _pickedCell;
+    Widget? bubble;
+    if (picked != null && picked.$1 < g.people.length) {
+      final p = g.people[picked.$1];
+      final b = picked.$2;
+      final count = b >= 0 && b < p.timeline.length ? p.timeline[b] : 0;
+      final span = b >= 0 ? rangeLabel(b) : '全书';
+      final body = b >= 0
+          ? (count > 0
+              ? '$span · 出现 $count 次'
+              : '$span · 暂未出场')
+          : '共出现 ${p.mentions} 次 · 跨越 ${p.chapters} 章 · 首登场第 ${p.firstChapter + 1} 章';
+      bubble = Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
+        decoration: BoxDecoration(
+          color: t.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: accent.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    p.name,
+                    style: TextStyle(
+                      color: t.text,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    body,
+                    style: TextStyle(color: t.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              iconSize: 16,
+              onPressed: () => setState(() => _pickedCell = null),
+              icon: Icon(Icons.close, color: t.muted),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+          child: Row(
+            children: [
+              Text(
+                '全书共 $totalCh 章 · 点击人物或色块查看详情',
+                style: TextStyle(color: t.muted, fontSize: 11.5),
+              ),
+              const Spacer(),
+              for (final a in [0.10, 0.32, 0.62, 0.92])
+                Container(
+                  width: 9,
+                  height: 9,
+                  margin: const EdgeInsets.only(left: 3),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: a),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        ?bubble,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(86, 0, 16, 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('第 1 章', style: TextStyle(color: t.muted, fontSize: 10)),
+              Text(
+                '第 ${(totalCh / 2).round()} 章',
+                style: TextStyle(color: t.muted, fontSize: 10),
+              ),
+              Text('第 $totalCh 章', style: TextStyle(color: t.muted, fontSize: 10)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+            itemCount: g.people.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (_, idx) {
+              final p = g.people[idx];
+              final tl = p.timeline;
+              var rowMax = 1;
+              for (final v in tl) {
+                if (v > rowMax) rowMax = v;
+              }
+              final isCenter = idx == g.center;
+              final rowPicked = picked?.$1 == idx;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => setState(() {
+                      _pickedCell = (idx, -1);
+                    }),
+                    child: SizedBox(
+                      width: 66,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: rowPicked || isCenter ? accent : t.text,
+                              fontSize: 12.5,
+                              fontWeight: isCenter || rowPicked
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            '${p.mentions}次',
+                            style: TextStyle(color: t.muted, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: SizedBox(
+                      height: 24,
+                      child: Row(
+                        children: [
+                          for (var b = 0; b < buckets; b++)
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setState(() {
+                                  _pickedCell = (idx, b);
+                                }),
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(horizontal: 0.8),
+                                  decoration: BoxDecoration(
+                                    color: b < tl.length && tl[b] > 0
+                                        ? accent.withValues(
+                                            alpha: (0.16 +
+                                                    0.80 *
+                                                        math.sqrt(
+                                                          tl[b] / rowMax,
+                                                        ))
+                                                .clamp(0.16, 0.96),
+                                          )
+                                        : t.muted.withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(2.5),
+                                    border: picked == (idx, b)
+                                        ? Border.all(color: t.text, width: 1.2)
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
       ],
     );
   }

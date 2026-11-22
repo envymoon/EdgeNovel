@@ -4511,6 +4511,7 @@ impl SseDecode for crate::api::book::CastPerson {
         let mut var_backgroundSource = <Option<String>>::sse_decode(deserializer);
         let mut var_backgroundOutdated = <bool>::sse_decode(deserializer);
         let mut var_evidence = <Vec<crate::api::book::RelEvidence>>::sse_decode(deserializer);
+        let mut var_timeline = <Vec<u32>>::sse_decode(deserializer);
         return crate::api::book::CastPerson {
             name: var_name,
             aliases: var_aliases,
@@ -4522,6 +4523,7 @@ impl SseDecode for crate::api::book::CastPerson {
             background_source: var_backgroundSource,
             background_outdated: var_backgroundOutdated,
             evidence: var_evidence,
+            timeline: var_timeline,
         };
     }
 }
@@ -6412,6 +6414,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::CastPerson {
             self.background_source.into_into_dart().into_dart(),
             self.background_outdated.into_into_dart().into_dart(),
             self.evidence.into_into_dart().into_dart(),
+            self.timeline.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -7787,6 +7790,7 @@ impl SseEncode for crate::api::book::CastPerson {
         <Option<String>>::sse_encode(self.background_source, serializer);
         <bool>::sse_encode(self.background_outdated, serializer);
         <Vec<crate::api::book::RelEvidence>>::sse_encode(self.evidence, serializer);
+        <Vec<u32>>::sse_encode(self.timeline, serializer);
     }
 }
 

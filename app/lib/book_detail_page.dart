@@ -662,7 +662,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           _entry(
             t,
             icon: Icons.account_tree_outlined,
-            title: '人物构成与关系',
+            title: '人物构成',
             onTap: () => _open(
               CastGraphPage(
                 book: widget.book,
@@ -716,13 +716,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
           _line(t),
           _entry(
             t,
-            icon: Icons.record_voice_over_outlined,
-            title: '作者口癖',
+            icon: Icons.edit_note_outlined,
+            title: '文风',
             onTap: () => _open(
               TicsPage(
                 info: info,
                 settings: widget.settings,
-                onOpenChapter: (i) => _read(i, null),
               ),
             ),
           ),

@@ -1427,6 +1427,8 @@ pub struct CastPerson {
     /// The sentences that account rests on — shown to the reader, so a claim
     /// about a character can always be traced back to the book.
     pub evidence: Vec<RelEvidence>,
+    /// Mention counts per equal-chapter bucket across the scanned range.
+    pub timeline: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1663,6 +1665,7 @@ pub fn cast_graph(
                     text: t.clone(),
                 })
                 .collect(),
+            timeline: p.timeline.clone(),
         });
     }
     let edges = cast
