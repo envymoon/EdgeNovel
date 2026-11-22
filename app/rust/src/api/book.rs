@@ -1119,6 +1119,15 @@ pub fn chapter_pace(path: String) -> Result<Vec<Option<f64>>, String> {
     Ok(pace::scores(&l.text, &l.chapters))
 }
 
+/// 注水度: one padding/repetition score per chapter in `0.0..=1.0` (higher is
+/// more padded). `None` for chapters shorter than `filler::MIN_CHARS`.
+pub fn chapter_filler(path: String) -> Result<Vec<Option<f64>>, String> {
+    ensure_loaded(&path)?;
+    let guard = cache().read().unwrap();
+    let l = guard.get(&path).ok_or("书未打开")?;
+    Ok(novel_core::filler::scores(&l.text, &l.chapters))
+}
+
 /// The same scores for a book that may not be open, without opening it: the
 /// statistics page asks about several books, and putting each one into the
 /// cache would hold their whole text in memory for nothing — while closing one

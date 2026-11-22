@@ -7,7 +7,7 @@ import 'package:novel/src/rust/api/book.dart';
 import 'package:novel/src/rust/frb_generated.dart';
 import 'package:novel/theme.dart';
 
-/// A made-up book: a town, a school two chapters away, and back.
+/// A made-up book: a single town so tapping the center of the canvas hits it.
 class _FakePlaces implements RustLibApi {
   final Set<String> _removed = {};
 
@@ -27,25 +27,6 @@ class _FakePlaces implements RustLibApi {
         settings: 5,
         people: ['甲', '乙'],
       ),
-      const PlaceNode(
-        name: '白鹿书院',
-        mentions: 30,
-        chapters: 4,
-        firstChapter: 2,
-        rank: 2,
-        settings: 3,
-        people: ['甲'],
-      ),
-      const PlaceNode(
-        name: '书院后山',
-        mentions: 9,
-        chapters: 2,
-        firstChapter: 3,
-        rank: 1,
-        parent: 1,
-        settings: 0,
-        people: [],
-      ),
     ];
     final kept = [
       for (final p in allPlaces)
@@ -54,25 +35,10 @@ class _FakePlaces implements RustLibApi {
     return PlaceAtlas(
       places: kept,
       stages: [
-        PlaceStage(from: 0, to: 3, area: 0, spots: Uint32List.fromList([0, 1])),
-        PlaceStage(
-          from: 4,
-          to: 7,
-          area: kept.length > 1 ? 1 : 0,
-          spots: Uint32List.fromList(kept.length > 2 ? [1, 2] : [0]),
-        ),
+        PlaceStage(from: 0, to: 5, area: 0, spots: Uint32List.fromList([0])),
       ],
-      setting: Int32List.fromList([
-        0,
-        0,
-        kept.length > 1 ? 1 : 0,
-        kept.length > 1 ? 1 : 0,
-        0,
-        0,
-        kept.length > 1 ? 1 : 0,
-        0,
-      ]),
-      upto: 8,
+      setting: Int32List.fromList(kept.isEmpty ? [-1] : [0, 0, 0, 0, 0]),
+      upto: 5,
       removed: _removed.toList(),
     );
   }
@@ -98,7 +64,7 @@ const _book = ShelfItem(
   id: 1,
   path: 'book.txt',
   title: '书',
-  chapterCount: 8,
+  chapterCount: 5,
   lastChapter: 0,
   lastOffset: 0,
   totalBytes: 1,
@@ -114,7 +80,7 @@ void main() {
   final fake = _FakePlaces();
   setUpAll(() => RustLib.initMock(api: fake));
 
-  testWidgets('routes, stage return-to-full-book, and manual place removal', (
+  testWidgets('full-book map hides bottom list until a place is tapped', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -124,37 +90,32 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 青石镇 ↔ 白鹿书院 is one route, travelled four times.
-    expect(find.text('全书 8 章 · 3 处 · 2 段地图 · 1 条路线'), findsOneWidget);
+    expect(
+      find.text('全书 5 章 · 1 处主要地点 · 0 条路线（点击地点查看详情）'),
+      findsOneWidget,
+    );
+    // Details panel stays hidden until a node is tapped.
+    expect(find.text('常在这里的人：甲、乙'), findsNothing);
 
-    await tester.tap(find.text('青石镇 5'));
+    // Tap the single node centered on the canvas.
+    final canvas = find.byType(CustomPaint).last;
+    await tester.tap(canvas);
     await tester.pumpAndSettle();
-    expect(find.text('来往：白鹿书院 4 次'), findsOneWidget);
     expect(find.text('常在这里的人：甲、乙'), findsOneWidget);
-    expect(find.text('章节：1、2、5、6、8'), findsOneWidget);
+    expect(find.text('章节：1、2、3、4、5'), findsOneWidget);
 
-    // Switch to stage 2 and verify one-tap return to 全书.
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('第 5–8 章'));
-    await tester.pumpAndSettle();
-    expect(find.text('第 5–8 章 · 3 处 · 1 条路线'), findsOneWidget);
-    expect(find.text('返回全书'), findsOneWidget);
-
-    await tester.tap(find.text('返回全书'));
-    await tester.pumpAndSettle();
-    expect(find.text('全书 8 章 · 3 处 · 2 段地图 · 1 条路线'), findsOneWidget);
-
-    // Remove a place by hand, then restore it.
-    await tester.tap(find.text('书院后山 0'));
-    await tester.pumpAndSettle();
+    // Remove the place, then restore it from the AppBar action.
     await tester.tap(find.text('移除'));
     await tester.pumpAndSettle();
-    expect(find.text('已移除 1 处（点击恢复）'), findsOneWidget);
-    expect(find.text('+ 书院后山'), findsOneWidget);
+    expect(find.text('已移除 1'), findsOneWidget);
 
-    await tester.tap(find.text('+ 书院后山'));
+    await tester.tap(find.text('已移除 1'));
     await tester.pumpAndSettle();
-    expect(find.text('书院后山 0'), findsOneWidget);
+    await tester.tap(find.text('+ 青石镇'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('全书 5 章 · 1 处主要地点 · 0 条路线（点击地点查看详情）'),
+      findsOneWidget,
+    );
   });
 }

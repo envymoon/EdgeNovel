@@ -262,6 +262,9 @@ class ReadingSettings extends ChangeNotifier {
   /// The whole-book 节奏 curve above the reader's bottom bar. On by default;
   /// on desktop that bar never hides, so a reader who finds it busy turns it off.
   bool paceStrip = true;
+
+  /// Local reading easter eggs (master toggle; low-frequency surprise banners).
+  bool easterEggs = true;
   PageMode pageMode = PageMode.paged;
   double pageWidth = 720;
 
@@ -356,6 +359,7 @@ class ReadingSettings extends ChangeNotifier {
     s.paragraphSpacing = p.getDouble('paragraphSpacing') ?? s.paragraphSpacing;
     s.firstLineIndent = p.getBool('firstLineIndent') ?? s.firstLineIndent;
     s.paceStrip = p.getBool('paceStrip') ?? s.paceStrip;
+    s.easterEggs = p.getBool('readingEggs') ?? s.easterEggs;
     // A saved choice stays; only a first run gets the new default.
     s.pageMode =
         PageMode.values[(p.getInt('pageMode') ?? s.pageMode.index).clamp(
@@ -395,6 +399,7 @@ class ReadingSettings extends ChangeNotifier {
     p.setDouble('paragraphSpacing', paragraphSpacing);
     p.setBool('firstLineIndent', firstLineIndent);
     p.setBool('paceStrip', paceStrip);
+    p.setBool('readingEggs', easterEggs);
     p.setInt('pageMode', pageMode.index);
     p.setDouble('pageWidth', pageWidth);
     p.setDouble('wheelScale', wheelScale);
@@ -592,6 +597,12 @@ class ReadingSettings extends ChangeNotifier {
 
   void setPaceStrip(bool v) {
     paceStrip = v;
+    notifyListeners();
+    _persist();
+  }
+
+  void setEasterEggs(bool v) {
+    easterEggs = v;
     notifyListeners();
     _persist();
   }

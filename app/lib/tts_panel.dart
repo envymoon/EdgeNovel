@@ -186,12 +186,23 @@ class _TtsPanelState extends State<TtsPanel> {
                     ),
                     const SizedBox(width: 14),
                     Expanded(
-                      child: Text(
-                        title,
-                        translate: false,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: label,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            translate: false,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: label,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '长摁跳转',
+                            style: TextStyle(color: t.muted, fontSize: 11.5),
+                          ),
+                        ],
                       ),
                     ),
                     if (!_spoken && !playing && !system)

@@ -8,10 +8,8 @@ import 'theme.dart';
 
 /// 地点图 — where the book happens, counted from the text (novel_core::places).
 ///
-/// Places are linked by the story moving between them, not by sharing a
-/// sentence: each chapter is set somewhere, and a change of setting is a
-/// trip. The strip on top is the book cut where its maps change; a stage
-/// picked there narrows the graph to its own chapters.
+/// Shows one full-book map of the main places, grouped by parent regions and
+/// linked by pruned backbone routes. Tapping a place opens its details panel.
 class PlaceGraphPage extends StatefulWidget {
   final ShelfItem book;
   final ReadingSettings settings;
@@ -38,13 +36,10 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
   PlaceAtlas? _atlas;
   String? _error;
 
-  /// The stage picked on the strip, or null for the whole book.
-  int? _stage;
-
   /// The place picked, by index into the atlas's places.
   int? _selected;
 
-  // What the graph shows for the current range.
+  // What the graph shows for the whole book.
   List<int> _nodes = const [];
   Map<int, int> _here = const {};
   List<_Trip> _allTrips = const [];
@@ -70,7 +65,6 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       setState(() {
         _atlas = a;
         _error = null;
-        if (_stage != null && _stage! >= a.stages.length) _stage = null;
         if (_selected != null && _selected! >= a.places.length) {
           _selected = null;
         }
@@ -97,23 +91,16 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     await _load();
   }
 
-  (int, int) get _range {
-    final a = _atlas!;
-    final s = _stage;
-    if (s == null) return (0, math.max(a.setting.length - 1, 0));
-    return (a.stages[s].from, a.stages[s].to);
-  }
-
-  /// Trips made within chapters [from]..[to]: the setting changing from one
-  /// place to another, either way round counted as one route.
-  List<_Trip> _tripsIn(int from, int to) {
+  /// Trips made across the whole book: the setting changing from one place to
+  /// another, either way round counted as one route.
+  List<_Trip> _tripsAll() {
     final setting = _atlas!.setting;
     final m = <(int, int), int>{};
     var last = -1;
     for (var c = 0; c < setting.length; c++) {
       final p = setting[c];
       if (p < 0) continue;
-      if (last >= 0 && last != p && c >= from && c <= to) {
+      if (last >= 0 && last != p) {
         final k = (math.min(last, p), math.max(last, p));
         m[k] = (m[k] ?? 0) + 1;
       }
@@ -161,25 +148,21 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     return kept;
   }
 
-  /// The places the story stands in within the range, the most chapters
-  /// first, and the pruned routes and area groups among them.
+  /// The main places across the whole book, and the pruned routes and area
+  /// groups among them.
   void _build() {
     final a = _atlas!;
-    final (from, to) = _range;
     final here = <int, int>{};
-    for (var c = from; c <= to && c < a.setting.length; c++) {
+    for (var c = 0; c < a.setting.length; c++) {
       final p = a.setting[c];
       if (p >= 0) here[p] = (here[p] ?? 0) + 1;
     }
     final ranked = here.keys.toList()
       ..sort((x, y) => here[y]!.compareTo(here[x]!));
-    var nodes = ranked.take(_stage == null ? 14 : 11).toList();
-    if (nodes.length < 3 && _stage != null) {
-      nodes = {...nodes, ...a.stages[_stage!].spots}.take(8).toList();
-    }
+    final nodes = ranked.take(16).toList();
     final idx = {for (var i = 0; i < nodes.length; i++) nodes[i]: i};
     final allTrips = [
-      for (final t in _tripsIn(from, to))
+      for (final t in _tripsAll())
         if (idx.containsKey(t.a) && idx.containsKey(t.b))
           _Trip(idx[t.a]!, idx[t.b]!, t.count),
     ];
@@ -226,12 +209,6 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     _pos = _layout(nodes.length, [...trips, ...belong], groups);
   }
 
-  void _setStage(int? k) => setState(() {
-    _stage = (_stage == k) ? null : k;
-    _selected = null;
-    _build();
-  });
-
   // ── grouped force-directed layout + overlap separation ───────────────────
   List<Offset> _layout(int n, List<_Trip> edges, List<_Group> groups) {
     if (n == 0) return const [];
@@ -243,7 +220,6 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
         if (groupOf[m] < 0) groupOf[m] = g;
       }
     }
-    // Seed nodes grouped by area around the circle so clusters start together.
     final order = List<int>.generate(n, (i) => i)
       ..sort((a, b) => groupOf[a].compareTo(groupOf[b]));
     final pos = List<Offset>.filled(n, Offset.zero);
@@ -269,7 +245,6 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
             dist = d.distance;
           }
           final sameGroup = groupOf[i] >= 0 && groupOf[i] == groupOf[j];
-          // Repel other-group nodes harder so group boxes stay apart.
           final repScale = sameGroup ? 0.8 : 1.25;
           final u = d / dist * (k * k / dist * repScale);
           disp[i] += u;
@@ -312,7 +287,6 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     }
 
     var norm = normalize(pos);
-    // Final collision pass so circles and labels never pile on top of each other.
     final minDist = (0.22 - 0.004 * n).clamp(0.14, 0.20);
     for (var pass = 0; pass < 24; pass++) {
       var moved = false;
@@ -337,6 +311,50 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     return normalize(norm);
   }
 
+  void _showRemovedSheet(ReadingTheme t, PlaceAtlas a) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: t.background,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '已移除的地点（点击恢复）',
+                style: TextStyle(
+                  color: t.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final name in a.removed)
+                    ActionChip(
+                      label: Text(
+                        '+ $name',
+                        style: TextStyle(color: t.text, fontSize: 12.5),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(sheetCtx);
+                        _setRemoved(name, false);
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.settings.theme;
@@ -354,6 +372,16 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: t.text, fontSize: 17),
         ),
+        actions: [
+          if (a != null && a.removed.isNotEmpty)
+            TextButton(
+              onPressed: () => _showRemovedSheet(t, a),
+              child: Text(
+                '已移除 ${a.removed.length}',
+                style: TextStyle(color: t.muted, fontSize: 12.5),
+              ),
+            ),
+        ],
       ),
       body: a == null ? _opening(t) : _content(t, a),
     );
@@ -395,23 +423,15 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '还没认出足够的地点',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: t.muted, fontSize: 13, height: 1.8),
-              ),
-              if (a.removed.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _removedSection(t, a),
-              ],
-            ],
+          child: Text(
+            '还没认出足够的地点',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: t.muted, fontSize: 13, height: 1.8),
           ),
         ),
       );
     }
+    final sel = _selected;
     return Column(
       children: [
         _bar(t, a),
@@ -437,7 +457,7 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
             ),
           ),
         ),
-        _panel(t, a),
+        if (sel != null) _panel(t, a, sel),
       ],
     );
   }
@@ -450,132 +470,20 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
   }
 
   Widget _bar(ReadingTheme t, PlaceAtlas a) {
-    final (from, to) = _range;
-    final routes = _tripsIn(0, a.setting.length - 1).length;
+    final routes = _tripsAll().length;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: t.muted.withValues(alpha: 0.12)),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _stage == null
-                      ? '全书 ${a.upto} 章 · ${a.places.length} 处 · '
-                            '${a.stages.length} 段地图 · $routes 条路线'
-                      : '第 ${from + 1}–${to + 1} 章 · ${_nodes.length} 处 · '
-                            '${_allTrips.length} 条路线',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: t.muted, fontSize: 12),
-                ),
-              ),
-              if (_stage != null)
-                GestureDetector(
-                  onTap: () => _setStage(null),
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 10),
-                    child: Text(
-                      '返回全书',
-                      style: TextStyle(
-                        color: t.text,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          if (a.stages.length > 1) ...[
-            const SizedBox(height: 8),
-            _strip(t, a),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Fixed "全书" pill on the left + the book as its maps, each as wide as its
-  /// chapters; tapping 全书 always returns to the full-book graph.
-  Widget _strip(ReadingTheme t, PlaceAtlas a) {
-    final n = math.max(a.setting.length, 1);
-    final floor = math.max(n ~/ 150, 1);
-    return SizedBox(
-      height: 30,
-      child: Row(
-        children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _setStage(null),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _stage == null
-                    ? t.text
-                    : t.muted.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '全书',
-                style: TextStyle(
-                  color: _stage == null ? t.background : t.muted,
-                  fontSize: 11,
-                  fontWeight: _stage == null ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Row(
-                children: [
-                  for (var k = 0; k < a.stages.length; k++) ...[
-                    if (k > 0) const SizedBox(width: 2),
-                    Expanded(
-                      flex: math.max(
-                        a.stages[k].to - a.stages[k].from + 1,
-                        floor,
-                      ),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => _setStage(k),
-                        child: Container(
-                          alignment: Alignment.center,
-                          color: _stage == k
-                              ? t.text
-                              : t.muted.withValues(alpha: 0.14),
-                          child:
-                              (a.stages[k].to - a.stages[k].from + 1) / n > 0.08
-                              ? Text(
-                                  a.places[a.stages[k].area].name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.clip,
-                                  softWrap: false,
-                                  style: TextStyle(
-                                    color: _stage == k ? t.background : t.muted,
-                                    fontSize: 11,
-                                  ),
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        '全书 ${a.upto} 章 · ${_nodes.length} 处主要地点 · $routes 条路线（点击地点查看详情）',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: t.muted, fontSize: 12),
       ),
     );
   }
@@ -588,7 +496,7 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       final c = _scaled(_pos[i], rect);
       final r = _radius(_sizes, i, _atlas!.places[_nodes[i]].rank);
       final d = (c - p).distance;
-      if (d <= r + 8 && d < best) {
+      if (d <= r + 10 && d < best) {
         best = d;
         hit = i;
       }
@@ -599,224 +507,87 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
 
   List<int> get _sizes => [for (final p in _nodes) _here[p] ?? 1];
 
-  Widget _panel(ReadingTheme t, PlaceAtlas a) {
-    final sel = _selected;
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 300),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: t.muted.withValues(alpha: 0.12))),
-      ),
-      child: sel == null ? _overview(t, a) : _place(t, a, sel),
-    );
-  }
-
-  /// With nothing picked: the maps in order, then every place, then removed.
-  Widget _overview(ReadingTheme t, PlaceAtlas a) {
-    final small = TextStyle(color: t.muted, fontSize: 12);
-    final byScenes = List<int>.generate(a.places.length, (i) => i)
-      ..sort((x, y) => a.places[y].settings.compareTo(a.places[x].settings));
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-      children: [
-        if (a.stages.length > 1) ...[
-          for (var k = 0; k < a.stages.length; k++)
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _setStage(k),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _stage == k ? t.muted.withValues(alpha: 0.14) : null,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 92,
-                      child: Text(
-                        '第 ${a.stages[k].from + 1}–${a.stages[k].to + 1} 章',
-                        style: small,
-                      ),
-                    ),
-                    Expanded(
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: a.places[a.stages[k].area].name,
-                              style: TextStyle(
-                                color: t.text,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            TextSpan(
-                              text: [
-                                '',
-                                for (final s in a.stages[k].spots.skip(1).take(4))
-                                  a.places[s].name,
-                              ].join(' · '),
-                              style: TextStyle(color: t.muted),
-                            ),
-                          ],
-                        ),
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          const SizedBox(height: 10),
-        ],
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Wrap(
-            spacing: 14,
-            runSpacing: 4,
-            children: [
-              for (final i in byScenes)
-                InkWell(
-                  onTap: () => setState(() => _selected = i),
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: a.places[i].name,
-                          style: TextStyle(color: t.text),
-                        ),
-                        TextSpan(
-                          text: ' ${a.places[i].settings}',
-                          style: TextStyle(color: t.muted),
-                        ),
-                      ],
-                    ),
-                    style: const TextStyle(fontSize: 12.5, height: 1.6),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (a.removed.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: _removedSection(t, a),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _removedSection(ReadingTheme t, PlaceAtlas a) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        '已移除 ${a.removed.length} 处（点击恢复）',
-        style: TextStyle(color: t.muted, fontSize: 11.5),
-      ),
-      const SizedBox(height: 6),
-      Wrap(
-        spacing: 8,
-        runSpacing: 6,
-        children: [
-          for (final name in a.removed)
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => _setRemoved(name, false),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: t.muted.withValues(alpha: 0.25)),
-                ),
-                child: Text(
-                  '+ $name',
-                  style: TextStyle(color: t.muted, fontSize: 11.5),
-                ),
-              ),
-            ),
-        ],
-      ),
-    ],
-  );
-
-  Widget _place(ReadingTheme t, PlaceAtlas a, int sel) {
+  Widget _panel(ReadingTheme t, PlaceAtlas a, int sel) {
     final p = a.places[sel];
-    final (from, to) = _range;
     final routes =
         [
-          for (final e in _tripsIn(from, to))
+          for (final e in _tripsAll())
             if (e.a == sel || e.b == sel) (e.a == sel ? e.b : e.a, e.count),
         ]..sort((x, y) => y.$2.compareTo(x.$2));
     final chapters = [
-      for (var c = from; c <= to && c < a.setting.length; c++)
+      for (var c = 0; c < a.setting.length; c++)
         if (a.setting[c] == sel) c + 1,
     ];
     final body = TextStyle(color: t.text, fontSize: 13, height: 1.65);
     final small = TextStyle(color: t.muted, fontSize: 11.5, height: 1.6);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                p.name,
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 280),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: t.muted.withValues(alpha: 0.12))),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  p.name,
+                  style: TextStyle(
+                    color: t.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
-            TextButton(
-              onPressed: () => _setRemoved(p.name, true),
-              style: TextButton.styleFrom(
+              TextButton(
+                onPressed: () => _setRemoved(p.name, true),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: Text(
+                  '移除',
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+              ),
+              IconButton(
+                onPressed: () => setState(() => _selected = null),
                 visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                icon: Icon(Icons.close, size: 18, color: t.muted),
               ),
-              child: Text(
-                '移除',
-                style: TextStyle(color: t.muted, fontSize: 12),
-              ),
-            ),
-            IconButton(
-              onPressed: () => setState(() => _selected = null),
-              visualDensity: VisualDensity.compact,
-              icon: Icon(Icons.close, size: 18, color: t.muted),
-            ),
-          ],
-        ),
-        Text(
-          [
-            '首次出现第 ${p.firstChapter + 1} 章',
-            '提及 ${p.mentions} 次',
-            '故事在这里 ${chapters.length} 章',
-            if (p.parent case final parent?) '属于 ${a.places[parent].name}',
-          ].join(' · '),
-          style: small,
-        ),
-        if (routes.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            '来往：${routes.map((r) => '${a.places[r.$1].name} ${r.$2} 次').join('、')}',
-            style: body,
+            ],
           ),
-        ],
-        if (p.people.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text('常在这里的人：${p.people.join('、')}', style: body),
-        ],
-        if (chapters.isNotEmpty) ...[
-          const SizedBox(height: 6),
           Text(
-            '章节：${chapters.take(30).join('、')}${chapters.length > 30 ? '…' : ''}',
+            [
+              '首次出现第 ${p.firstChapter + 1} 章',
+              '提及 ${p.mentions} 次',
+              '故事在这里 ${chapters.length} 章',
+              if (p.parent case final parent?) '属于 ${a.places[parent].name}',
+            ].join(' · '),
             style: small,
           ),
+          if (routes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '来往：${routes.map((r) => '${a.places[r.$1].name} ${r.$2} 次').join('、')}',
+              style: body,
+            ),
+          ],
+          if (p.people.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('常在这里的人：${p.people.join('、')}', style: body),
+          ],
+          if (chapters.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '章节：${chapters.take(30).join('、')}${chapters.length > 30 ? '…' : ''}',
+              style: small,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -975,7 +746,6 @@ class _PlacePainter extends CustomPainter {
 
       canvas.drawCircle(c, r, Paint()..color = theme.background);
       if (isMacro) {
-        // Double ring marks macro regions / provinces / countries.
         canvas.drawCircle(
           c,
           r + 3,

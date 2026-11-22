@@ -233,6 +233,11 @@ Future<List<SearchHit>> searchText({
 Future<List<double?>> chapterPace({required String path}) =>
     RustLib.instance.api.crateApiBookChapterPace(path: path);
 
+/// 注水度: one padding/repetition score per chapter in `0.0..=1.0` (higher is
+/// more padded). `None` for chapters shorter than `filler::MIN_CHARS`.
+Future<List<double?>> chapterFiller({required String path}) =>
+    RustLib.instance.api.crateApiBookChapterFiller(path: path);
+
 /// Take someone off a book's graph by hand, or put them back. The one in the
 /// middle stays: the graph is drawn around them. Either way the book is
 /// scanned again on the next look, the seats filled by the usual rules;

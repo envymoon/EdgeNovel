@@ -6,6 +6,7 @@ pub mod cleanup;
 pub mod cover;
 pub mod decode;
 pub mod dict;
+pub mod filler;
 pub mod fingerprint;
 pub mod focus;
 pub mod genre;

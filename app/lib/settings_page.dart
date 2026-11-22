@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide Text;
 import 'app_localizations.dart';
 import 'appearance_page.dart';
 import 'dictionary_page.dart';
+import 'easter_eggs_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'feedback_page.dart';
@@ -158,6 +159,17 @@ class SettingsPage extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (_) => DictionaryPage(settings: settings),
+                        ),
+                      ),
+                    ),
+                    _entry(
+                      t,
+                      icon: Icons.auto_awesome_mosaic_outlined,
+                      title: '彩蛋',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => EasterEggsPage(settings: settings),
                         ),
                       ),
                     ),

@@ -8,6 +8,7 @@ import 'bloom.dart';
 import 'cast_graph_page.dart';
 import 'cover.dart';
 import 'landmine_page.dart';
+import 'filler_page.dart';
 import 'pace_page.dart';
 import 'place_graph_page.dart';
 import 'plate_page.dart';
@@ -703,6 +704,22 @@ class _BookDetailPageState extends State<BookDetailPage> {
             title: '节奏',
             onTap: () => _open(
               PacePage(
+                info: info,
+                settings: widget.settings,
+                current: widget.book.lastOpenedAt == null
+                    ? null
+                    : info.lastChapter,
+                onOpenChapter: (i) => _read(i, null),
+              ),
+            ),
+          ),
+          _line(t),
+          _entry(
+            t,
+            icon: Icons.water_drop_outlined,
+            title: '注水度',
+            onTap: () => _open(
+              FillerPage(
                 info: info,
                 settings: widget.settings,
                 current: widget.book.lastOpenedAt == null

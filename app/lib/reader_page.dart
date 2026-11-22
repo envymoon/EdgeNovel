@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' hide Text;
@@ -13,6 +14,8 @@ import 'background_task_bar.dart';
 import 'bloom.dart';
 import 'dictionary.dart';
 import 'dictionary_page.dart';
+import 'easter_eggs.dart';
+import 'filler_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
@@ -82,6 +85,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   late final TtsController _tts;
 
+  Timer? _eggTimer;
+  int _lastPageNum = 1;
+  int _eggWindowChars = 0;
+  List<double?>? _eggFiller;
+  List<double?>? _eggPace;
+
   bool get _isPaged => widget.settings.pageMode != PageMode.scroll;
 
   @override
@@ -99,12 +108,79 @@ class _ReaderPageState extends State<ReaderPage> {
     TtsPrepare.instance.addListener(_onPrepareTick);
     _resumed = AppLifecycleListener(onResume: _onPrepareTick);
     widget.reader.addListener(_onChapter);
+    _pageInfo.addListener(_onEggPageTurn);
+    _initEasterEggs();
     spokenChapterWanted.addListener(_onSpokenWanted);
     // Opened for a chapter tapped in 已合成.
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSpokenWanted());
     _unlistenGesture = GestureTurn.instance.listen(_onGesture);
     widget.settings.addListener(_syncGesture);
     _syncGesture();
+  }
+
+  void _initEasterEggs() {
+    final info = widget.reader.info;
+    if (info != null) {
+      EasterEggEngine.instance.onBookOpen(
+        bookId: info.id,
+        bookTitle: info.title,
+        enabled: widget.settings.easterEggs,
+      );
+      unawaited(
+        loadFiller(info.path, info.chapters.length)
+            .then((v) {
+              if (mounted) _eggFiller = v;
+            })
+            .catchError((_) {}),
+      );
+      unawaited(
+        loadPace(info.path, info.chapters.length)
+            .then((v) {
+              if (mounted) _eggPace = v;
+            })
+            .catchError((_) {}),
+      );
+    }
+    _eggTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      final cur = widget.reader.info;
+      if (!mounted || cur == null) return;
+      final chars = _eggWindowChars;
+      _eggWindowChars = 0;
+      EasterEggEngine.instance.onSpeedWindow(
+        chars: chars,
+        secs: 30,
+        baselineCharsPerMin: _cpm,
+        bookTitle: cur.title,
+        enabled: widget.settings.easterEggs,
+      );
+    });
+  }
+
+  void _onEggPageTurn() {
+    final info = widget.reader.info;
+    if (info == null) return;
+    final page = _pageInfo.value.$1;
+    final backward = page < _lastPageNum;
+    _lastPageNum = page;
+    // Estimate visible page text sample from current chapter paragraphs.
+    final paras = widget.reader.paragraphs;
+    var sample = '';
+    if (paras.isNotEmpty) {
+      final totalPages = math.max(_pageInfo.value.$2, 1);
+      final idx = (((page - 1) / totalPages) * paras.length)
+          .floor()
+          .clamp(0, paras.length - 1);
+      final end = math.min(idx + 6, paras.length);
+      sample = paras.sublist(idx, end).join('\n');
+      if (!backward) _eggWindowChars += sample.length.clamp(80, 700);
+    }
+    EasterEggEngine.instance.onPageTurn(
+      backward: backward,
+      visibleText: sample,
+      baselineCharsPerMin: _cpm,
+      bookTitle: info.title,
+      enabled: widget.settings.easterEggs,
+    );
   }
 
   /// 隔空翻页: the camera runs while a book is open with it switched on.
@@ -141,6 +217,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   /// Its page watches every gesture while open; the book goes back to the
   /// ones switched on after.
+  // ignore: unused_element
   Future<void> _openGestureTurn() async {
     await Navigator.push(
       context,
@@ -162,6 +239,9 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _lookupTimer?.cancel();
+    _eggTimer?.cancel();
+    _pageInfo.removeListener(_onEggPageTurn);
+    EasterEggEngine.instance.dismissBanner();
     _unlistenGesture();
     widget.settings.removeListener(_syncGesture);
     if (_gestureOn) unawaited(GestureTurn.instance.stop());
@@ -581,6 +661,13 @@ class _ReaderPageState extends State<ReaderPage> {
     if (book == null || (book == _plateBook && chapter == _plateChapter)) {
       return;
     }
+    EasterEggEngine.instance.onChapterChanged(
+      chapterIndex: chapter,
+      fillerScores: _eggFiller,
+      paceScores: _eggPace,
+      bookTitle: widget.reader.info?.title ?? '',
+      enabled: widget.settings.easterEggs,
+    );
     final onward = book == _plateBook && chapter == _plateChapter + 1;
     // Known already: the page turned onto was this plate, so it stays up.
     final arriving = onward ? _plateAfter : null;
@@ -1213,12 +1300,14 @@ class _ReaderPageState extends State<ReaderPage> {
                     reader: widget.reader,
                   ),
                 ),
-                onGestureTurn: GestureTurn.available ? _openGestureTurn : null,
+                onGestureTurn: null,
               ),
-              body: _withPlate(
-                t,
-                compact: compact,
-                _textArea(
+              body: Stack(
+                children: [
+                  _withPlate(
+                    t,
+                    compact: compact,
+                    _textArea(
                   barsOverText: barsOverText,
                   showControls: showControls,
                   systemInsets: systemInsets - onPaper,
@@ -1299,6 +1388,9 @@ class _ReaderPageState extends State<ReaderPage> {
                     ),
                   ),
                 ),
+                  ),
+                  EasterEggBannerOverlay(theme: t),
+                ],
               ),
               bottomNavigationBar: showControls
                   ? SafeArea(
