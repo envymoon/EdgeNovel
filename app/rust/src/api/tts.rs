@@ -1128,8 +1128,8 @@ mod light {
         let (gpu, epoch, rest) = (p.gpu, p.epoch, p.rest);
         let misplaced = || {
             let behind = engine::background();
-            unsafe { edge_tts_bg_epoch() != epoch }
-                || if gpu { behind } else { !behind && engine::gpu() && !NO_GPU.load(Ordering::SeqCst) }
+            let moved = unsafe { edge_tts_bg_epoch() != epoch };
+            moved || if gpu { behind } else { !behind && engine::gpu() && !NO_GPU.load(Ordering::SeqCst) }
         };
         if misplaced() {
             return 1;

@@ -1652,6 +1652,9 @@ pub struct PlaceNode {
     pub mentions: u32,
     pub chapters: u32,
     pub first_chapter: u32,
+    /// Scale of the place: 1 = building/spot, 2 = district/sect/school,
+    /// 3 = city, 4 = province/region, 5 = country/realm, 6 = world/continent.
+    pub rank: u8,
     /// Index into [`PlaceAtlas::places`] of the place this one is inside.
     pub parent: Option<u32>,
     /// Chapters the story is set here.
@@ -1678,6 +1681,8 @@ pub struct PlaceAtlas {
     /// Per chapter: where it is set, by index into `places`, or -1.
     pub setting: Vec<i32>,
     pub upto: u32,
+    /// Place names the reader removed by hand, so they can be restored.
+    pub removed: Vec<String>,
 }
 
 /// The place graph, built once and kept against the book like the cast. It
@@ -1690,6 +1695,7 @@ pub fn place_atlas(path: String, book_id: i64, up_to_chapter: i64) -> Result<Pla
         let l = guard.get(&path).ok_or("书未打开")?;
         (scan_span(l, up_to_chapter), l.chapters.len() as i64)
     };
+    let removed = with_store!(s => s.removed_places(book_id)).unwrap_or_default();
     let version = novel_core::places::PLACE_VERSION as i64;
     let hit = with_store!(s => s.place_cache(book_id, upto as i64, total, version))
         .ok()
@@ -1710,7 +1716,7 @@ pub fn place_atlas(path: String, book_id: i64, up_to_chapter: i64) -> Result<Pla
             } else {
                 cast.ranked
             };
-            let atlas = novel_core::places::scan_ranked(&l.text, &l.chapters, upto, &ranked);
+            let atlas = novel_core::places::scan_without(&l.text, &l.chapters, upto, &ranked, &removed);
             drop(guard);
             if let Ok(json) = serde_json::to_string(&atlas) {
                 let _ = with_store!(s => s.set_place_cache(book_id, upto as i64, total, version, &json));
@@ -1729,6 +1735,7 @@ pub fn place_atlas(path: String, book_id: i64, up_to_chapter: i64) -> Result<Pla
                 mentions: p.mentions,
                 chapters: p.chapters,
                 first_chapter: p.first_chapter as u32,
+                rank: p.rank,
                 parent: p.parent.map(|i| i as u32),
                 settings: p.settings,
                 people: p
@@ -1751,7 +1758,15 @@ pub fn place_atlas(path: String, book_id: i64, up_to_chapter: i64) -> Result<Pla
             .collect(),
         setting: atlas.setting.iter().map(|s| s.map_or(-1, |i| i as i32)).collect(),
         upto: upto as u32,
+        removed,
     })
+}
+
+/// Take a place off a book's place graph by hand, or put it back.
+pub fn remove_place(book_id: i64, name: String, removed: bool) -> Result<(), String> {
+    with_store!(s => s.set_removed_place(book_id, &name, removed))
+        .map_err(|e| format!("保存失败: {e}"))?;
+    with_store!(s => s.drop_place_cache(book_id))
 }
 
 /// A book's genre tags, and the chapter its reader is in: where 章间立绘

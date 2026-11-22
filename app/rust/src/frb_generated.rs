@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -712597779;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1125454994;
 
 // Section: executor
 
@@ -3059,6 +3059,42 @@ fn wire__crate__api__book__remove_person_impl(
         },
     )
 }
+fn wire__crate__api__book__remove_place_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remove_place",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_book_id = <i64>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_removed = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::book::remove_place(api_book_id, api_name, api_removed)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__book__removed_people_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -5402,11 +5438,13 @@ impl SseDecode for crate::api::book::PlaceAtlas {
         let mut var_stages = <Vec<crate::api::book::PlaceStage>>::sse_decode(deserializer);
         let mut var_setting = <Vec<i32>>::sse_decode(deserializer);
         let mut var_upto = <u32>::sse_decode(deserializer);
+        let mut var_removed = <Vec<String>>::sse_decode(deserializer);
         return crate::api::book::PlaceAtlas {
             places: var_places,
             stages: var_stages,
             setting: var_setting,
             upto: var_upto,
+            removed: var_removed,
         };
     }
 }
@@ -5418,6 +5456,7 @@ impl SseDecode for crate::api::book::PlaceNode {
         let mut var_mentions = <u32>::sse_decode(deserializer);
         let mut var_chapters = <u32>::sse_decode(deserializer);
         let mut var_firstChapter = <u32>::sse_decode(deserializer);
+        let mut var_rank = <u8>::sse_decode(deserializer);
         let mut var_parent = <Option<u32>>::sse_decode(deserializer);
         let mut var_settings = <u32>::sse_decode(deserializer);
         let mut var_people = <Vec<String>>::sse_decode(deserializer);
@@ -5426,6 +5465,7 @@ impl SseDecode for crate::api::book::PlaceNode {
             mentions: var_mentions,
             chapters: var_chapters,
             first_chapter: var_firstChapter,
+            rank: var_rank,
             parent: var_parent,
             settings: var_settings,
             people: var_people,
@@ -5958,35 +5998,36 @@ fn pde_ffi_dispatcher_primary_impl(
         }
         86 => wire__crate__api__book__remove_book_impl(port, ptr, rust_vec_len, data_len),
         87 => wire__crate__api__book__remove_person_impl(port, ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
-        90 => {
+        88 => wire__crate__api__book__remove_place_impl(port, ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__book__removed_people_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__book__rename_book_impl(port, ptr, rust_vec_len, data_len),
+        91 => {
             wire__crate__api__cleanup__restore_original_text_impl(port, ptr, rust_vec_len, data_len)
         }
-        91 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
-        97 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
-        101 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
-        102 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
-        104 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
-        105 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
-        106 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
-        107 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
-        108 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
-        109 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
-        110 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
-        111 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
-        112 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
-        113 => wire__crate__api__tts__tts_voice_ready_impl(port, ptr, rust_vec_len, data_len),
-        114 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__book__save_annotation_impl(port, ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__book__save_progress_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__ai__scan_landmine_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__source__search_sources_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__book__search_text_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__ai__semantic_search_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__ai__set_ai_runtime_config_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__book__set_book_author_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__book__set_book_cover_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__book__set_book_encoding_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__book__set_book_pinned_impl(port, ptr, rust_vec_len, data_len),
+        103 => wire__crate__api__book__set_pin_order_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__source__set_source_enabled_impl(port, ptr, rust_vec_len, data_len),
+        105 => wire__crate__api__ai__stop_ai_impl(port, ptr, rust_vec_len, data_len),
+        106 => wire__crate__api__tts__stop_tts_impl(port, ptr, rust_vec_len, data_len),
+        107 => wire__crate__api__tts__synth_impl(port, ptr, rust_vec_len, data_len),
+        108 => wire__crate__api__source__test_source_impl(port, ptr, rust_vec_len, data_len),
+        109 => wire__crate__api__source__test_sources_impl(port, ptr, rust_vec_len, data_len),
+        110 => wire__crate__api__book__time_per_book_impl(port, ptr, rust_vec_len, data_len),
+        111 => wire__crate__api__tts__tts_cache_bytes_impl(port, ptr, rust_vec_len, data_len),
+        112 => wire__crate__api__tts__tts_ready_impl(port, ptr, rust_vec_len, data_len),
+        113 => wire__crate__api__tts__tts_status_impl(port, ptr, rust_vec_len, data_len),
+        114 => wire__crate__api__tts__tts_voice_ready_impl(port, ptr, rust_vec_len, data_len),
+        115 => wire__crate__api__ai__vet_names_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6812,6 +6853,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::PlaceAtlas {
             self.stages.into_into_dart().into_dart(),
             self.setting.into_into_dart().into_dart(),
             self.upto.into_into_dart().into_dart(),
+            self.removed.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6832,6 +6874,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::PlaceNode {
             self.mentions.into_into_dart().into_dart(),
             self.chapters.into_into_dart().into_dart(),
             self.first_chapter.into_into_dart().into_dart(),
+            self.rank.into_into_dart().into_dart(),
             self.parent.into_into_dart().into_dart(),
             self.settings.into_into_dart().into_dart(),
             self.people.into_into_dart().into_dart(),
@@ -8326,6 +8369,7 @@ impl SseEncode for crate::api::book::PlaceAtlas {
         <Vec<crate::api::book::PlaceStage>>::sse_encode(self.stages, serializer);
         <Vec<i32>>::sse_encode(self.setting, serializer);
         <u32>::sse_encode(self.upto, serializer);
+        <Vec<String>>::sse_encode(self.removed, serializer);
     }
 }
 
@@ -8336,6 +8380,7 @@ impl SseEncode for crate::api::book::PlaceNode {
         <u32>::sse_encode(self.mentions, serializer);
         <u32>::sse_encode(self.chapters, serializer);
         <u32>::sse_encode(self.first_chapter, serializer);
+        <u8>::sse_encode(self.rank, serializer);
         <Option<u32>>::sse_encode(self.parent, serializer);
         <u32>::sse_encode(self.settings, serializer);
         <Vec<String>>::sse_encode(self.people, serializer);

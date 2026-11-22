@@ -85,8 +85,8 @@ const LOCATIVES: &[&str] = &[
     "里", "中", "内", "外", "上空", "附近", "一带", "方向", "门口", "深处", "之中", "之内", "境内",
     "城外", "周围", "四周", "所在", "那边", "这边",
 ];
-/// Before a door: 打开, 推开, 关上, 敲.
-const OPENS: &str = "开关推敲撞踹砸锁";
+/// Before a door: 打开, 推开, 关上, 敲, 拉, 踢, 挡, 守.
+const OPENS: &str = "开关推敲撞踹砸锁拉踢挡堵靠守";
 /// A degree word before it makes it an adjective: 一丝淡漠, 很端庄.
 const DEGREE: &str = "很些丝分得更太极颇";
 /// Verbs a seed can carry on its front: 回上海, 于中国, 离楚华大学.
@@ -94,17 +94,70 @@ const GLUE_HEADS: &[&str] = &[
     "打开", "推开", "突破", "前往", "回", "离", "于", "去", "到", "在", "进", "出", "入", "开", "上",
     "下", "过", "从", "往", "向", "返", "归", "奔", "赴", "至", "抵", "飞", "逃", "住", "搬",
 ];
-/// Common words the corpus list missed.
+/// Common words and non-place nouns the corpus list missed.
 const EXTRA_GENERIC: &[&str] = &[
-    "城府", "端庄", "灭门", "辟谷", "右派", "修庙", "扫街", "辅导学院", "举国", "治国", "列国", "邦国",
+    "城府", "端庄", "灭门", "辟谷", "右派", "左派", "修庙", "扫街", "辅导学院", "举国", "治国", "列国", "邦国",
     "知州", "知县", "知府", "反派", "渡河", "爬坡", "开山", "球台",
+    // Factions / stances (not places)
+    "保守派", "主战派", "主和派", "激进派", "温和派", "顽固派", "降临派", "拯救派", "幸存派",
+    "改革派", "反对派", "学院派", "实力派", "偶像派", "演技派", "正统派", "维新派", "洋务派",
+    "立宪派", "革命派",
+    // Abstract worlds / domains
+    "科学界", "学术界", "商界", "政界", "军界", "法界", "医界", "教育界", "演艺界", "文学界",
+    "艺术界", "体育界", "新闻界", "金融界", "修炼界", "修真界", "宏观世界", "微观世界",
+    "外部世界", "内部世界", "现实世界", "虚拟世界", "精神世界", "内心世界", "游戏世界",
+    "异世界", "新世界", "旧世界",
+    // Abstract / generic roads
+    "修行路", "修仙路", "成仙路", "成神路", "长生路", "高架路", "高速路", "柏油路", "水泥路",
+    "环湖公路", "盘山公路",
+    // Generic buildings / rooms / objects / actions
+    "整栋楼", "居民楼", "教学楼", "办公楼", "写字楼", "宿舍楼", "实验楼", "综合楼", "筒子楼",
+    "老楼", "高楼", "大楼", "小楼",
+    "升旗台", "领奖台", "望台", "跳台", "看台", "戏台", "擂台", "神台",
+    "排水洞", "钻洞", "打洞", "挖洞", "树洞", "黑洞", "漏洞", "脑洞",
+    "土坡", "高崖", "田园", "伯莱塔", "气海雪山", "积河成海", "探索遗迹", "磨砺雪山",
+    "脑域", "命门", "小公园",
+    "保安公司", "物流公司", "快递公司", "科技公司", "游戏公司", "影视公司", "经纪公司",
+    "投资公司", "保险公司", "建筑公司", "装修公司", "物业公司",
+    "安全区", "危险区", "休息区", "办公区", "生活区", "住宅区", "商业区", "工业区", "缓冲区",
 ];
 /// Place words that end in a common word when they follow one more
 /// character: 思路, 宏观, 分区, 淡漠.
 const SHORT_UNSAFE: &str = "路观区漠";
 const GENERIC_TAILS: &[&str] = &[
     "领域", "疆域", "区域", "地域", "值观", "生观", "界观", "景观", "上市", "开门", "推门", "参观", "之路",
-    "奇观", "江湖",
+    "奇观", "江湖", "平台", "讨论区", "评论区", "留言区", "豪门",
+];
+/// Prefixes/words that turn a trailing 门 into a physical door rather than a sect.
+const DOOR_PARTS: &[&str] = &[
+    "防盗", "客厅", "卧室", "卫生间", "厕所", "浴室", "厨房", "阳台", "衣柜", "柜", "房", "家",
+    "商场", "卷帘", "感应", "自动", "旋转", "推拉", "折叠", "安全", "金库", "电梯", "单元",
+    "楼道", "病房", "教室", "宿舍", "玻璃", "车", "舱", "店铺", "院", "校", "厂", "店",
+    "大", "小", "后", "後", "前", "侧", "正", "偏", "边", "铁", "木", "石", "铜", "钢",
+];
+/// Common personal given names that end in a place character (e.g. 刘建国).
+const PERSON_GIVEN_TAILS: &[&str] = &[
+    "建国", "卫国", "振国", "兴国", "爱国", "保国", "强国", "治国", "定国", "安国", "如渊", "之渊",
+];
+/// Static real-world geography containment (child -> parent) used when both appear.
+const GEO_PARENTS: &[(&str, &str)] = &[
+    ("北京", "中国"), ("上海", "中国"), ("天津", "中国"), ("重庆", "中国"), ("香港", "中国"), ("澳门", "中国"),
+    ("广州", "中国"), ("深圳", "中国"), ("杭州", "中国"), ("南京", "中国"), ("武汉", "中国"), ("成都", "中国"),
+    ("西安", "中国"), ("长安", "中国"), ("洛阳", "中国"), ("济南", "中国"), ("河北", "中国"), ("河南", "中国"),
+    ("山东", "中国"), ("山西", "中国"), ("广东", "中国"), ("浙江", "中国"), ("江苏", "中国"), ("四川", "中国"),
+    ("湖南", "中国"), ("湖北", "中国"), ("福建", "中国"), ("陕西", "中国"), ("云南", "中国"), ("西藏", "中国"),
+    ("新疆", "中国"), ("台湾", "中国"), ("江南", "中国"), ("关中", "中国"), ("中原", "中国"),
+    ("大兴安岭", "中国"), ("长白山", "中国"), ("黄河", "中国"), ("长江", "中国"), ("昆仑", "中国"),
+    ("纽约", "美国"), ("芝加哥", "美国"), ("华盛顿", "美国"), ("洛杉矶", "美国"), ("旧金山", "美国"),
+    ("波士顿", "美国"), ("加州", "美国"), ("夏威夷", "美国"), ("阿拉斯加", "美国"), ("哈佛", "美国"),
+    ("硅谷", "美国"), ("华尔街", "美国"), ("黄石国家公园", "美国"),
+    ("东京", "日本"), ("东京城", "日本"), ("东京塔", "日本"), ("东京湾", "日本"), ("新宿区", "日本"),
+    ("大阪", "日本"), ("京都", "日本"), ("富士山", "日本"), ("北海道", "日本"), ("函馆", "日本"),
+    ("莫斯科", "俄罗斯"), ("莫斯科", "苏联"), ("圣彼得堡", "俄罗斯"), ("西伯利亚", "俄罗斯"), ("西伯利亚", "苏联"),
+    ("伦敦", "英国"), ("剑桥", "英国"), ("牛津", "英国"),
+    ("巴黎", "法国"),
+    ("罗马", "意大利"), ("威尼斯", "意大利"), ("米兰", "意大利"), ("撒丁岛", "意大利"),
+    ("柏林", "德国"), ("马德里", "西班牙"), ("首尔", "韩国"), ("曼谷", "泰国"), ("悉尼", "澳大利亚"),
 ];
 /// A name never starts with these: 自己公司, 整条商业街, 其原.
 const NOT_A_HEAD: &[&str] = &["自己", "整条", "整座", "整个", "其"];
@@ -130,13 +183,69 @@ const MAX_DETERMINED: f32 = 0.15;
 pub const MAX_PLACES: usize = 60;
 /// Bumped whenever the rules change, so a cached atlas from older rules is
 /// built again rather than served.
-pub const PLACE_VERSION: u32 = 1;
+pub const PLACE_VERSION: u32 = 2;
 
 fn is_cjk(c: char) -> bool {
     ('\u{4e00}'..='\u{9fff}').contains(&c)
 }
 
-fn rank(s: &str, geo: &HashSet<&str>) -> Option<u8> {
+fn is_physical_door(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix('门') else {
+        return false;
+    };
+    DOOR_PARTS.iter().any(|p| stem == *p || stem.ends_with(p))
+}
+
+/// Build real-world geography rank table from `places_geo.txt`:
+/// line 0: continents (6) & countries (5)
+/// line 1: provinces / direct municipalities / macro regions (4)
+/// line 2: cities & historical capitals (3)
+/// line 3: historical prefectures/zhou (4)
+/// line 4: historical dynasties/states (5)
+/// line 5: rivers/mountains/foreign cities/landmarks (suffix or city=3/region=4/2)
+fn parse_geo() -> HashMap<&'static str, u8> {
+    const CONTINENTS: &[&str] = &[
+        "欧洲", "亚洲", "非洲", "美洲", "北美", "南美", "大洋洲", "南极", "北极",
+    ];
+    const FOREIGN_REGIONS: &[&str] = &[
+        "加州", "夏威夷", "阿拉斯加", "德克萨斯", "佛罗里达", "西伯利亚",
+    ];
+    const FOREIGN_CITIES: &[&str] = &[
+        "纽约", "伦敦", "巴黎", "柏林", "罗马", "莫斯科", "首尔", "大阪", "京都", "曼谷", "悉尼",
+        "洛杉矶", "旧金山", "芝加哥", "华盛顿", "波士顿", "拉斯维加斯", "维也纳", "威尼斯", "米兰",
+        "马德里", "巴塞罗那", "阿姆斯特丹", "布鲁塞尔", "日内瓦", "苏黎世", "圣彼得堡", "开罗",
+        "迪拜", "孟买", "新德里", "吉隆坡", "雅加达", "马尼拉", "河内", "西贡", "仰光",
+    ];
+    let mut map = HashMap::new();
+    for (line_idx, line) in GEO.lines().enumerate() {
+        for word in line.split_whitespace() {
+            let r = match line_idx {
+                0 => {
+                    if CONTINENTS.contains(&word) { 6 } else { 5 }
+                }
+                1 | 3 => 4,
+                2 => 3,
+                4 => 5,
+                _ => {
+                    if FOREIGN_REGIONS.contains(&word) {
+                        4
+                    } else if FOREIGN_CITIES.contains(&word) {
+                        3
+                    } else {
+                        2
+                    }
+                }
+            };
+            map.entry(word).or_insert(r);
+        }
+    }
+    map
+}
+
+fn rank(s: &str, geo: &HashMap<&str, u8>) -> Option<u8> {
+    if let Some(&r) = geo.get(s) {
+        return Some(r);
+    }
     for (w, r) in SUFFIX_LONG {
         if s.ends_with(w) && s.len() > w.len() {
             return Some(*r);
@@ -146,9 +255,6 @@ fn rank(s: &str, geo: &HashSet<&str>) -> Option<u8> {
         if s.ends_with(w) && s.len() > w.len() {
             return Some(*r);
         }
-    }
-    if geo.contains(s) {
-        return Some(4);
     }
     None
 }
@@ -230,7 +336,7 @@ fn paragraphs<'a>(text: &'a str, chapters: &[Chapter], n: usize) -> Vec<(usize, 
 
 /// Every suffix-ending run read after a cue, with how often it was read so,
 /// per chapter.
-fn seeds(paras: &[(usize, &str)], geo: &HashSet<&str>) -> HashMap<String, HashMap<usize, u32>> {
+fn seeds(paras: &[(usize, &str)], geo: &HashMap<&str, u8>) -> HashMap<String, HashMap<usize, u32>> {
     let cues: Vec<Vec<char>> = CUES.iter().map(|c| c.chars().collect()).collect();
     let heads: HashSet<char> = cues.iter().map(|c| c[0]).collect();
     let mut out: HashMap<String, HashMap<usize, u32>> = HashMap::new();
@@ -335,7 +441,7 @@ fn raw_stats(
 
 /// Diagnostic: every seeded candidate with its raw counts.
 pub fn candidate_stats(text: &str, chapters: &[Chapter], upto: usize) -> Vec<(String, Stat)> {
-    let geo: HashSet<&str> = GEO.split_whitespace().collect();
+    let geo = parse_geo();
     let paras = paragraphs(text, chapters, upto.min(chapters.len()));
     let seeded = seeds(&paras, &geo);
     let names: HashSet<String> = seeded.keys().cloned().collect();
@@ -349,14 +455,26 @@ pub fn candidate_stats(text: &str, chapters: &[Chapter], upto: usize) -> Vec<(St
 }
 
 /// Why a candidate was turned away, or None when it is a place.
-pub fn reject(name: &str, st: &Stat, people: &[String], generic: &HashSet<&str>, geo: &HashSet<&str>) -> Option<&'static str> {
-    let is_geo = geo.contains(name);
+pub fn reject(name: &str, st: &Stat, people: &[String], generic: &HashSet<&str>, geo: &HashMap<&str, u8>) -> Option<&'static str> {
+    let is_geo = geo.contains_key(name);
     let len = name.chars().count();
     let head = name.chars().next().unwrap_or(' ');
     let tail = &name[head.len_utf8()..];
     if !is_geo {
         if generic.contains(name) || EXTRA_GENERIC.contains(&name) || GENERIC_TAILS.iter().any(|t| name.ends_with(t)) {
             return Some("常见词");
+        }
+        if is_physical_door(name) {
+            return Some("门");
+        }
+        if len == 2 && head == '阿' {
+            return Some("人名");
+        }
+        if (len == 3 || len == 4)
+            && (crate::cast::SURNAMES.contains(head) || MORE_SURNAMES.contains(head) || crate::cast::COMPOUND_SURNAMES.iter().any(|c| name.starts_with(c)))
+            && PERSON_GIVEN_TAILS.iter().any(|t| name.ends_with(t))
+        {
+            return Some("人名");
         }
         if len == 2 && SHORT_UNSAFE.contains(tail) && !"东西南北".contains(head) {
             return Some("常见词");
@@ -417,7 +535,7 @@ pub fn reject(name: &str, st: &Stat, people: &[String], generic: &HashSet<&str>,
     if st.ranked as f32 > st.count as f32 * RANK_SHARE {
         return Some("境界");
     }
-    if name.ends_with('门') && st.opened as f32 > st.count as f32 * 0.1 {
+    if name.ends_with('门') && st.opened as f32 > st.count as f32 * 0.06 {
         return Some("门");
     }
     None
@@ -451,6 +569,17 @@ const LEADS: usize = 20;
 /// first) — as a cached [`crate::cast::Cast`] keeps them — so the cast is not
 /// scanned a second time.
 pub fn scan_ranked(text: &str, chapters: &[Chapter], upto: usize, ranked: &[(String, Vec<String>)]) -> Atlas {
+    scan_without(text, chapters, upto, ranked, &[])
+}
+
+/// [`scan_ranked`], excluding any place names the reader removed by hand.
+pub fn scan_without(
+    text: &str,
+    chapters: &[Chapter],
+    upto: usize,
+    ranked: &[(String, Vec<String>)],
+    removed: &[String],
+) -> Atlas {
     let n = upto.min(chapters.len());
     let people: Vec<String> = ranked
         .iter()
@@ -458,12 +587,20 @@ pub fn scan_ranked(text: &str, chapters: &[Chapter], upto: usize, ranked: &[(Str
         .filter(|s| s.chars().count() >= 2)
         .collect();
     let leads: Vec<String> = ranked.iter().take(LEADS).map(|(name, _)| name.clone()).collect();
-    scan_with(text, chapters, n, &people, &leads)
+    scan_with(text, chapters, n, &people, &leads, removed)
 }
 
-pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], leads: &[String]) -> Atlas {
-    let geo: HashSet<&str> = GEO.split_whitespace().collect();
+pub fn scan_with(
+    text: &str,
+    chapters: &[Chapter],
+    n: usize,
+    people: &[String],
+    leads: &[String],
+    removed: &[String],
+) -> Atlas {
+    let geo = parse_geo();
     let generic: HashSet<&str> = GENERIC.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let removed_set: HashSet<&str> = removed.iter().map(String::as_str).collect();
     let paras = paragraphs(text, chapters, n);
     let seeded = seeds(&paras, &geo);
     let names: HashSet<String> = seeded.keys().cloned().collect();
@@ -475,7 +612,13 @@ pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], 
         let mut all: Vec<(&String, &Stat)> = stats.iter().filter(|(_, v)| v.seeded >= 2 && v.count >= 8).collect();
         all.sort_by(|a, b| b.1.count.cmp(&a.1.count));
         for (k, v) in all.iter().take(150) {
-            let why = if glued(k, &stats) { Some("粘动词") } else { reject(k, v, people, &generic, &geo) };
+            let why = if removed_set.contains(k.as_str()) {
+                Some("手动移除")
+            } else if glued(k, &stats) {
+                Some("粘动词")
+            } else {
+                reject(k, v, people, &generic, &geo)
+            };
             eprintln!(
                 "{:<8} {:>5} 引{:>4} 限{:>3} 人{:>3} 位{:>3} 开{:>3} {}",
                 k, v.count, v.seeded, v.determined, v.acts, v.located, v.opened, why.unwrap_or("✓")
@@ -485,7 +628,11 @@ pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], 
     let glue: HashSet<String> = stats.keys().filter(|k| glued(k, &stats)).cloned().collect();
     let mut kept: Vec<(String, Stat)> = stats
         .into_iter()
-        .filter(|(k, v)| !glue.contains(k) && reject(k, v, people, &generic, &geo).is_none())
+        .filter(|(k, v)| {
+            !removed_set.contains(k.as_str())
+                && !glue.contains(k)
+                && reject(k, v, people, &generic, &geo).is_none()
+        })
         .collect();
     kept.sort_by(|a, b| b.1.count.cmp(&a.1.count).then(a.0.cmp(&b.0)));
 
@@ -524,7 +671,15 @@ pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], 
                 chs[i].insert(*ch);
                 if let Some((pi, pend)) = prev {
                     let gap: String = idx[pend..a].iter().map(|x| x.1).collect();
-                    if pi != i && matches!(gap.as_str(), "" | "的" | "之" | "中的" | "内的" | "里的" | "之中的") {
+                    if pi != i
+                        && matches!(
+                            gap.as_str(),
+                            "" | "的" | "之" | "中的" | "内的" | "里的" | "之中的"
+                                | "境内" | "境内的" | "一带" | "一带的" | "附近" | "附近的"
+                                | "城内" | "城内的" | "城外" | "城外的" | "中心" | "中心的"
+                                | "深处" | "深处的"
+                        )
+                    {
                         *pairs.entry((pi, i)).or_default() += 1;
                     }
                 }
@@ -561,7 +716,8 @@ pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], 
         .collect();
 
     // Belonging: named inside another at least twice, and the outer one is
-    // the bigger kind of place, or the inner name starts with the outer one.
+    // the bigger kind of place, or the inner name starts with the outer one,
+    // or a known real-world geographic parent is present in the book.
     for (j, pl) in places.clone().iter().enumerate() {
         let mut best: Option<(usize, u32)> = None;
         for (k, outer) in places.iter().enumerate() {
@@ -569,9 +725,18 @@ pub fn scan_with(text: &str, chapters: &[Chapter], n: usize, people: &[String], 
                 continue;
             }
             let named_in = pl.name.starts_with(outer.name.as_str()) && pl.name.len() > outer.name.len();
+            let geo_in = GEO_PARENTS
+                .iter()
+                .any(|&(child, parent)| child == pl.name && parent == outer.name);
             let c = pairs.get(&(order[k], order[j])).copied().unwrap_or(0);
-            let ok = named_in || (c >= 2 && outer.rank > pl.rank);
-            let score = if named_in { c + 1000 } else { c };
+            let ok = named_in || geo_in || (c >= 2 && outer.rank > pl.rank);
+            let score = if named_in {
+                c + 1000
+            } else if geo_in {
+                c + 500
+            } else {
+                c
+            };
             if ok && best.is_none_or(|(_, s)| score > s) {
                 best = Some((k, score));
             }

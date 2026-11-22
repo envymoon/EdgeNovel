@@ -302,6 +302,13 @@ CREATE TABLE IF NOT EXISTS cast_removed (
     PRIMARY KEY (book_id, name)
 );
 
+-- Places the reader took off a book's place graph by hand.
+CREATE TABLE IF NOT EXISTS place_removed (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    name    TEXT NOT NULL,
+    PRIMARY KEY (book_id, name)
+);
+
 -- The model's prose summary of how a pair get on, keyed by the pair's names. A
 -- closed-set label proved too lossy for the small model to pick stably (师徒 vs
 -- 同门, and pairs that are both), so it writes a sentence instead. Same reasoning
@@ -1605,6 +1612,37 @@ impl Store {
                  upto = ?2, chapters = ?3, version = ?4, json = ?5, built_at = ?6",
             params![book_id, upto, chapters, version, json, now()],
         )?;
+        Ok(())
+    }
+
+    pub fn drop_place_cache(&self, book_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM place_cache WHERE book_id = ?1", [book_id])?;
+        Ok(())
+    }
+
+    /// Places the reader took off this book's place graph, in the order taken.
+    pub fn removed_places(&self, book_id: i64) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT name FROM place_removed WHERE book_id = ?1 ORDER BY rowid")?;
+        let rows = st.query_map([book_id], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// Take a place off the graph, or put it back.
+    pub fn set_removed_place(&self, book_id: i64, name: &str, removed: bool) -> Result<()> {
+        if removed {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO place_removed (book_id, name) VALUES (?1, ?2)",
+                params![book_id, name],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM place_removed WHERE book_id = ?1 AND name = ?2",
+                params![book_id, name],
+            )?;
+        }
         Ok(())
     }
 

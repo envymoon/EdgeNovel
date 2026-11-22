@@ -28,6 +28,12 @@ class _Trip {
   const _Trip(this.a, this.b, this.count);
 }
 
+class _Group {
+  final String name;
+  final List<int> members;
+  const _Group(this.name, this.members);
+}
+
 class _PlaceGraphPageState extends State<PlaceGraphPage> {
   PlaceAtlas? _atlas;
   String? _error;
@@ -41,8 +47,10 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
   // What the graph shows for the current range.
   List<int> _nodes = const [];
   Map<int, int> _here = const {};
+  List<_Trip> _allTrips = const [];
   List<_Trip> _trips = const [];
   List<_Trip> _belong = const [];
+  List<_Group> _groups = const [];
   List<Offset> _pos = const [];
 
   @override
@@ -62,11 +70,31 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       setState(() {
         _atlas = a;
         _error = null;
+        if (_stage != null && _stage! >= a.stages.length) _stage = null;
+        if (_selected != null && _selected! >= a.places.length) {
+          _selected = null;
+        }
         _build();
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
+  }
+
+  Future<void> _setRemoved(String name, bool removed) async {
+    try {
+      await removePlace(
+        bookId: widget.book.id,
+        name: name,
+        removed: removed,
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _selected = null);
+    await _load();
   }
 
   (int, int) get _range {
@@ -94,8 +122,47 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     return [for (final e in m.entries) _Trip(e.key.$1, e.key.$2, e.value)];
   }
 
+  /// Keep the backbone routes (max spanning forest + strongest secondary edges)
+  /// so the graph reads as a map instead of a hairball.
+  List<_Trip> _pruneTrips(int n, List<_Trip> all) {
+    if (n <= 5 || all.length <= n) return all;
+    final sorted = [...all]..sort((x, y) => y.count.compareTo(x.count));
+    final parent = List<int>.generate(n, (i) => i);
+    int find(int x) => parent[x] == x ? x : parent[x] = find(parent[x]);
+
+    final kept = <_Trip>[];
+    final deg = List<int>.filled(n, 0);
+    final used = List<bool>.filled(sorted.length, false);
+
+    // 1) Maximum spanning forest preserves connectivity along primary routes.
+    for (var i = 0; i < sorted.length; i++) {
+      final e = sorted[i];
+      final ra = find(e.a), rb = find(e.b);
+      if (ra != rb) {
+        parent[ra] = rb;
+        kept.add(e);
+        deg[e.a]++;
+        deg[e.b]++;
+        used[i] = true;
+      }
+    }
+    // 2) Add strongest repeated routes up to a clean edge budget.
+    final cap = math.max(n, (n * 1.25).round());
+    for (var i = 0; i < sorted.length && kept.length < cap; i++) {
+      if (used[i]) continue;
+      final e = sorted[i];
+      if (e.count < 2) break;
+      if (deg[e.a] < 3 && deg[e.b] < 3) {
+        kept.add(e);
+        deg[e.a]++;
+        deg[e.b]++;
+      }
+    }
+    return kept;
+  }
+
   /// The places the story stands in within the range, the most chapters
-  /// first, and the routes and belonging among them.
+  /// first, and the pruned routes and area groups among them.
   void _build() {
     final a = _atlas!;
     final (from, to) = _range;
@@ -106,48 +173,91 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     }
     final ranked = here.keys.toList()
       ..sort((x, y) => here[y]!.compareTo(here[x]!));
-    var nodes = ranked.take(_stage == null ? 16 : 12).toList();
+    var nodes = ranked.take(_stage == null ? 14 : 11).toList();
     if (nodes.length < 3 && _stage != null) {
       nodes = {...nodes, ...a.stages[_stage!].spots}.take(8).toList();
     }
     final idx = {for (var i = 0; i < nodes.length; i++) nodes[i]: i};
-    final trips = [
+    final allTrips = [
       for (final t in _tripsIn(from, to))
         if (idx.containsKey(t.a) && idx.containsKey(t.b))
           _Trip(idx[t.a]!, idx[t.b]!, t.count),
     ];
+    final trips = _pruneTrips(nodes.length, allTrips);
+
+    // Group nodes that share a parent region (even if that parent is a macro
+    // region like 深层世界 or 中国 that does not appear as a node itself).
+    final byParent = <int, List<int>>{};
+    for (var i = 0; i < nodes.length; i++) {
+      final p = a.places[nodes[i]].parent;
+      if (p != null && p < a.places.length) {
+        byParent.putIfAbsent(p, () => []).add(i);
+      }
+    }
+    final groups = <_Group>[];
+    final groupedNodes = <int>{};
+    for (final entry in byParent.entries) {
+      final members = [...entry.value];
+      final parentNodeIdx = idx[entry.key];
+      if (parentNodeIdx != null && !members.contains(parentNodeIdx)) {
+        members.add(parentNodeIdx);
+      }
+      if (members.length >= 2) {
+        groups.add(_Group(a.places[entry.key].name, members));
+        groupedNodes.addAll(members);
+      }
+    }
+
+    // Only draw dashed belonging lines when not already enclosed by a group box.
     final belong = [
       for (final p in nodes)
         if (a.places[p].parent case final parent? when idx.containsKey(parent))
-          _Trip(idx[p]!, idx[parent]!, 1),
+          if (!(groupedNodes.contains(idx[p]!) &&
+              groupedNodes.contains(idx[parent]!)))
+            _Trip(idx[p]!, idx[parent]!, 1),
     ];
+
     _nodes = nodes;
     _here = here;
+    _allTrips = allTrips;
     _trips = trips;
     _belong = belong;
-    _pos = _layout(nodes.length, [...trips, ...belong]);
+    _groups = groups;
+    _pos = _layout(nodes.length, [...trips, ...belong], groups);
   }
 
-  void _setStage(int k) => setState(() {
-    _stage = _stage == k ? null : k;
+  void _setStage(int? k) => setState(() {
+    _stage = (_stage == k) ? null : k;
     _selected = null;
     _build();
   });
 
-  // ── force-directed layout (Fruchterman–Reingold), run once per range ─────
-  List<Offset> _layout(int n, List<_Trip> edges) {
+  // ── grouped force-directed layout + overlap separation ───────────────────
+  List<Offset> _layout(int n, List<_Trip> edges, List<_Group> groups) {
     if (n == 0) return const [];
-    final rnd = math.Random(7);
-    final pos = List<Offset>.generate(n, (i) {
-      final a = 2 * math.pi * i / n;
-      return Offset(
-        0.5 + 0.35 * math.cos(a) + (rnd.nextDouble() - 0.5) * 0.02,
-        0.5 + 0.35 * math.sin(a) + (rnd.nextDouble() - 0.5) * 0.02,
-      );
-    });
     if (n == 1) return const [Offset(0.5, 0.5)];
-    final k = 0.9 / math.sqrt(n);
-    var temp = 0.1;
+    final rnd = math.Random(7);
+    final groupOf = List<int>.filled(n, -1);
+    for (var g = 0; g < groups.length; g++) {
+      for (final m in groups[g].members) {
+        if (groupOf[m] < 0) groupOf[m] = g;
+      }
+    }
+    // Seed nodes grouped by area around the circle so clusters start together.
+    final order = List<int>.generate(n, (i) => i)
+      ..sort((a, b) => groupOf[a].compareTo(groupOf[b]));
+    final pos = List<Offset>.filled(n, Offset.zero);
+    for (var slot = 0; slot < n; slot++) {
+      final i = order[slot];
+      final a = 2 * math.pi * slot / n;
+      pos[i] = Offset(
+        0.5 + 0.36 * math.cos(a) + (rnd.nextDouble() - 0.5) * 0.02,
+        0.5 + 0.36 * math.sin(a) + (rnd.nextDouble() - 0.5) * 0.02,
+      );
+    }
+
+    final k = 0.95 / math.sqrt(n);
+    var temp = 0.10;
     for (var iter = 0; iter < 300; iter++) {
       final disp = List<Offset>.filled(n, Offset.zero);
       for (var i = 0; i < n; i++) {
@@ -158,21 +268,28 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
             d = Offset(rnd.nextDouble() - 0.5, rnd.nextDouble() - 0.5);
             dist = d.distance;
           }
-          final u = d / dist * (k * k / dist);
+          final sameGroup = groupOf[i] >= 0 && groupOf[i] == groupOf[j];
+          // Repel other-group nodes harder so group boxes stay apart.
+          final repScale = sameGroup ? 0.8 : 1.25;
+          final u = d / dist * (k * k / dist * repScale);
           disp[i] += u;
           disp[j] -= u;
+          if (sameGroup) {
+            final pull = d / dist * (dist * dist / k * 0.35);
+            disp[i] -= pull;
+            disp[j] += pull;
+          }
         }
       }
       for (final e in edges) {
         final d = pos[e.a] - pos[e.b];
         final dist = math.max(d.distance, 1e-3);
-        final f = dist * dist / k * (0.6 + 0.4 * math.min(e.count, 5) / 5);
+        final f = dist * dist / k * (0.55 + 0.45 * math.min(e.count, 5) / 5);
         final u = d / dist * f;
         disp[e.a] -= u;
         disp[e.b] += u;
       }
       for (var i = 0; i < n; i++) {
-        // A little pull to the middle keeps a place with no routes on screen.
         var dd = disp[i] + (const Offset(0.5, 0.5) - pos[i]) * 0.05;
         final dl = dd.distance;
         if (dl > temp) dd = dd / dl * temp;
@@ -180,16 +297,44 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       }
       temp *= 0.985;
     }
-    var minX = double.infinity, minY = double.infinity;
-    var maxX = -double.infinity, maxY = -double.infinity;
-    for (final p in pos) {
-      minX = math.min(minX, p.dx);
-      minY = math.min(minY, p.dy);
-      maxX = math.max(maxX, p.dx);
-      maxY = math.max(maxY, p.dy);
+
+    List<Offset> normalize(List<Offset> pts) {
+      var minX = double.infinity, minY = double.infinity;
+      var maxX = -double.infinity, maxY = -double.infinity;
+      for (final p in pts) {
+        minX = math.min(minX, p.dx);
+        minY = math.min(minY, p.dy);
+        maxX = math.max(maxX, p.dx);
+        maxY = math.max(maxY, p.dy);
+      }
+      final w = math.max(maxX - minX, 1e-3), h = math.max(maxY - minY, 1e-3);
+      return [for (final p in pts) Offset((p.dx - minX) / w, (p.dy - minY) / h)];
     }
-    final w = math.max(maxX - minX, 1e-3), h = math.max(maxY - minY, 1e-3);
-    return [for (final p in pos) Offset((p.dx - minX) / w, (p.dy - minY) / h)];
+
+    var norm = normalize(pos);
+    // Final collision pass so circles and labels never pile on top of each other.
+    final minDist = (0.22 - 0.004 * n).clamp(0.14, 0.20);
+    for (var pass = 0; pass < 24; pass++) {
+      var moved = false;
+      for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+          var d = norm[i] - norm[j];
+          var dist = d.distance;
+          if (dist < minDist) {
+            if (dist < 1e-4) {
+              d = const Offset(0.01, 0.01);
+              dist = d.distance;
+            }
+            final push = d / dist * ((minDist - dist) * 0.5);
+            norm[i] += push;
+            norm[j] -= push;
+            moved = true;
+          }
+        }
+      }
+      if (!moved) break;
+    }
+    return normalize(norm);
   }
 
   @override
@@ -250,10 +395,19 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Text(
-            '还没认出足够的地点',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: t.muted, fontSize: 13, height: 1.8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '还没认出足够的地点',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: t.muted, fontSize: 13, height: 1.8),
+              ),
+              if (a.removed.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _removedSection(t, a),
+              ],
+            ],
           ),
         ),
       );
@@ -269,9 +423,12 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
                 size: Size.infinite,
                 painter: _PlacePainter(
                   names: [for (final p in _nodes) a.places[p].name],
+                  ranks: [for (final p in _nodes) a.places[p].rank],
                   size: [for (final p in _nodes) _here[p] ?? 1],
                   trips: _trips,
+                  allTrips: _allTrips,
                   belong: _belong,
+                  groups: _groups,
                   pos: _pos,
                   selected: _selectedNode,
                   theme: t,
@@ -305,15 +462,36 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _stage == null
-                ? '全书 ${a.upto} 章 · ${a.places.length} 处 · '
-                      '${a.stages.length} 段地图 · $routes 条路线'
-                : '第 ${from + 1}–${to + 1} 章 · ${_nodes.length} 处 · '
-                      '${_trips.length} 条路线',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: t.muted, fontSize: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _stage == null
+                      ? '全书 ${a.upto} 章 · ${a.places.length} 处 · '
+                            '${a.stages.length} 段地图 · $routes 条路线'
+                      : '第 ${from + 1}–${to + 1} 章 · ${_nodes.length} 处 · '
+                            '${_allTrips.length} 条路线',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: t.muted, fontSize: 12),
+                ),
+              ),
+              if (_stage != null)
+                GestureDetector(
+                  onTap: () => _setStage(null),
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 10),
+                    child: Text(
+                      '返回全书',
+                      style: TextStyle(
+                        color: t.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           if (a.stages.length > 1) ...[
             const SizedBox(height: 8),
@@ -324,48 +502,80 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     );
   }
 
-  /// The book as its maps, each as wide as its chapters; a stage too short
-  /// to see is given a sliver anyway.
+  /// Fixed "全书" pill on the left + the book as its maps, each as wide as its
+  /// chapters; tapping 全书 always returns to the full-book graph.
   Widget _strip(ReadingTheme t, PlaceAtlas a) {
     final n = math.max(a.setting.length, 1);
     final floor = math.max(n ~/ 150, 1);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: SizedBox(
-        height: 30,
-        child: Row(
-          children: [
-            for (var k = 0; k < a.stages.length; k++) ...[
-              if (k > 0) const SizedBox(width: 2),
-              Expanded(
-                flex: math.max(a.stages[k].to - a.stages[k].from + 1, floor),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _setStage(k),
-                  child: Container(
-                    alignment: Alignment.center,
-                    color: _stage == k
-                        ? t.text
-                        : t.muted.withValues(alpha: 0.14),
-                    child:
-                        (a.stages[k].to - a.stages[k].from + 1) / n > 0.07
-                        ? Text(
-                            a.places[a.stages[k].area].name,
-                            maxLines: 1,
-                            overflow: TextOverflow.clip,
-                            softWrap: false,
-                            style: TextStyle(
-                              color: _stage == k ? t.background : t.muted,
-                              fontSize: 11,
-                            ),
-                          )
-                        : null,
-                  ),
+    return SizedBox(
+      height: 30,
+      child: Row(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _setStage(null),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _stage == null
+                    ? t.text
+                    : t.muted.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '全书',
+                style: TextStyle(
+                  color: _stage == null ? t.background : t.muted,
+                  fontSize: 11,
+                  fontWeight: _stage == null ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
-            ],
-          ],
-        ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  for (var k = 0; k < a.stages.length; k++) ...[
+                    if (k > 0) const SizedBox(width: 2),
+                    Expanded(
+                      flex: math.max(
+                        a.stages[k].to - a.stages[k].from + 1,
+                        floor,
+                      ),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _setStage(k),
+                        child: Container(
+                          alignment: Alignment.center,
+                          color: _stage == k
+                              ? t.text
+                              : t.muted.withValues(alpha: 0.14),
+                          child:
+                              (a.stages[k].to - a.stages[k].from + 1) / n > 0.08
+                              ? Text(
+                                  a.places[a.stages[k].area].name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.clip,
+                                  softWrap: false,
+                                  style: TextStyle(
+                                    color: _stage == k ? t.background : t.muted,
+                                    fontSize: 11,
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -376,9 +586,9 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     var best = double.infinity;
     for (var i = 0; i < _nodes.length; i++) {
       final c = _scaled(_pos[i], rect);
-      final r = _radius(_sizes, i);
+      final r = _radius(_sizes, i, _atlas!.places[_nodes[i]].rank);
       final d = (c - p).distance;
-      if (d <= r + 6 && d < best) {
+      if (d <= r + 8 && d < best) {
         best = d;
         hit = i;
       }
@@ -401,7 +611,7 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
     );
   }
 
-  /// With nothing picked: the maps in order, then every place.
+  /// With nothing picked: the maps in order, then every place, then removed.
   Widget _overview(ReadingTheme t, PlaceAtlas a) {
     final small = TextStyle(color: t.muted, fontSize: 12);
     final byScenes = List<int>.generate(a.places.length, (i) => i)
@@ -488,9 +698,49 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
             ],
           ),
         ),
+        if (a.removed.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: _removedSection(t, a),
+          ),
+        ],
       ],
     );
   }
+
+  Widget _removedSection(ReadingTheme t, PlaceAtlas a) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        '已移除 ${a.removed.length} 处（点击恢复）',
+        style: TextStyle(color: t.muted, fontSize: 11.5),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final name in a.removed)
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _setRemoved(name, false),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: t.muted.withValues(alpha: 0.25)),
+                ),
+                child: Text(
+                  '+ $name',
+                  style: TextStyle(color: t.muted, fontSize: 11.5),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ],
+  );
 
   Widget _place(ReadingTheme t, PlaceAtlas a, int sel) {
     final p = a.places[sel];
@@ -519,6 +769,17 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                 ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => _setRemoved(p.name, true),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              child: Text(
+                '移除',
+                style: TextStyle(color: t.muted, fontSize: 12),
               ),
             ),
             IconButton(
@@ -563,38 +824,54 @@ class _PlaceGraphPageState extends State<PlaceGraphPage> {
 // ── painting ────────────────────────────────────────────────────────────────
 
 Rect _canvasRect(Size size) => Rect.fromLTWH(
-  44,
-  30,
-  math.max(size.width - 88, 1),
-  math.max(size.height - 70, 1),
+  48,
+  36,
+  math.max(size.width - 96, 1),
+  math.max(size.height - 80, 1),
 );
 
 Offset _scaled(Offset unit, Rect r) =>
     Offset(r.left + unit.dx * r.width, r.top + unit.dy * r.height);
 
-double _radius(List<int> size, int i) {
+double _radius(List<int> size, int i, int rank) {
   final most = size.fold<int>(1, math.max);
-  return 7 + 17 * math.sqrt(size[i] / most);
+  final base = 6.5 + 14.5 * math.sqrt(size[i] / most);
+  if (rank >= 4) return base + 2.5;
+  if (rank <= 1) return math.max(5.5, base - 1.5);
+  return base;
 }
 
 class _PlacePainter extends CustomPainter {
   final List<String> names;
+  final List<int> ranks;
   final List<int> size;
   final List<_Trip> trips;
+  final List<_Trip> allTrips;
   final List<_Trip> belong;
+  final List<_Group> groups;
   final List<Offset> pos;
   final int? selected;
   final ReadingTheme theme;
 
   _PlacePainter({
     required this.names,
+    required this.ranks,
     required this.size,
     required this.trips,
+    required this.allTrips,
     required this.belong,
+    required this.groups,
     required this.pos,
     required this.selected,
     required this.theme,
   });
+
+  List<_Trip> get _activeTrips => selected == null
+      ? trips
+      : [
+          for (final e in allTrips)
+            if (e.a == selected || e.b == selected) e,
+        ];
 
   bool _touches(_Trip e) =>
       selected == null || e.a == selected || e.b == selected;
@@ -602,7 +879,7 @@ class _PlacePainter extends CustomPainter {
   bool _near(int i) =>
       selected == null ||
       i == selected ||
-      [...trips, ...belong].any(
+      [..._activeTrips, ...belong].any(
         (e) => (e.a == selected && e.b == i) || (e.b == selected && e.a == i),
       );
 
@@ -610,65 +887,132 @@ class _PlacePainter extends CustomPainter {
   void paint(Canvas canvas, Size canvasSize) {
     if (pos.length != names.length) return;
     final rect = _canvasRect(canvasSize);
-    final most = trips.fold<int>(1, (m, e) => math.max(m, e.count));
+    final drawnTrips = _activeTrips;
+    final most = drawnTrips.fold<int>(1, (m, e) => math.max(m, e.count));
 
-    // Routes: heavier for more trips.
-    for (final e in trips) {
+    // 1) Region group frames behind everything.
+    for (final g in groups) {
+      var minX = double.infinity, minY = double.infinity;
+      var maxX = -double.infinity, maxY = -double.infinity;
+      for (final m in g.members) {
+        final c = _scaled(pos[m], rect);
+        final r = _radius(size, m, ranks[m]);
+        minX = math.min(minX, c.dx - r - 20);
+        minY = math.min(minY, c.dy - r - 14);
+        maxX = math.max(maxX, c.dx + r + 20);
+        maxY = math.max(maxY, c.dy + r + 24);
+      }
+      final box = RRect.fromLTRBR(
+        minX,
+        minY - 12,
+        maxX,
+        maxY,
+        const Radius.circular(14),
+      );
+      final groupActive =
+          selected == null || g.members.any((m) => _near(m));
+      canvas.drawRRect(
+        box,
+        Paint()
+          ..color = theme.muted.withValues(alpha: groupActive ? 0.06 : 0.025),
+      );
+      canvas.drawRRect(
+        box,
+        Paint()
+          ..color = theme.muted.withValues(alpha: groupActive ? 0.24 : 0.08)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+      final label = TextPainter(
+        text: TextSpan(
+          text: g.name,
+          style: TextStyle(
+            color: theme.muted.withValues(alpha: groupActive ? 0.85 : 0.3),
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      label.paint(canvas, Offset(minX + 8, minY - 9));
+    }
+
+    // 2) Routes: pruned backbone when idle, full routes for selected node.
+    for (final e in drawnTrips) {
       final on = _touches(e);
       canvas.drawLine(
         _scaled(pos[e.a], rect),
         _scaled(pos[e.b], rect),
         Paint()
           ..color = theme.muted.withValues(
-            alpha: on ? 0.30 + 0.55 * e.count / most : 0.06,
+            alpha: on ? 0.26 + 0.52 * e.count / most : 0.06,
           )
-          ..strokeWidth = (1.0 + 3.0 * e.count / most) * (on ? 1 : 0.6)
+          ..strokeWidth = (1.0 + 2.6 * e.count / most) * (on ? 1 : 0.6)
           ..strokeCap = StrokeCap.round,
       );
     }
-    // Belonging: dashed.
+
+    // 3) Unboxed belonging links: dashed.
     for (final e in belong) {
       _dashed(
         canvas,
         _scaled(pos[e.a], rect),
         _scaled(pos[e.b], rect),
         Paint()
-          ..color = theme.muted.withValues(alpha: _touches(e) ? 0.6 : 0.08)
-          ..strokeWidth = 1.2,
+          ..color = theme.muted.withValues(alpha: _touches(e) ? 0.5 : 0.08)
+          ..strokeWidth = 1.1,
       );
     }
 
+    // 4) Nodes, styled by scale (rank).
     for (var i = 0; i < names.length; i++) {
       final c = _scaled(pos[i], rect);
-      final r = _radius(size, i);
+      final r = _radius(size, i, ranks[i]);
       final isSel = selected == i;
       final dim = !_near(i);
+      final isMacro = ranks[i] >= 4;
+      final isSpot = ranks[i] <= 1;
+
       canvas.drawCircle(c, r, Paint()..color = theme.background);
+      if (isMacro) {
+        // Double ring marks macro regions / provinces / countries.
+        canvas.drawCircle(
+          c,
+          r + 3,
+          Paint()
+            ..color = theme.text.withValues(alpha: dim ? 0.10 : 0.35)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.0,
+        );
+      }
       canvas.drawCircle(
         c,
         r,
         Paint()
-          ..color = theme.text.withValues(alpha: dim ? 0.18 : 0.9)
+          ..color = theme.text.withValues(alpha: dim ? 0.18 : (isSpot ? 0.72 : 0.92))
           ..style = PaintingStyle.stroke
-          ..strokeWidth = isSel ? 3 : 1.6,
+          ..strokeWidth = isSel ? 2.8 : (isSpot ? 1.2 : 1.7),
       );
       canvas.drawCircle(
         c,
-        r - 2,
-        Paint()..color = theme.text.withValues(alpha: dim ? 0.05 : 0.10),
+        math.max(r - 2, 1),
+        Paint()
+          ..color = theme.text.withValues(
+            alpha: dim ? 0.04 : (isMacro ? 0.14 : 0.09),
+          ),
       );
       final tp = TextPainter(
         text: TextSpan(
           text: names[i],
           style: TextStyle(
-            color: theme.text.withValues(alpha: dim ? 0.3 : 1),
-            fontSize: 12,
-            fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+            color: theme.text.withValues(alpha: dim ? 0.28 : 1),
+            fontSize: isMacro ? 12.5 : (isSpot ? 11.2 : 11.8),
+            fontWeight: isSel || isMacro ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, Offset(c.dx - tp.width / 2, c.dy + r + 3));
+      tp.paint(canvas, Offset(c.dx - tp.width / 2, c.dy + r + (isMacro ? 5 : 3)));
     }
   }
 
@@ -690,5 +1034,8 @@ class _PlacePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PlacePainter old) =>
-      old.selected != selected || old.pos != pos || old.theme != theme;
+      old.selected != selected ||
+      old.pos != pos ||
+      old.trips != trips ||
+      old.theme != theme;
 }

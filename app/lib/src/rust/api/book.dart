@@ -285,6 +285,17 @@ Future<PlaceAtlas> placeAtlas({
   upToChapter: upToChapter,
 );
 
+/// Take a place off a book's place graph by hand, or put it back.
+Future<void> removePlace({
+  required PlatformInt64 bookId,
+  required String name,
+  required bool removed,
+}) => RustLib.instance.api.crateApiBookRemovePlace(
+  bookId: bookId,
+  name: name,
+  removed: removed,
+);
+
 /// The pre-reading relationship structure always scans the whole available
 /// book. It uses the same cached cast pass as the graph, but reads the larger
 /// internal roster before the graph UI trims it to ten people.
@@ -801,16 +812,24 @@ class PlaceAtlas {
   final Int32List setting;
   final int upto;
 
+  /// Place names the reader removed by hand, so they can be restored.
+  final List<String> removed;
+
   const PlaceAtlas({
     required this.places,
     required this.stages,
     required this.setting,
     required this.upto,
+    required this.removed,
   });
 
   @override
   int get hashCode =>
-      places.hashCode ^ stages.hashCode ^ setting.hashCode ^ upto.hashCode;
+      places.hashCode ^
+      stages.hashCode ^
+      setting.hashCode ^
+      upto.hashCode ^
+      removed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -820,7 +839,8 @@ class PlaceAtlas {
           places == other.places &&
           stages == other.stages &&
           setting == other.setting &&
-          upto == other.upto;
+          upto == other.upto &&
+          removed == other.removed;
 }
 
 class PlaceNode {
@@ -828,6 +848,10 @@ class PlaceNode {
   final int mentions;
   final int chapters;
   final int firstChapter;
+
+  /// Scale of the place: 1 = building/spot, 2 = district/sect/school,
+  /// 3 = city, 4 = province/region, 5 = country/realm, 6 = world/continent.
+  final int rank;
 
   /// Index into [`PlaceAtlas::places`] of the place this one is inside.
   final int? parent;
@@ -843,6 +867,7 @@ class PlaceNode {
     required this.mentions,
     required this.chapters,
     required this.firstChapter,
+    required this.rank,
     this.parent,
     required this.settings,
     required this.people,
@@ -854,6 +879,7 @@ class PlaceNode {
       mentions.hashCode ^
       chapters.hashCode ^
       firstChapter.hashCode ^
+      rank.hashCode ^
       parent.hashCode ^
       settings.hashCode ^
       people.hashCode;
@@ -867,6 +893,7 @@ class PlaceNode {
           mentions == other.mentions &&
           chapters == other.chapters &&
           firstChapter == other.firstChapter &&
+          rank == other.rank &&
           parent == other.parent &&
           settings == other.settings &&
           people == other.people;
