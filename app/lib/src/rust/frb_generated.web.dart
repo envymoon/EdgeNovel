@@ -98,6 +98,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AiStatus dco_decode_ai_status(dynamic raw);
 
   @protected
+  AuthorTics dco_decode_author_tics(dynamic raw);
+
+  @protected
   BookAnnotation dco_decode_book_annotation(dynamic raw);
 
   @protected
@@ -324,6 +327,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TextCut> dco_decode_list_text_cut(dynamic raw);
 
   @protected
+  List<TicItem> dco_decode_list_tic_item(dynamic raw);
+
+  @protected
   List<VolumeInfo> dco_decode_list_volume_info(dynamic raw);
 
   @protected
@@ -432,6 +438,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextCut dco_decode_text_cut(dynamic raw);
 
   @protected
+  TicItem dco_decode_tic_item(dynamic raw);
+
+  @protected
   TtsStatus dco_decode_tts_status(dynamic raw);
 
   @protected
@@ -526,6 +535,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AiStatus sse_decode_ai_status(SseDeserializer deserializer);
+
+  @protected
+  AuthorTics sse_decode_author_tics(SseDeserializer deserializer);
 
   @protected
   BookAnnotation sse_decode_book_annotation(SseDeserializer deserializer);
@@ -770,6 +782,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TextCut> sse_decode_list_text_cut(SseDeserializer deserializer);
 
   @protected
+  List<TicItem> sse_decode_list_tic_item(SseDeserializer deserializer);
+
+  @protected
   List<VolumeInfo> sse_decode_list_volume_info(SseDeserializer deserializer);
 
   @protected
@@ -890,6 +905,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextCut sse_decode_text_cut(SseDeserializer deserializer);
 
   @protected
+  TicItem sse_decode_tic_item(SseDeserializer deserializer);
+
+  @protected
   TtsStatus sse_decode_tts_status(SseDeserializer deserializer);
 
   @protected
@@ -1002,6 +1020,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ai_status(AiStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_author_tics(AuthorTics self, SseSerializer serializer);
 
   @protected
   void sse_encode_book_annotation(
@@ -1331,6 +1352,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_text_cut(List<TextCut> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_tic_item(List<TicItem> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_volume_info(
     List<VolumeInfo> self,
     SseSerializer serializer,
@@ -1470,6 +1494,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_text_cut(TextCut self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_tic_item(TicItem self, SseSerializer serializer);
 
   @protected
   void sse_encode_tts_status(TtsStatus self, SseSerializer serializer);

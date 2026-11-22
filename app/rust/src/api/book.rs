@@ -1119,13 +1119,65 @@ pub fn chapter_pace(path: String) -> Result<Vec<Option<f64>>, String> {
     Ok(pace::scores(&l.text, &l.chapters))
 }
 
-/// 注水度: one padding/repetition score per chapter in `0.0..=1.0` (higher is
-/// more padded). `None` for chapters shorter than `filler::MIN_CHARS`.
-pub fn chapter_filler(path: String) -> Result<Vec<Option<f64>>, String> {
+/// One recurring phrase / writing tic discovered in a book.
+pub struct TicItem {
+    pub phrase: String,
+    pub category: String,
+    pub count: u32,
+    pub per_10k: f64,
+    pub chapter_hits: u32,
+    pub peak_chapter: u32,
+    pub peak_count: u32,
+    pub sample: String,
+    pub sample_chapter: u32,
+    pub buckets: Vec<u32>,
+}
+
+/// 作者口癖: writing habits, stylistic fingerprint, and signature phrases.
+pub struct AuthorTics {
+    pub total_chars: u32,
+    pub chapter_count: u32,
+    pub dialogue_ratio: f64,
+    pub avg_sentence_len: f64,
+    pub exclam_per_10k: f64,
+    pub ellipsis_per_10k: f64,
+    pub question_per_10k: f64,
+    pub style_tags: Vec<String>,
+    pub items: Vec<TicItem>,
+}
+
+/// 作者口癖: analyze author tics & writing style across the whole book without a model.
+pub fn author_tics(path: String) -> Result<AuthorTics, String> {
     ensure_loaded(&path)?;
     let guard = cache().read().unwrap();
     let l = guard.get(&path).ok_or("书未打开")?;
-    Ok(novel_core::filler::scores(&l.text, &l.chapters))
+    let r = novel_core::tics::analyze(&l.text, &l.chapters);
+    Ok(AuthorTics {
+        total_chars: r.total_chars as u32,
+        chapter_count: r.chapter_count as u32,
+        dialogue_ratio: r.dialogue_ratio,
+        avg_sentence_len: r.avg_sentence_len,
+        exclam_per_10k: r.exclam_per_10k,
+        ellipsis_per_10k: r.ellipsis_per_10k,
+        question_per_10k: r.question_per_10k,
+        style_tags: r.style_tags,
+        items: r
+            .items
+            .into_iter()
+            .map(|it| TicItem {
+                phrase: it.phrase,
+                category: it.category,
+                count: it.count as u32,
+                per_10k: it.per_10k,
+                chapter_hits: it.chapter_hits as u32,
+                peak_chapter: it.peak_chapter as u32,
+                peak_count: it.peak_count as u32,
+                sample: it.sample,
+                sample_chapter: it.sample_chapter as u32,
+                buckets: it.buckets,
+            })
+            .collect(),
+    })
 }
 
 /// The same scores for a book that may not be open, without opening it: the

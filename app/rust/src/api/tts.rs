@@ -600,7 +600,12 @@ pub fn prepare(text: String, voice: String) -> Result<bool, String> {
     std::fs::write(&part, &wav)
         .and_then(|_| std::fs::rename(&part, &path))
         .map_err(|e| format!("写缓存失败: {e}"))?;
-    trim_cache(dir, CACHE_CAP);
+    // Trim periodically instead of stat'ing the entire cache directory on every
+    // single sentence (16 clips is ~2 MB vs the 2 GB cap).
+    static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 16 == 0 {
+        trim_cache(dir, CACHE_CAP);
+    }
     Ok(true)
 }
 

@@ -595,24 +595,33 @@ fn has_any(text: &str, words: &[&str]) -> bool {
 }
 
 fn has_romance_cue(text: &str) -> bool {
-    [
-        ROMANTIC_ROLES,
-        COMMIT_ACTIONS,
-        LOVE_ACTIONS,
-        INTIMATE_ACTIONS,
-        ROMANTIC_INTIMATE_ACTIONS,
-        SEXUAL_ACTIONS,
-        ROMANTIC_TENSION_CUES,
-        EMOTIONAL_COMFORT_ACTIONS,
-    ]
-    .into_iter()
-    .flatten()
-    .any(|word| text.contains(word))
-        || [
-            "表白", "告白", "情意", "醋意", "吃醋", "暧昧", "婚约", "婚事", "的女人",
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        let mut parts: Vec<String> = [
+            ROMANTIC_ROLES,
+            COMMIT_ACTIONS,
+            LOVE_ACTIONS,
+            INTIMATE_ACTIONS,
+            ROMANTIC_INTIMATE_ACTIONS,
+            SEXUAL_ACTIONS,
+            ROMANTIC_TENSION_CUES,
+            EMOTIONAL_COMFORT_ACTIONS,
         ]
-        .iter()
-        .any(|word| text.contains(word))
+        .into_iter()
+        .flatten()
+        .chain(
+            [
+                "表白", "告白", "情意", "醋意", "吃醋", "暧昧", "婚约", "婚事", "的女人",
+            ]
+            .iter(),
+        )
+        .map(|w| regex::escape(w))
+        .collect();
+        parts.sort();
+        parts.dedup();
+        Regex::new(&parts.join("|")).unwrap()
+    })
+    .is_match(text)
 }
 
 fn candidate_usable(person: &Person) -> bool {
@@ -763,14 +772,18 @@ fn dialogue_pair_is_bound(
     paras: &[(usize, &str)],
     people: &[&Person],
 ) -> bool {
-    let nearby: Vec<&DialogueTurn> = turns
-        .iter()
-        .filter(|nearby| {
-            nearby.chapter == turn.chapter
-                && nearby.speaker != turn.speaker
-                && nearby.position.abs_diff(turn.position) <= 3
-        })
-        .collect();
+    let min_pos = turn.position.saturating_sub(3);
+    let max_pos = turn.position + 3;
+    let start = turns.partition_point(|t| (t.chapter, t.position) < (turn.chapter, min_pos));
+    let mut nearby: Vec<&DialogueTurn> = Vec::new();
+    for t in &turns[start..] {
+        if t.chapter != turn.chapter || t.position > max_pos {
+            break;
+        }
+        if t.speaker != turn.speaker {
+            nearby.push(t);
+        }
+    }
     if !nearby.is_empty() {
         let nearest = nearby
             .iter()
@@ -862,10 +875,14 @@ fn direct_dialogue_love(quote: &str, start: usize, end: usize, matched: &str) ->
 
 fn add_dialogue_evidence(paras: &[(usize, &str)], all_people: &[&Person], ledgers: &mut [Ledger]) {
     let turns = dialogue_turns(paras, all_people);
-    let i_love_you =
-        Regex::new(r"我[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?你").unwrap();
-    let you_love_me =
-        Regex::new(r"你[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?我").unwrap();
+    static I_LOVE_YOU: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static YOU_LOVE_ME: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let i_love_you = I_LOVE_YOU.get_or_init(|| {
+        Regex::new(r"我[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?你").unwrap()
+    });
+    let you_love_me = YOU_LOVE_ME.get_or_init(|| {
+        Regex::new(r"你[^。！？!?；;]{0,10}(?:喜欢(?:上|着)?|爱上|爱着|爱)(?:了)?我").unwrap()
+    });
 
     let role = format!("(?:{}|女人)", alt(ROMANTIC_ROLES));
     let already = "(?:已经|早已|早就|已)?";
@@ -1077,14 +1094,24 @@ fn pet_names(person: &Person, people: &[Person], paras: &[(usize, &str)]) -> Vec
         forms.push(format!("{last}儿"));
     }
     forms.retain(|form| {
-        !NOT_A_PET_NAME.contains(&form.as_str()) && !people.iter().any(|other| {
-            !std::ptr::eq(other, person)
-                && variants(other).iter().any(|name| name.contains(form.as_str()))
-        }) && paras
-            .iter()
-            .map(|(_, line)| line.matches(form.as_str()).count())
-            .sum::<usize>()
-            >= 20
+        if NOT_A_PET_NAME.contains(&form.as_str())
+            || people.iter().any(|other| {
+                !std::ptr::eq(other, person)
+                    && variants(other).iter().any(|name| name.contains(form.as_str()))
+            })
+        {
+            return false;
+        }
+        let mut hits = 0usize;
+        for (_, line) in paras {
+            if line.contains(form.as_str()) {
+                hits += line.matches(form.as_str()).count();
+                if hits >= 20 {
+                    return true;
+                }
+            }
+        }
+        false
     });
     forms
 }
@@ -1440,23 +1467,37 @@ fn genders(paras: &[(usize, &str)], people: &[&Person]) -> Vec<Option<bool>> {
         .flat_map(|(i, p)| variants(p).into_iter().map(move |n| (n, i)))
         .collect();
     names.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+    let mut by_first: HashMap<char, Vec<(&str, usize)>> = HashMap::new();
+    for &(n, i) in &names {
+        if let Some(c) = n.chars().next() {
+            by_first.entry(c).or_default().push((n, i));
+        }
+    }
     let mut counts = vec![(0u32, 0u32); people.len()];
     for &(_, line) in paras {
+        if !line.contains('他') && !line.contains('她') {
+            continue;
+        }
         let text = narration(line);
         for sentence in text.split(['。', '！', '？', '!', '?']) {
-            let present: HashSet<usize> = names
-                .iter()
-                .filter(|(n, _)| sentence.contains(n))
-                .map(|&(_, i)| i)
-                .collect();
-            if present.len() != 1 {
+            if !sentence.contains('他') && !sentence.contains('她') {
                 continue;
             }
             let opening = sentence
                 .trim_start_matches(|c: char| c.is_whitespace() || "，,；;：:…—".contains(c));
-            let Some(&(name, who)) = names.iter().find(|(n, _)| opening.starts_with(n)) else {
+            let Some(first_ch) = opening.chars().next() else {
                 continue;
             };
+            let Some(cands) = by_first.get(&first_ch) else {
+                continue;
+            };
+            let Some(&(name, who)) = cands.iter().find(|(n, _)| opening.starts_with(n)) else {
+                continue;
+            };
+            // Ensure no other cast member appears anywhere in this sentence.
+            if names.iter().any(|&(n, i)| i != who && sentence.contains(n)) {
+                continue;
+            }
             let rest: Vec<char> = opening[name.len()..].chars().take(40).collect();
             let pronoun = rest.windows(3).find_map(|w| {
                 ("，,；;".contains(w[0]) && (w[1] == '他' || w[1] == '她')).then_some(w)
@@ -1773,9 +1814,16 @@ pub fn analyze(
         .chain(candidates.iter().map(|(_, person)| *person))
         .collect();
     let mut ledgers: Vec<Ledger> = (0..candidates.len()).map(|_| Ledger::default()).collect();
-    let rules: Vec<Vec<Rule>> = candidates
+    // Compile each candidate's ~35 regexes lazily only when they actually co-occur
+    // with the protagonist in a romance-cued window.
+    let mut rules: Vec<Option<Vec<Rule>>> = (0..candidates.len()).map(|_| None).collect();
+    let cand_variants: Vec<Vec<&str>> = candidates
         .iter()
-        .map(|(_, candidate)| relation_rules(protagonist, candidate))
+        .map(|(_, candidate)| variants(candidate))
+        .collect();
+    let proper_variants: Vec<Vec<&str>> = std::iter::once(protagonist)
+        .chain(candidates.iter().map(|(i, _)| &people[*i]))
+        .map(variants)
         .collect();
 
     for (chapter, window) in &windows {
@@ -1786,22 +1834,26 @@ pub fn analyze(
         {
             continue;
         }
-        // By their proper names: a pet name finds a heroine's own scenes, it must
-        // not take 洛凝's from her because 巧巧 is mentioned beside them.
-        let present: HashSet<usize> = std::iter::once(protagonist)
-            .chain(candidates.iter().map(|(i, _)| &people[*i]))
-            .enumerate()
-            .filter(|(_, person)| variants(person).iter().any(|name| window.contains(name)))
-            .map(|(index, _)| index)
-            .collect();
+        // Check which candidates appear at all before building `present`.
+        let mut present_proper: Vec<usize> = Vec::new();
+        for (index, vs) in proper_variants.iter().enumerate() {
+            if vs.iter().any(|name| window.contains(name)) {
+                present_proper.push(index);
+            }
+        }
         for (candidate_pos, (_, candidate)) in candidates.iter().enumerate() {
-            if !variants(candidate).iter().any(|name| window.contains(name)) {
+            if !cand_variants[candidate_pos]
+                .iter()
+                .any(|name| window.contains(name))
+            {
                 continue;
             }
-            let third_person = present
+            let third_person = present_proper
                 .iter()
                 .any(|index| *index != 0 && *index != candidate_pos + 1);
-            for rule in &rules[candidate_pos] {
+            let cand_rules = rules[candidate_pos]
+                .get_or_insert_with(|| relation_rules(protagonist, candidate));
+            for rule in cand_rules.iter() {
                 let Some(found) = rule.regex.find(window) else {
                     continue;
                 };

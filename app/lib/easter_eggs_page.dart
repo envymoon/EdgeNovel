@@ -96,7 +96,21 @@ class _EasterEggsPageState extends State<EasterEggsPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              for (final def in EasterEggEngine.catalog)
+              // Show unlocked eggs first (most recently unlocked on top),
+              // followed by mysterious locked `???` slots.
+              for (final def in [
+                ...EasterEggEngine.catalog
+                    .where((d) => engine.unlocked.containsKey(d.id))
+                    .toList()
+                  ..sort(
+                    (a, b) => (engine.unlocked[b.id]!.unlockedAtMs).compareTo(
+                      engine.unlocked[a.id]!.unlockedAtMs,
+                    ),
+                  ),
+                ...EasterEggEngine.catalog.where(
+                  (d) => !engine.unlocked.containsKey(d.id),
+                ),
+              ])
                 _card(t, def, engine.unlocked[def.id]),
             ],
           ),

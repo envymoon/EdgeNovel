@@ -1953,6 +1953,10 @@ fn is_a_person(name: &str, sample: &str) -> Result<bool, String> {
             Some("词语") => word += 1,
             _ => {}
         }
+        // Majority of 3 is already decided once either side reaches 2.
+        if person == 2 || word == 2 {
+            break;
+        }
     }
     if person == 0 && word == 0 {
         return Err("模型没有给出可用判断".into());

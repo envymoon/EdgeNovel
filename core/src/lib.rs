@@ -6,7 +6,6 @@ pub mod cleanup;
 pub mod cover;
 pub mod decode;
 pub mod dict;
-pub mod filler;
 pub mod fingerprint;
 pub mod focus;
 pub mod genre;
@@ -21,6 +20,7 @@ pub mod romance;
 pub mod sights;
 pub mod source;
 pub mod store;
+pub mod tics;
 pub mod zh_g2p;
 
 /// Full-width ideographic space. Two of them are the canonical Chinese

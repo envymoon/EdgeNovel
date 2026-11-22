@@ -1030,7 +1030,16 @@ const RELATION_CUES: &[&str] = &[
 
 /// Does this sentence carry any relationship signal? See [`RELATION_CUES`].
 fn has_cue(sent: &str) -> bool {
-    RELATION_CUES.iter().any(|w| sent.contains(w))
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        let pat = RELATION_CUES
+            .iter()
+            .map(|w| regex::escape(w))
+            .collect::<Vec<_>>()
+            .join("|");
+        regex::Regex::new(&pat).unwrap()
+    })
+    .is_match(sent)
 }
 
 /// Words that mark a sentence as *saying who someone is* rather than merely
@@ -1184,7 +1193,29 @@ const BACKGROUND_CUES: &[&str] = &[
 
 /// Does this sentence say anything about who the person is? See [`BACKGROUND_CUES`].
 fn has_background(sent: &str) -> bool {
-    BACKGROUND_CUES.iter().any(|w| sent.contains(w))
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        let pat = BACKGROUND_CUES
+            .iter()
+            .map(|w| regex::escape(w))
+            .collect::<Vec<_>>()
+            .join("|");
+        regex::Regex::new(&pat).unwrap()
+    })
+    .is_match(sent)
+}
+
+fn has_clothing(sent: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        let pat = CLOTHING
+            .iter()
+            .map(|w| regex::escape(w))
+            .collect::<Vec<_>>()
+            .join("|");
+        regex::Regex::new(&pat).unwrap()
+    })
+    .is_match(sent)
 }
 
 /// What someone has on is a scene, not a person: 「克莱恩身穿沾染着尘埃的灰蓝色
@@ -1294,7 +1325,7 @@ fn stances(sent: &str, hits: &[(usize, usize, usize)]) -> HashMap<usize, Stance>
     cuts.push(sent.len());
     for w in cuts.windows(2) {
         let (c0, c1) = (w[0], w[1]);
-        let tells = has_background(&sent[c0..c1]);
+        let mut tells: Option<bool> = None;
         let mut prev: Option<usize> = None;
         for &(s, e, pid) in hits.iter().filter(|h| h.0 >= c0 && h.0 < c1) {
             let subject = match prev {
@@ -1304,7 +1335,8 @@ fn stances(sent: &str, hits: &[(usize, usize, usize)]) -> HashMap<usize, Stance>
             if !subject {
                 break;
             }
-            let st = if tells { Stance::Tells } else { Stance::Topic };
+            let is_tells = *tells.get_or_insert_with(|| has_background(&sent[c0..c1]));
+            let st = if is_tells { Stance::Tells } else { Stance::Topic };
             let best = out.entry(pid).or_insert(st);
             *best = (*best).min(st);
             prev = Some(e);
@@ -1611,58 +1643,74 @@ struct Stat {
 fn candidates(paras: &[(usize, &str)]) -> Vec<(String, Stat)> {
     let mut seeds: HashSet<String> = HashSet::new();
     let mut anchored: HashMap<String, u32> = HashMap::new();
+    let mut idx: Vec<(usize, char)> = Vec::with_capacity(256);
     for &(_, line) in paras {
-        let cs: Vec<char> = line.chars().collect();
-        for i in 0..cs.len() {
-            if !SPEECH.contains(&cs[i]) {
-                continue;
+        idx.clear();
+        idx.extend(line.char_indices());
+        let n = idx.len();
+        for i in 0..n {
+            let ci = idx[i].1;
+            if SPEECH.contains(&ci) {
+                // Anchor at the end of the verb cluster (the 道 of 说道), with
+                // punctuation or end-of-line after it.
+                let next = idx.get(i + 1).map(|x| x.1);
+                if !next.is_some_and(|c| SPEECH.contains(&c)) && after_ok(next) {
+                    let mut j = i;
+                    while j > 0 && SPEECH.contains(&idx[j - 1].1) {
+                        j -= 1;
+                    }
+                    if j == 0 || !false_friend(idx[j - 1].1, idx[j].1) {
+                        let mut k = j;
+                        while k > 0
+                            && j - k < 6
+                            && is_cjk(idx[k - 1].1)
+                            && !SPEECH.contains(&idx[k - 1].1)
+                        {
+                            k -= 1;
+                        }
+                        let end_b = idx[j].0;
+                        // Every suffix of the run is a candidate: the run may open with
+                        // narrative (这时吕树) — statistics keep the name and drop the rest.
+                        for l in 2..=(j - k).min(4) {
+                            let s = &line[idx[j - l].0..end_b];
+                            if !seeds.contains(s) {
+                                seeds.insert(s.to_string());
+                            }
+                        }
+                        // A whole run with punctuation on its left is a clean anchor: the
+                        // speaker and nothing else stands before the verb.
+                        if (2..=4).contains(&(j - k)) && (k == 0 || !is_cjk(idx[k - 1].1)) {
+                            let s = &line[idx[k].0..end_b];
+                            if let Some(c) = anchored.get_mut(s) {
+                                *c += 1;
+                            } else {
+                                anchored.insert(s.to_string(), 1);
+                            }
+                        }
+                    }
+                }
             }
-            // Anchor at the end of the verb cluster (the 道 of 说道), with
-            // punctuation or end-of-line after it.
-            if cs.get(i + 1).is_some_and(|c| SPEECH.contains(c)) {
-                continue;
-            }
-            if !after_ok(cs.get(i + 1).copied()) {
-                continue;
-            }
-            let mut j = i;
-            while j > 0 && SPEECH.contains(&cs[j - 1]) {
-                j -= 1;
-            }
-            if j > 0 && false_friend(cs[j - 1], cs[j]) {
-                continue;
-            }
-            let mut k = j;
-            while k > 0 && j - k < 6 && is_cjk(cs[k - 1]) && !SPEECH.contains(&cs[k - 1]) {
-                k -= 1;
-            }
-            // Every suffix of the run is a candidate: the run may open with
-            // narrative (这时吕树) — statistics keep the name and drop the rest.
-            for l in 2..=(j - k).min(4) {
-                seeds.insert(cs[j - l..j].iter().collect());
-            }
-            // A whole run with punctuation on its left is a clean anchor: the
-            // speaker and nothing else stands before the verb.
-            if (2..=4).contains(&(j - k)) && (k == 0 || !is_cjk(cs[k - 1])) {
-                *anchored.entry(cs[k..j].iter().collect()).or_default() += 1;
-            }
-        }
-        // Second seed source: whoever stands right after an interaction word
-        // (和宁玉合、找陈思凝). Speech attribution alone is at the mercy of the
-        // author's habit — 世子很凶 writes 轻声道／含笑道 almost every time and
-        // names its speaker almost never, so that harvest returned three people
-        // for a book with twenty. Being acted upon is a habit of the story, not
-        // of the prose, so it finds the supporting cast the other source misses.
-        for i in 0..cs.len() {
-            if !OBJECT_CUE.contains(&cs[i]) {
-                continue;
-            }
-            let mut e = i + 1;
-            while e < cs.len() && e - i <= 3 && is_cjk(cs[e]) {
-                e += 1;
-            }
-            for l in 2..=(e - i - 1).min(3) {
-                seeds.insert(cs[i + 1..=i + l].iter().collect());
+            // Second seed source: whoever stands right after an interaction word
+            // (和宁玉合、找陈思凝).
+            if OBJECT_CUE.contains(&ci) {
+                let mut e = i + 1;
+                while e < n && e - i <= 3 && is_cjk(idx[e].1) {
+                    e += 1;
+                }
+                if e > i + 2 {
+                    let start_b = idx[i + 1].0;
+                    for l in 2..=(e - i - 1).min(3) {
+                        let end_b = if i + 1 + l == n {
+                            line.len()
+                        } else {
+                            idx[i + 1 + l].0
+                        };
+                        let s = &line[start_b..end_b];
+                        if !seeds.contains(s) {
+                            seeds.insert(s.to_string());
+                        }
+                    }
+                }
             }
         }
     }
@@ -1684,42 +1732,80 @@ fn candidates(paras: &[(usize, &str)]) -> Vec<(String, Stat)> {
             ..Stat::default()
         })
         .collect();
-    let mut by_first: HashMap<char, Vec<usize>> = HashMap::new();
+    // Index by first 2 chars using fast u32 hashing + 8KB L1 head bitmap.
+    #[derive(Default)]
+    struct FastU32Hasher(u64);
+    impl std::hash::Hasher for FastU32Hasher {
+        #[inline]
+        fn finish(&self) -> u64 {
+            self.0
+        }
+        #[inline]
+        fn write(&mut self, bytes: &[u8]) {
+            for &b in bytes {
+                self.0 = (self.0.rotate_left(5) ^ (b as u64)).wrapping_mul(0x517cc1b727220a95);
+            }
+        }
+        #[inline]
+        fn write_u32(&mut self, i: u32) {
+            self.0 = (i as u64).wrapping_mul(0x517cc1b727220a95);
+        }
+    }
+    let mut head_bmp = [0u64; 1024];
+    let mut by_pair: HashMap<u32, Vec<usize>, std::hash::BuildHasherDefault<FastU32Hasher>> =
+        HashMap::default();
     for (i, name) in names.iter().enumerate() {
-        by_first
-            .entry(name.chars().next().unwrap())
-            .or_default()
-            .push(i);
+        let mut it = name.chars();
+        if let (Some(c0), Some(c1)) = (it.next(), it.next()) {
+            let u = c0 as u32;
+            if u < 65536 {
+                head_bmp[(u >> 6) as usize] |= 1u64 << (u & 63);
+            }
+            let key = ((c0 as u32) << 16) | (c1 as u32 & 0xffff);
+            by_pair.entry(key).or_default().push(i);
+        }
     }
     for &(_, line) in paras {
+        idx.clear();
+        idx.extend(line.char_indices());
+        let n = idx.len();
+        if n < 2 {
+            continue;
+        }
         let mut prev = '\n';
-        for (o, c) in line.char_indices() {
-            if let Some(ids) = by_first.get(&c) {
-                for &i in ids {
-                    let name = &names[i];
-                    if line[o..].starts_with(name.as_str()) {
-                        let st = &mut stats[i];
-                        st.count += 1;
-                        if !is_cjk(prev) {
-                            st.boundary += 1;
-                        }
-                        if OBJECT_CUE.contains(&prev) {
-                            st.object += 1;
-                        }
-                        if st.left.len() < 4 {
-                            st.left.insert(prev);
-                        }
-                        let right = line[o + name.len()..].chars().next().unwrap_or('\n');
-                        if !is_cjk(right) {
-                            st.boundary_r += 1;
-                        }
-                        if st.right.len() < 4 {
-                            st.right.insert(right);
+        for pos in 0..(n - 1) {
+            let (o, c0) = idx[pos];
+            let u = c0 as u32;
+            if u < 65536 && (head_bmp[(u >> 6) as usize] & (1u64 << (u & 63))) != 0 {
+                let key = (u << 16) | (idx[pos + 1].1 as u32 & 0xffff);
+                if let Some(ids) = by_pair.get(&key) {
+                    let tail = &line[o..];
+                    for &i in ids {
+                        let name = &names[i];
+                        if tail.starts_with(name.as_str()) {
+                            let st = &mut stats[i];
+                            st.count += 1;
+                            if !is_cjk(prev) {
+                                st.boundary += 1;
+                            }
+                            if OBJECT_CUE.contains(&prev) {
+                                st.object += 1;
+                            }
+                            if st.left.len() < 4 {
+                                st.left.insert(prev);
+                            }
+                            let right = tail[name.len()..].chars().next().unwrap_or('\n');
+                            if !is_cjk(right) {
+                                st.boundary_r += 1;
+                            }
+                            if st.right.len() < 4 {
+                                st.right.insert(right);
+                            }
                         }
                     }
                 }
             }
-            prev = c;
+            prev = c0;
         }
     }
     names.into_iter().zip(stats).collect()
@@ -2399,13 +2485,16 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
                 .collect();
             pids.sort_unstable();
             pids.dedup();
+            if pids.is_empty() {
+                continue;
+            }
             let raw = &line[s0..s1];
             let sent = raw.trim();
             // Every person in the sentence banks it, in the tier that says how
             // much it is about them: a scene with two people in it still says
             // something about each, but 「搜查克莱恩家的黑发绿瞳警官」 describes the
             // officer, and handed to 克莱恩's summary it made him one.
-            if !CLOTHING.iter().any(|w| sent.contains(w)) {
+            if !has_clothing(sent) {
                 let base = s0 + (raw.len() - raw.trim_start().len());
                 let local: Vec<(usize, usize, usize)> = kept
                     .iter()
@@ -2424,6 +2513,7 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
                 .copied()
                 .filter(|w| sent.contains(w))
                 .collect();
+            let mut cue_cached: Option<bool> = None;
             for x in 0..pids.len() {
                 for y in x + 1..pids.len() {
                     let (pa, pb) = (pids[x], pids[y]);
@@ -2446,7 +2536,7 @@ fn graph(paras: &[(usize, &str)], members: Vec<Member>) -> (Vec<Person>, Vec<Edg
                     }
                     // A sentence earns the strong reservoir if it says anything
                     // about the bond — a bound appellation, or a loose cue word.
-                    if !hinted.is_empty() || has_cue(sent) {
+                    if !hinted.is_empty() || *cue_cached.get_or_insert_with(|| has_cue(sent)) {
                         acc.strong.push(ci, sent);
                     } else {
                         acc.weak.push(ci, sent);

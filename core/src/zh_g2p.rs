@@ -1529,6 +1529,9 @@ fn an2cn_direct(t: &str) -> Option<String> {
 impl Zh {
     /// `cn2an.transform(text, "an2cn")`.
     fn an2cn(&self, text: &str) -> String {
+        if !text.bytes().any(|b| b.is_ascii_digit()) {
+            return text.to_string();
+        }
         struct Res {
             range: Regex,
             date: Regex,

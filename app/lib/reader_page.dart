@@ -15,7 +15,6 @@ import 'bloom.dart';
 import 'dictionary.dart';
 import 'dictionary_page.dart';
 import 'easter_eggs.dart';
-import 'filler_page.dart';
 import 'book_detail_page.dart';
 import 'font_manager.dart';
 import 'font_page.dart';
@@ -88,7 +87,6 @@ class _ReaderPageState extends State<ReaderPage> {
   Timer? _eggTimer;
   int _lastPageNum = 1;
   int _eggWindowChars = 0;
-  List<double?>? _eggFiller;
   List<double?>? _eggPace;
 
   bool get _isPaged => widget.settings.pageMode != PageMode.scroll;
@@ -125,13 +123,6 @@ class _ReaderPageState extends State<ReaderPage> {
         bookId: info.id,
         bookTitle: info.title,
         enabled: widget.settings.easterEggs,
-      );
-      unawaited(
-        loadFiller(info.path, info.chapters.length)
-            .then((v) {
-              if (mounted) _eggFiller = v;
-            })
-            .catchError((_) {}),
       );
       unawaited(
         loadPace(info.path, info.chapters.length)
@@ -310,6 +301,14 @@ class _ReaderPageState extends State<ReaderPage> {
           ),
         );
       }
+    }
+    final info = widget.reader.info;
+    if (info != null) {
+      EasterEggEngine.instance.onTtsState(
+        playing: _tts.playing,
+        bookTitle: info.title,
+        enabled: widget.settings.easterEggs,
+      );
     }
     final i = _tts.activeParagraph;
     if (i == _followed) return;
@@ -663,7 +662,7 @@ class _ReaderPageState extends State<ReaderPage> {
     }
     EasterEggEngine.instance.onChapterChanged(
       chapterIndex: chapter,
-      fillerScores: _eggFiller,
+      totalChapters: widget.reader.info?.chapters.length ?? 0,
       paceScores: _eggPace,
       bookTitle: widget.reader.info?.title ?? '',
       enabled: widget.settings.easterEggs,

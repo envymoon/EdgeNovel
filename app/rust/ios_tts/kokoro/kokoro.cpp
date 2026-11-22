@@ -231,6 +231,25 @@ std::vector<float> hann() {
     return w;
 }
 
+struct DftTable {
+    double cos_t[BINS][NFFT];
+    double sin_t[BINS][NFFT];
+    DftTable() {
+        for (int kb = 0; kb < BINS; kb++) {
+            for (int n = 0; n < NFFT; n++) {
+                const double a = 2.0 * M_PI * kb * n / NFFT;
+                cos_t[kb][n] = std::cos(a);
+                sin_t[kb][n] = std::sin(a);
+            }
+        }
+    }
+};
+
+static const DftTable & dft_table() {
+    static const DftTable tbl;
+    return tbl;
+}
+
 // torch.stft(center, reflect, hann) -> [22][frames]: magnitudes, then phases.
 std::vector<float> stft(const std::vector<float> & x, int & frames) {
     const int N = (int) x.size();
@@ -244,15 +263,21 @@ std::vector<float> stft(const std::vector<float> & x, int & frames) {
     }
     frames = N / HOP + 1;
     const auto w = hann();
+    const auto & tbl = dft_table();
     std::vector<float> out((size_t) 2 * BINS * frames);
+    double vw[NFFT];
     for (int f = 0; f < frames; f++) {
+        const float * pf = &p[f * HOP];
+        for (int n = 0; n < NFFT; n++) {
+            vw[n] = (double) pf[n] * w[n];
+        }
         for (int kb = 0; kb < BINS; kb++) {
             double re = 0, im = 0;
+            const double * ct = tbl.cos_t[kb];
+            const double * st = tbl.sin_t[kb];
             for (int n = 0; n < NFFT; n++) {
-                const double a = 2.0 * M_PI * kb * n / NFFT;
-                const double v = (double) p[f * HOP + n] * w[n];
-                re += v * std::cos(a);
-                im -= v * std::sin(a);
+                re += vw[n] * ct[n];
+                im -= vw[n] * st[n];
             }
             if (kb == 0 || kb == BINS - 1) im = 0;
             out[(size_t) kb * frames + f] = (float) std::sqrt(re * re + im * im);
@@ -265,20 +290,25 @@ std::vector<float> stft(const std::vector<float> & x, int & frames) {
 // torch.istft of exp(x[:11]) * e^(i sin(x[11:])), x: [22][frames].
 std::vector<float> istft(const std::vector<float> & x, int frames) {
     const auto w = hann();
+    const auto & tbl = dft_table();
     const int full = (frames - 1) * HOP + NFFT;
     std::vector<double> acc(full, 0.0), env(full, 0.0);
-    std::vector<double> mag(BINS), ph(BINS);
+    double re_k[BINS], im_k[BINS];
     for (int f = 0; f < frames; f++) {
         for (int kb = 0; kb < BINS; kb++) {
-            mag[kb] = std::exp((double) x[(size_t) kb * frames + f]);
-            ph[kb] = std::sin((double) x[(size_t) (BINS + kb) * frames + f]);
+            const double m = std::exp((double) x[(size_t) kb * frames + f]);
+            const double ph = std::sin((double) x[(size_t) (BINS + kb) * frames + f]);
+            const double scale = (kb == 0 || kb == BINS - 1) ? m : 2.0 * m;
+            re_k[kb] = scale * std::cos(ph);
+            im_k[kb] = scale * std::sin(ph);
         }
+        const double dc = re_k[0];
+        const double nyq = re_k[BINS - 1];
         for (int n = 0; n < NFFT; n++) {
-            double s = mag[0] * std::cos(ph[0]) +
-                       mag[BINS - 1] * std::cos(ph[BINS - 1]) * ((n & 1) ? -1.0 : 1.0);
+            double s = dc + ((n & 1) ? -nyq : nyq);
             for (int kb = 1; kb < BINS - 1; kb++) {
-                const double a = 2.0 * M_PI * kb * n / NFFT + ph[kb];
-                s += 2.0 * mag[kb] * std::cos(a);
+                // cos(2*pi*kb*n/NFFT + ph[kb]) = cos_t*cos(ph) - sin_t*sin(ph)
+                s += re_k[kb] * tbl.cos_t[kb][n] - im_k[kb] * tbl.sin_t[kb][n];
             }
             s /= NFFT;
             acc[f * HOP + n] += s * w[n];

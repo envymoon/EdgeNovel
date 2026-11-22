@@ -242,18 +242,42 @@ fn parse_geo() -> HashMap<&'static str, u8> {
     map
 }
 
+fn suffix_tables() -> &'static (HashMap<char, Vec<(&'static str, u8)>>, HashMap<char, u8>) {
+    static TBL: std::sync::OnceLock<(HashMap<char, Vec<(&'static str, u8)>>, HashMap<char, u8>)> =
+        std::sync::OnceLock::new();
+    TBL.get_or_init(|| {
+        let mut long_by_last: HashMap<char, Vec<(&'static str, u8)>> = HashMap::new();
+        for &(w, r) in SUFFIX_LONG {
+            if let Some(last) = w.chars().last() {
+                long_by_last.entry(last).or_default().push((w, r));
+            }
+        }
+        let mut one_map: HashMap<char, u8> = HashMap::with_capacity(SUFFIX_ONE.len());
+        for &(w, r) in SUFFIX_ONE {
+            if let Some(c) = w.chars().next() {
+                one_map.entry(c).or_insert(r);
+            }
+        }
+        (long_by_last, one_map)
+    })
+}
+
 fn rank(s: &str, geo: &HashMap<&str, u8>) -> Option<u8> {
     if let Some(&r) = geo.get(s) {
         return Some(r);
     }
-    for (w, r) in SUFFIX_LONG {
-        if s.ends_with(w) && s.len() > w.len() {
-            return Some(*r);
+    let last = s.chars().last()?;
+    let (long_by_last, one_map) = suffix_tables();
+    if let Some(cands) = long_by_last.get(&last) {
+        for &(w, r) in cands {
+            if s.len() > w.len() && s.ends_with(w) {
+                return Some(r);
+            }
         }
     }
-    for (w, r) in SUFFIX_ONE {
-        if s.ends_with(w) && s.len() > w.len() {
-            return Some(*r);
+    if let Some(&r) = one_map.get(&last) {
+        if s.len() > last.len_utf8() {
+            return Some(r);
         }
     }
     None
@@ -337,33 +361,53 @@ fn paragraphs<'a>(text: &'a str, chapters: &[Chapter], n: usize) -> Vec<(usize, 
 /// Every suffix-ending run read after a cue, with how often it was read so,
 /// per chapter.
 fn seeds(paras: &[(usize, &str)], geo: &HashMap<&str, u8>) -> HashMap<String, HashMap<usize, u32>> {
-    let cues: Vec<Vec<char>> = CUES.iter().map(|c| c.chars().collect()).collect();
-    let heads: HashSet<char> = cues.iter().map(|c| c[0]).collect();
+    let mut cues_by_head: HashMap<char, Vec<Vec<char>>> = HashMap::new();
+    for c in CUES {
+        let v: Vec<char> = c.chars().collect();
+        cues_by_head.entry(v[0]).or_default().push(v);
+    }
     let mut out: HashMap<String, HashMap<usize, u32>> = HashMap::new();
+    let mut idx: Vec<(usize, char)> = Vec::with_capacity(256);
     for (ch, p) in paras {
-        let chars: Vec<char> = p.chars().collect();
-        for i in 0..chars.len() {
-            if !heads.contains(&chars[i]) {
+        idx.clear();
+        idx.extend(p.char_indices());
+        let n = idx.len();
+        for i in 0..n {
+            let Some(cands) = cues_by_head.get(&idx[i].1) else {
                 continue;
-            }
-            let Some(cue) = cues.iter().find(|c| chars[i..].starts_with(c)) else {
+            };
+            let Some(cue) = cands.iter().find(|c| {
+                i + c.len() <= n && c.iter().enumerate().all(|(m, &cc)| idx[i + m].1 == cc)
+            }) else {
                 continue;
             };
             let mut j = i + cue.len();
-            if j < chars.len() && "了过".contains(chars[j]) {
+            if j < n && matches!(idx[j].1, '了' | '过') {
                 j += 1;
             }
-            let mut s = String::new();
+            if j >= n {
+                continue;
+            }
+            let start_b = idx[j].0;
             let mut k = j;
-            while k < chars.len() && k - j < MAX_LEN {
-                let c = chars[k];
+            while k < n && k - j < MAX_LEN {
+                let c = idx[k].1;
                 if !is_cjk(c) || STOP.contains(c) {
                     break;
                 }
-                s.push(c);
                 k += 1;
-                if k - j >= 2 && rank(&s, geo).is_some() {
-                    *out.entry(s.clone()).or_default().entry(*ch).or_default() += 1;
+                if k - j >= 2 {
+                    let end_b = if k == n { p.len() } else { idx[k].0 };
+                    let s = &p[start_b..end_b];
+                    if rank(s, geo).is_some() {
+                        if let Some(m) = out.get_mut(s) {
+                            *m.entry(*ch).or_default() += 1;
+                        } else {
+                            let mut m = HashMap::new();
+                            m.insert(*ch, 1);
+                            out.insert(s.to_string(), m);
+                        }
+                    }
                 }
             }
         }
@@ -371,53 +415,113 @@ fn seeds(paras: &[(usize, &str)], geo: &HashMap<&str, u8>) -> HashMap<String, Ha
     out
 }
 
+#[derive(Default)]
+struct FastU32Hasher(u64);
+impl std::hash::Hasher for FastU32Hasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ (b as u64)).wrapping_mul(0x517cc1b727220a95);
+        }
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.0 = (i as u64).wrapping_mul(0x517cc1b727220a95);
+    }
+}
+type FastU32Map<V> = HashMap<u32, V, std::hash::BuildHasherDefault<FastU32Hasher>>;
+
+#[inline]
+fn pack_pair(a: char, b: char) -> u32 {
+    ((a as u32) << 16) | (b as u32 & 0xffff)
+}
+
+#[inline]
+fn bmp_set(bits: &mut [u64; 1024], c: char) {
+    let u = c as u32;
+    if u < 65536 {
+        bits[(u >> 6) as usize] |= 1u64 << (u & 63);
+    }
+}
+
+#[inline]
+fn bmp_has(bits: &[u64; 1024], c: char) -> bool {
+    let u = c as u32;
+    u < 65536 && (bits[(u >> 6) as usize] & (1u64 << (u & 63))) != 0
+}
+
 fn raw_stats(
     paras: &[(usize, &str)],
     names: &HashSet<String>,
 ) -> HashMap<String, Stat> {
-    let mut stats: HashMap<String, Stat> = names
-        .iter()
-        .map(|n| (n.clone(), Stat { first_chapter: usize::MAX, ..Default::default() }))
+    let name_vec: Vec<String> = names.iter().cloned().collect();
+    let n_names = name_vec.len();
+    let mut stats: Vec<Stat> = (0..n_names)
+        .map(|_| Stat { first_chapter: usize::MAX, ..Default::default() })
         .collect();
-    let mut last_ch: HashMap<&str, usize> = HashMap::new();
-    let mut lefts: HashMap<&str, HashSet<char>> = HashMap::new();
-    let mut rights: HashMap<&str, HashMap<char, u32>> = HashMap::new();
-    let heads: HashSet<char> = names.iter().filter_map(|n| n.chars().next()).collect();
+    let mut last_ch: Vec<usize> = vec![usize::MAX; n_names];
+    let mut lefts: Vec<HashSet<char>> = (0..n_names).map(|_| HashSet::new()).collect();
+    let mut rights: Vec<HashMap<char, u32>> = (0..n_names).map(|_| HashMap::new()).collect();
+
+    // Index all candidate names by their first two chars + 8KB L1 head bitmap.
+    let mut head_bmp = [0u64; 1024];
+    let mut by_pair: FastU32Map<Vec<(usize, usize)>> = FastU32Map::default();
+    for (id, name) in name_vec.iter().enumerate() {
+        let mut it = name.chars();
+        if let (Some(c0), Some(c1)) = (it.next(), it.next()) {
+            bmp_set(&mut head_bmp, c0);
+            let char_len = 2 + it.count();
+            by_pair.entry(pack_pair(c0, c1)).or_default().push((id, char_len));
+        }
+    }
+
+    let mut idx: Vec<(usize, char)> = Vec::with_capacity(256);
     for (ch, p) in paras {
-        let idx: Vec<(usize, char)> = p.char_indices().collect();
-        for a in 0..idx.len() {
-            if !heads.contains(&idx[a].1) {
+        idx.clear();
+        idx.extend(p.char_indices());
+        let n = idx.len();
+        if n < 2 {
+            continue;
+        }
+        for a in 0..(n - 1) {
+            let c0 = idx[a].1;
+            if !bmp_has(&head_bmp, c0) {
                 continue;
             }
-            for len in 2..=MAX_LEN {
-                if a + len > idx.len() {
-                    break;
-                }
-                let end = if a + len == idx.len() { p.len() } else { idx[a + len].0 };
-                let w = &p[idx[a].0..end];
-                let Some((key, _)) = names.get(w).map(|k| (k.as_str(), ())) else {
+            let Some(cands) = by_pair.get(&pack_pair(c0, idx[a + 1].1)) else {
+                continue;
+            };
+            let start_b = idx[a].0;
+            let tail = &p[start_b..];
+            for &(id, char_len) in cands {
+                let w = name_vec[id].as_str();
+                if a + char_len > n || !tail.starts_with(w) {
                     continue;
-                };
-                let e = stats.get_mut(key).unwrap();
+                }
+                let e = &mut stats[id];
                 e.count += 1;
                 let left = if a > 0 { idx[a - 1].1 } else { '^' };
                 if DETERMINER.contains(left) {
                     e.determined += 1;
                 }
-                if last_ch.get(key) != Some(ch) {
-                    last_ch.insert(key, *ch);
+                if last_ch[id] != *ch {
+                    last_ch[id] = *ch;
                     e.chapters += 1;
                     e.first_chapter = e.first_chapter.min(*ch);
                 }
-                lefts.entry(key).or_default().insert(left);
-                let rest = &p[end..];
-                if ACTS.iter().any(|w| rest.starts_with(w)) {
+                lefts[id].insert(left);
+                let rest = &tail[w.len()..];
+                if ACTS.iter().any(|aw| rest.starts_with(aw)) {
                     e.acts += 1;
                 }
-                if RANK_TAILS.iter().any(|w| rest.starts_with(w)) {
+                if RANK_TAILS.iter().any(|rw| rest.starts_with(rw)) {
                     e.ranked += 1;
                 }
-                if LOCATIVES.iter().any(|w| rest.starts_with(w)) {
+                if LOCATIVES.iter().any(|lw| rest.starts_with(lw)) {
                     e.located += 1;
                 }
                 if OPENS.contains(left) {
@@ -426,17 +530,19 @@ fn raw_stats(
                 if DEGREE.contains(left) {
                     e.determined += 1;
                 }
-                if a + len < idx.len() {
-                    *rights.entry(key).or_default().entry(idx[a + len].1).or_default() += 1;
+                if a + char_len < n {
+                    *rights[id].entry(idx[a + char_len].1).or_default() += 1;
                 }
             }
         }
     }
-    for (k, v) in stats.iter_mut() {
-        v.lefts = lefts.get(k.as_str()).map_or(0, |s| s.len() as u32);
-        v.right_top = rights.get(k.as_str()).and_then(|r| r.values().max().copied()).unwrap_or(0);
+    let mut out = HashMap::with_capacity(n_names);
+    for (id, mut st) in stats.into_iter().enumerate() {
+        st.lefts = lefts[id].len() as u32;
+        st.right_top = rights[id].values().max().copied().unwrap_or(0);
+        out.insert(name_vec[id].clone(), st);
     }
-    stats
+    out
 }
 
 /// Diagnostic: every seeded candidate with its raw counts.
@@ -638,42 +744,57 @@ pub fn scan_with(
 
     // Own mentions: a mention inside a longer kept name is that name's
     // (黄原 inside 黄原城), read greedily left to right.
-    let kept_names: HashMap<&str, usize> = kept.iter().enumerate().map(|(i, (k, _))| (k.as_str(), i)).collect();
     let mut own = vec![0u32; kept.len()];
     let mut per_ch: Vec<HashMap<usize, u32>> = vec![HashMap::new(); kept.len()];
     let mut chs: Vec<HashSet<usize>> = vec![HashSet::new(); kept.len()];
     // (outer, inner) adjacent pairs: 云岚宗后山, 加玛帝国的帝都.
     let mut pairs: HashMap<(usize, usize), u32> = HashMap::new();
     let mut ch_people: Vec<HashMap<usize, u32>> = vec![HashMap::new(); n.max(1)];
-    let heads: HashSet<char> = kept.iter().filter_map(|(k, _)| k.chars().next()).collect();
+    // Index kept places by first 2 chars + 8KB L1 head bitmap, sorted longest-first.
+    let mut head_bmp = [0u64; 1024];
+    let mut by_pair: FastU32Map<Vec<(usize, usize)>> = FastU32Map::default();
+    for (i, (k, _)) in kept.iter().enumerate() {
+        let mut it = k.chars();
+        if let (Some(c0), Some(c1)) = (it.next(), it.next()) {
+            bmp_set(&mut head_bmp, c0);
+            let char_len = 2 + it.count();
+            by_pair.entry(pack_pair(c0, c1)).or_default().push((i, char_len));
+        }
+    }
+    for v in by_pair.values_mut() {
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+    }
+    let mut idx: Vec<(usize, char)> = Vec::with_capacity(256);
     for (ch, p) in &paras {
-        let idx: Vec<(usize, char)> = p.char_indices().collect();
+        idx.clear();
+        idx.extend(p.char_indices());
+        let len_p = idx.len();
         let mut a = 0;
-        let mut prev: Option<(usize, usize)> = None; // (place, end char index)
-        while a < idx.len() {
+        let mut prev: Option<(usize, usize)> = None; // (place, end byte offset)
+        while a + 1 < len_p {
             let mut hit = None;
-            for len in (2..=MAX_LEN).rev() {
-                if !heads.contains(&idx[a].1) {
-                    break;
-                }
-                if a + len > idx.len() {
-                    continue;
-                }
-                let end = if a + len == idx.len() { p.len() } else { idx[a + len].0 };
-                if let Some(&i) = kept_names.get(&p[idx[a].0..end]) {
-                    hit = Some((i, len));
-                    break;
+            let c0 = idx[a].1;
+            if bmp_has(&head_bmp, c0) {
+                if let Some(cands) = by_pair.get(&pack_pair(c0, idx[a + 1].1)) {
+                    let tail = &p[idx[a].0..];
+                    for &(i, clen) in cands {
+                        let name = kept[i].0.as_str();
+                        if a + clen <= len_p && tail.starts_with(name) {
+                            hit = Some((i, clen, idx[a].0 + name.len()));
+                            break;
+                        }
+                    }
                 }
             }
-            if let Some((i, len)) = hit {
+            if let Some((i, clen, end_b)) = hit {
                 own[i] += 1;
                 *per_ch[i].entry(*ch).or_default() += 1;
                 chs[i].insert(*ch);
-                if let Some((pi, pend)) = prev {
-                    let gap: String = idx[pend..a].iter().map(|x| x.1).collect();
+                if let Some((pi, pend_b)) = prev {
+                    let gap = &p[pend_b..idx[a].0];
                     if pi != i
                         && matches!(
-                            gap.as_str(),
+                            gap,
                             "" | "的" | "之" | "中的" | "内的" | "里的" | "之中的"
                                 | "境内" | "境内的" | "一带" | "一带的" | "附近" | "附近的"
                                 | "城内" | "城内的" | "城外" | "城外的" | "中心" | "中心的"
@@ -683,8 +804,8 @@ pub fn scan_with(
                         *pairs.entry((pi, i)).or_default() += 1;
                     }
                 }
-                prev = Some((i, a + len));
-                a += len;
+                prev = Some((i, end_b));
+                a += clen;
             } else {
                 a += 1;
             }

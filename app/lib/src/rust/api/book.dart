@@ -233,10 +233,9 @@ Future<List<SearchHit>> searchText({
 Future<List<double?>> chapterPace({required String path}) =>
     RustLib.instance.api.crateApiBookChapterPace(path: path);
 
-/// 注水度: one padding/repetition score per chapter in `0.0..=1.0` (higher is
-/// more padded). `None` for chapters shorter than `filler::MIN_CHARS`.
-Future<List<double?>> chapterFiller({required String path}) =>
-    RustLib.instance.api.crateApiBookChapterFiller(path: path);
+/// 作者口癖: analyze author tics & writing style across the whole book without a model.
+Future<AuthorTics> authorTics({required String path}) =>
+    RustLib.instance.api.crateApiBookAuthorTics(path: path);
 
 /// Take someone off a book's graph by hand, or put them back. The one in the
 /// middle stays: the graph is drawn around them. Either way the book is
@@ -315,6 +314,58 @@ Future<RelationshipStructureInfo> relationshipStructure({
 /// Drop the cached graph and every model verdict attached to this book.
 Future<void> forgetCast({required PlatformInt64 bookId}) =>
     RustLib.instance.api.crateApiBookForgetCast(bookId: bookId);
+
+/// 作者口癖: writing habits, stylistic fingerprint, and signature phrases.
+class AuthorTics {
+  final int totalChars;
+  final int chapterCount;
+  final double dialogueRatio;
+  final double avgSentenceLen;
+  final double exclamPer10K;
+  final double ellipsisPer10K;
+  final double questionPer10K;
+  final List<String> styleTags;
+  final List<TicItem> items;
+
+  const AuthorTics({
+    required this.totalChars,
+    required this.chapterCount,
+    required this.dialogueRatio,
+    required this.avgSentenceLen,
+    required this.exclamPer10K,
+    required this.ellipsisPer10K,
+    required this.questionPer10K,
+    required this.styleTags,
+    required this.items,
+  });
+
+  @override
+  int get hashCode =>
+      totalChars.hashCode ^
+      chapterCount.hashCode ^
+      dialogueRatio.hashCode ^
+      avgSentenceLen.hashCode ^
+      exclamPer10K.hashCode ^
+      ellipsisPer10K.hashCode ^
+      questionPer10K.hashCode ^
+      styleTags.hashCode ^
+      items.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AuthorTics &&
+          runtimeType == other.runtimeType &&
+          totalChars == other.totalChars &&
+          chapterCount == other.chapterCount &&
+          dialogueRatio == other.dialogueRatio &&
+          avgSentenceLen == other.avgSentenceLen &&
+          exclamPer10K == other.exclamPer10K &&
+          ellipsisPer10K == other.ellipsisPer10K &&
+          questionPer10K == other.questionPer10K &&
+          styleTags == other.styleTags &&
+          items == other.items;
+}
 
 class BookAnnotation {
   final PlatformInt64 id;
@@ -1219,6 +1270,62 @@ class ShelfItem {
           pinned == other.pinned &&
           genreTags == other.genreTags &&
           coverPath == other.coverPath;
+}
+
+/// One recurring phrase / writing tic discovered in a book.
+class TicItem {
+  final String phrase;
+  final String category;
+  final int count;
+  final double per10K;
+  final int chapterHits;
+  final int peakChapter;
+  final int peakCount;
+  final String sample;
+  final int sampleChapter;
+  final Uint32List buckets;
+
+  const TicItem({
+    required this.phrase,
+    required this.category,
+    required this.count,
+    required this.per10K,
+    required this.chapterHits,
+    required this.peakChapter,
+    required this.peakCount,
+    required this.sample,
+    required this.sampleChapter,
+    required this.buckets,
+  });
+
+  @override
+  int get hashCode =>
+      phrase.hashCode ^
+      category.hashCode ^
+      count.hashCode ^
+      per10K.hashCode ^
+      chapterHits.hashCode ^
+      peakChapter.hashCode ^
+      peakCount.hashCode ^
+      sample.hashCode ^
+      sampleChapter.hashCode ^
+      buckets.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TicItem &&
+          runtimeType == other.runtimeType &&
+          phrase == other.phrase &&
+          category == other.category &&
+          count == other.count &&
+          per10K == other.per10K &&
+          chapterHits == other.chapterHits &&
+          peakChapter == other.peakChapter &&
+          peakCount == other.peakCount &&
+          sample == other.sample &&
+          sampleChapter == other.sampleChapter &&
+          buckets == other.buckets;
 }
 
 class VolumeInfo {

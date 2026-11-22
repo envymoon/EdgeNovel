@@ -1,10 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:novel/easter_eggs.dart';
 import 'package:novel/easter_eggs_page.dart';
-import 'package:novel/filler_page.dart';
 import 'package:novel/src/rust/api/book.dart';
 import 'package:novel/theme.dart';
+import 'package:novel/tics_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -13,11 +15,37 @@ void main() {
     EasterEggEngine.instance.resetForTest();
   });
 
-  testWidgets('FillerPage renders curve and lets reader jump to a chapter', (
+  testWidgets('TicsPage renders style fingerprint, tics, and jumps to chapter', (
     tester,
   ) async {
-    const path = 'test_filler_book.txt';
-    seedFillerForTest(path, [0.22, 0.35, 0.78, 0.41, 0.85]);
+    const path = 'test_tics_book.txt';
+    seedAuthorTicsForTest(
+      path,
+      AuthorTics(
+        totalChars: 250000,
+        chapterCount: 50,
+        dialogueRatio: 0.44,
+        avgSentenceLen: 16.5,
+        exclamPer10K: 92.0,
+        ellipsisPer10K: 34.0,
+        questionPer10K: 40.0,
+        styleTags: const ['对话密集', '短句疾风', '叹号狂魔'],
+        items: [
+          TicItem(
+            phrase: '倒吸一口凉气',
+            category: '神态动作',
+            count: 88,
+            per10K: 3.52,
+            chapterHits: 40,
+            peakChapter: 3,
+            peakCount: 6,
+            sample: '众人见状不由得倒吸一口凉气，面色大变。',
+            sampleChapter: 2,
+            buckets: Uint32List.fromList(const [2, 3, 4, 5, 1, 2]),
+          ),
+        ],
+      ),
+    );
     final info = BookInfo(
       id: 1,
       path: path,
@@ -25,7 +53,7 @@ void main() {
       encoding: 'utf-8',
       style: 'zh',
       totalBytes: 1000,
-      charCount: 5000,
+      charCount: 250000,
       chapters: [
         for (var i = 0; i < 5; i++)
           ChapterInfo(
@@ -48,19 +76,22 @@ void main() {
     int? opened;
     await tester.pumpWidget(
       MaterialApp(
-        home: FillerPage(
+        home: TicsPage(
           info: info,
           settings: ReadingSettings(),
-          current: 1,
           onOpenChapter: (i) => opened = i,
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('全书均值'), findsOneWidget);
-    expect(find.text('5 / 5 章'), findsOneWidget);
-    expect(opened, isNull);
+    expect(find.text('写作指纹'), findsOneWidget);
+    expect(find.text('对话密集'), findsOneWidget);
+    expect(find.text('倒吸一口凉气'), findsOneWidget);
+
+    await tester.tap(find.textContaining('最密: 第4章'));
+    await tester.pumpAndSettle();
+    expect(opened, 3);
   });
 
   testWidgets('EasterEggsPage hides locked eggs as ??? and unlocks on trigger', (
@@ -72,7 +103,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('已发现 0 / 12'), findsOneWidget);
+    final total = EasterEggEngine.catalog.length;
+    expect(total, greaterThanOrEqualTo(28));
+    expect(find.text('已发现 0 / $total'), findsOneWidget);
     expect(find.text('???'), findsWidgets);
     expect(find.text('记忆回溯'), findsNothing);
 
@@ -90,7 +123,7 @@ void main() {
     }
     await tester.pumpAndSettle();
 
-    expect(find.text('已发现 1 / 12'), findsOneWidget);
+    expect(find.text('已发现 1 / $total'), findsOneWidget);
     expect(find.text('记忆回溯'), findsOneWidget);
     expect(engine.activeBanner.value?.def.id, 'rewind_memory');
   });
