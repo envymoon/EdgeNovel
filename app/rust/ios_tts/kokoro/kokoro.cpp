@@ -499,9 +499,47 @@ void compute(const kokoro * k, Lane * l, Graph & g) {
 // shape>]" -> (count, seconds).
 using Prof = std::map<std::string, std::pair<int, double>>;
 
-void run(Lane * l, Graph & g, Prof * prof = nullptr, const char * what = "") {
+void run(Lane * l, Graph & g, Prof * prof = nullptr, const char * what = "",
+         bool chunked = false, edge_tts_kokoro_check_cb check = nullptr, void * check_user = nullptr) {
     if (!prof) {
+        if (chunked && check) {
+            // On the CPU behind the screen, run a few ops at a time so the
+            // caller can pace CPU use and stop promptly on return to screen.
+            const int n_nodes = ggml_graph_n_nodes(g.gf);
+            constexpr int CHUNK = 8;
+            ggml_init_params p = {ggml_graph_overhead_custom(CHUNK, false), nullptr, true};
+            ggml_context * c = ggml_init(p);
+            ggml_cgraph * sub = ggml_new_graph_custom(c, CHUNK, false);
+            for (int i = 0; i < n_nodes;) {
+                ggml_graph_clear(sub);
+                int added = 0;
+                while (i < n_nodes && added < CHUNK) {
+                    ggml_tensor * n = ggml_graph_node(g.gf, i++);
+                    if (ggml_is_empty(n) || n->op == GGML_OP_NONE || n->op == GGML_OP_VIEW ||
+                        n->op == GGML_OP_RESHAPE || n->op == GGML_OP_PERMUTE || n->op == GGML_OP_TRANSPOSE)
+                        continue;
+                    ggml_graph_add_node(sub, n);
+                    added++;
+                }
+                if (added == 0) break;
+                if (check(0, check_user)) {
+                    ggml_free(c);
+                    throw std::string("cancelled");
+                }
+                if (ggml_backend_graph_compute(l->backend, sub) != GGML_STATUS_SUCCESS) {
+                    ggml_free(c);
+                    throw std::string("compute failed");
+                }
+                if (check(1, check_user)) {
+                    ggml_free(c);
+                    throw std::string("cancelled");
+                }
+            }
+            ggml_free(c);
+            return;
+        }
         if (ggml_backend_graph_compute(l->backend, g.gf) != GGML_STATUS_SUCCESS) throw std::string("compute failed");
+        if (check && check(0, check_user)) throw std::string("cancelled");
         return;
     }
     // One op a graph, each waited for.
@@ -549,7 +587,13 @@ std::vector<int> to_ids(const kokoro * k, const std::string & ps, int & chars) {
     return ids;
 }
 
-std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std::string & voice, float speed, unsigned seed) {
+std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std::string & voice, float speed,
+                         unsigned seed, edge_tts_kokoro_check_cb check = nullptr, void * check_user = nullptr) {
+    auto checkpoint = [&](int mode) {
+        if (check && check(mode, check_user)) throw std::string("cancelled");
+    };
+    const int rest_mode = k->gpu ? 0 : 1;
+    checkpoint(-1);
     // How long each stage took, a line per sentence in EDGE_KOKORO_LOG when
     // set: where the time goes on a phone's GPU.
     auto t0 = std::chrono::steady_clock::now();
@@ -632,13 +676,14 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         for (int i = 0; i < T; i++) pos[i] = i;
         ggml_backend_tensor_set(in_ids, ids.data(), 0, T * sizeof(int));
         ggml_backend_tensor_set(in_pos, pos.data(), 0, T * sizeof(int));
-        run(l, g, prof, "bert");
+        run(l, g, prof, "bert", !k->gpu, check, check_user);
         d_en = fetch(den);
         te = fetch(e);
         if (!k->debug_dir.empty()) dump(k, "bert", fetch(bert));
     }
 
     lap("bert");
+    checkpoint(0);
     // 2. Durations, on the CPU.
     const int S = 128, D = 512, DS = D + S;
     std::vector<float> d((size_t) T * DS), y((size_t) T * D), h(2 * D);
@@ -667,6 +712,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
     if (!k->debug_dir.empty()) dump(k, "dur", std::vector<float>(dur.begin(), dur.end()));
 
     lap("dur");
+    checkpoint(rest_mode);
     // Text features stretched to the frames; the shared LSTM over them.
     std::vector<float> te_l((size_t) T * D);
     run_lstm(k->te_lstm, te.data(), T, te_l.data());
@@ -682,6 +728,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         for (int c = 0; c < D; c++) sh_t[(size_t) c * F + f] = shared[(size_t) f * D + c];
 
     lap("shared_lstm");
+    checkpoint(rest_mode);
     // 3. Pitch and energy curves, [2F] each.
     std::vector<float> f0, nn;
     {
@@ -702,7 +749,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         compute(k, l, g);
         ggml_backend_tensor_set(x, sh_t.data(), 0, sh_t.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_pred.data(), 0, S * sizeof(float));
-        run(l, g, prof, "f0n");
+        run(l, g, prof, "f0n", !k->gpu, check, check_user);
         f0 = fetch(outs[0]);
         nn = fetch(outs[1]);
     }
@@ -730,6 +777,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
     given("har", har);
 
     lap("source_stft");
+    checkpoint(rest_mode);
     // 5. Decoder and vocoder -> [22][frames].
     std::vector<float> post;
     {
@@ -789,7 +837,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         ggml_backend_tensor_set(in_n, nn.data(), 0, nn.size() * sizeof(float));
         ggml_backend_tensor_set(in_har, har.data(), 0, har.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_dec.data(), 0, S * sizeof(float));
-        run(l, g, prof, "dec");
+        run(l, g, prof, "dec", !k->gpu, check, check_user);
         post = fetch(x);
         for (auto & pr : probes) dump(k, pr.first.c_str(), fetch(pr.second));
         if ((int) x->ne[0] != frames) throw std::string("frame count mismatch");
@@ -798,6 +846,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
     lap("decoder");
     std::vector<float> audio = istft(post, frames);
     lap("istft");
+    checkpoint(rest_mode);
     if (const char * log = getenv("EDGE_KOKORO_LOG")) {
         if (FILE * f = fopen(log, "a")) {
             // When it finished, to tell from the lines how fast sentences
@@ -997,6 +1046,11 @@ void edge_tts_kokoro_lanes(kokoro * k, int n) {
 }
 
 float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed, unsigned seed, int * n) {
+    return edge_tts_kokoro_speak_checked(k, phonemes, voice, speed, seed, n, nullptr, nullptr);
+}
+
+float * edge_tts_kokoro_speak_checked(kokoro * k, const char * phonemes, const char * voice, float speed, unsigned seed,
+                                      int * n, edge_tts_kokoro_check_cb check, void * user) {
     *n = 0;
     // What a sentence computes takes memory by its length, about 17 MB a
     // second of speech: long ones wait until the others leave room.
@@ -1005,10 +1059,27 @@ float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * vo
     Lane * l = nullptr;
     {
         std::unique_lock<std::mutex> g(k->m);
-        k->freed.wait(g, [&] {
+        auto ready = [&] {
             return (int) (k->lanes.size() - k->idle.size()) < k->most &&
                    (k->inflight == 0 || k->inflight + cost <= BUDGET);
-        });
+        };
+        while (!ready()) {
+            if (check && check(0, user)) {
+                error = "cancelled";
+                return nullptr;
+            }
+            if (check) {
+                k->freed.wait_for(g, std::chrono::milliseconds(100), [&] {
+                    return ready() || check(0, user) != 0;
+                });
+            } else {
+                k->freed.wait(g, ready);
+            }
+        }
+        if (check && check(0, user)) {
+            error = "cancelled";
+            return nullptr;
+        }
         k->inflight += cost;
         if (!k->idle.empty()) {
             l = k->idle.back();
@@ -1043,7 +1114,7 @@ float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * vo
         }
     } back{k, l, cost};
     try {
-        std::vector<float> a = speak(k, l, phonemes, voice, speed > 0 ? speed : 1.0f, seed);
+        std::vector<float> a = speak(k, l, phonemes, voice, speed > 0 ? speed : 1.0f, seed, check, user);
         float * out = (float *) malloc(std::max<size_t>(1, a.size()) * sizeof(float));
         if (!a.empty()) memcpy(out, a.data(), a.size() * sizeof(float));
         *n = (int) a.size();

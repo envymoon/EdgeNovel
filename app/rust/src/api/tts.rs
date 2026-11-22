@@ -977,7 +977,7 @@ fn pieces(ps: &str) -> Vec<String> {
 mod light {
     use super::{engine, last_used, light_files, pieces, tts_dir, tuned, wav, InFlight, BUSY, IDLE, LIFECYCLE};
     use novel_core::zh_g2p::Zh;
-    use std::ffi::{c_char, c_int, CStr, CString};
+    use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -989,16 +989,20 @@ mod light {
 
     extern "C" {
         fn edge_tts_watch();
+        fn edge_tts_bg_epoch() -> i64;
+        fn edge_tts_bg_sleep(epoch: i64, ns: i64);
         fn edge_tts_kokoro_load(path: *const c_char, gpu: c_int, threads: c_int) -> *mut Kokoro;
         fn edge_tts_kokoro_free(k: *mut Kokoro);
         fn edge_tts_kokoro_lanes(k: *mut Kokoro, n: c_int);
-        fn edge_tts_kokoro_speak(
+        fn edge_tts_kokoro_speak_checked(
             k: *mut Kokoro,
             phonemes: *const c_char,
             voice: *const c_char,
             speed: f32,
             seed: u32,
             n: *mut c_int,
+            check: extern "C" fn(c_int, *mut c_void) -> c_int,
+            user: *mut c_void,
         ) -> *mut f32;
         fn edge_tts_kokoro_free_audio(samples: *mut f32);
         fn edge_tts_kokoro_error(k: *const Kokoro) -> *const c_char;
@@ -1056,9 +1060,17 @@ mod light {
             return Ok(());
         }
         let (model, text) = light_files(tts_dir()?).ok_or("轻量语音未安装")?;
-        // Sentences still on the old one finish there; it goes with them.
+        // Sentences still on the old one stop promptly on move; wait for them
+        // so the old weights are freed before the new copy is allocated.
         let zh = match slot.take() {
-            Some(l) => l.zh,
+            Some(l) => {
+                let old = l.model;
+                while Arc::strong_count(&old) > 1 {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                drop(old);
+                l.zh
+            }
             None => {
                 let bytes = std::fs::read(&text).map_err(|e| format!("读取轻量语音失败: {e}"))?;
                 Arc::new(Zh::load(&bytes)?)
@@ -1104,30 +1116,90 @@ mod light {
         Ok(())
     }
 
-    /// One sentence, every piece of it, as 16-bit 24 kHz mono; and whether it
-    /// ran on the GPU.
-    fn say(line: &str, voice: &CStr) -> Result<(Vec<u8>, bool), String> {
-        let (model, zh) = {
+    struct Pace {
+        gpu: bool,
+        epoch: i64,
+        rest: bool,
+        last: Instant,
+    }
+
+    extern "C" fn check_pace(mode: c_int, user: *mut c_void) -> c_int {
+        let p = unsafe { &mut *(user as *mut Pace) };
+        let (gpu, epoch, rest) = (p.gpu, p.epoch, p.rest);
+        let misplaced = || {
+            let behind = engine::background();
+            unsafe { edge_tts_bg_epoch() != epoch }
+                || if gpu { behind } else { !behind && engine::gpu() && !NO_GPU.load(Ordering::SeqCst) }
+        };
+        if misplaced() {
+            return 1;
+        }
+        if mode < 0 {
+            p.last = Instant::now();
+            return 0;
+        }
+        if mode > 0 {
+            if !gpu && rest && engine::background() {
+                // Behind the screen, on the CPU, rest three times as long as
+                // the chunk just computed, while holding the lane so another
+                // sentence cannot keep the cores busy meanwhile; wakes at once
+                // if the screen comes back on.
+                let busy = p.last.elapsed().min(Duration::from_secs(5));
+                if !busy.is_zero() {
+                    unsafe { edge_tts_bg_sleep(epoch, (busy.as_nanos() as i64) * 3) };
+                }
+            }
+            p.last = Instant::now();
+            if misplaced() {
+                return 1;
+            }
+        }
+        0
+    }
+
+    /// One sentence, every piece of it, as 16-bit 24 kHz mono; on error, also
+    /// whether this attempt ran on the GPU.
+    fn say(line: &str, voice: &CStr) -> Result<Vec<u8>, (String, bool)> {
+        let (model, zh, epoch) = {
             let _g = LIFECYCLE.lock().unwrap();
             // One voice in memory at a time.
             engine::unload();
             let mut slot = LOADED.lock().unwrap();
             let first = slot.is_none();
-            ensure(&mut slot, wanted_gpu())?;
+            let epoch = unsafe { edge_tts_bg_epoch() };
+            let want = wanted_gpu();
+            ensure(&mut slot, want).map_err(|e| (e, want))?;
             if first {
                 watch_idle();
             }
             let l = slot.as_ref().unwrap();
-            (l.model.clone(), l.zh.clone())
+            (l.model.clone(), l.zh.clone(), epoch)
+        };
+        let mut pace = Pace {
+            gpu: model.gpu,
+            epoch,
+            rest: !cfg!(test),
+            last: Instant::now(),
         };
         let mut pcm = Vec::new();
         for piece in pieces(&zh.phonemes(line)) {
-            let ps = CString::new(piece).map_err(|_| "文本无效".to_string())?;
+            let ps = CString::new(piece).map_err(|_| ("文本无效".to_string(), model.gpu))?;
             let mut n: c_int = 0;
-            let samples = unsafe { edge_tts_kokoro_speak(model.k, ps.as_ptr(), voice.as_ptr(), 1.0, 1, &mut n) };
+            let samples = unsafe {
+                edge_tts_kokoro_speak_checked(
+                    model.k,
+                    ps.as_ptr(),
+                    voice.as_ptr(),
+                    1.0,
+                    1,
+                    &mut n,
+                    check_pace,
+                    &mut pace as *mut Pace as *mut c_void,
+                )
+            };
             if samples.is_null() {
                 let why = unsafe { CStr::from_ptr(edge_tts_kokoro_error(model.k)) }.to_string_lossy().into_owned();
-                return Err(format!("语音合成失败: {why}"));
+                return Err((format!("语音合成失败: {why}"), model.gpu));
             }
             for &x in unsafe { std::slice::from_raw_parts(samples, n.max(0) as usize) } {
                 let s = (x.clamp(-1.0, 1.0) * 32767.0).round_ties_even() as i16;
@@ -1135,43 +1207,52 @@ mod light {
             }
             unsafe { edge_tts_kokoro_free_audio(samples) };
         }
-        Ok((pcm, model.gpu))
+        Ok(pcm)
+    }
+
+    /// Whether a failed attempt was caught by the app moving between screen
+    /// and background (`behind`: where it was when the attempt started).
+    fn moving(behind: bool, was_gpu: bool, err: &str) -> bool {
+        if err.contains("cancelled") {
+            return true;
+        }
+        let gpu_err = was_gpu && (err.contains("compute failed") || err.contains("启动轻量语音失败"));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if engine::background() != behind || (was_gpu != wanted_gpu()) {
+                return true;
+            }
+            if !gpu_err || Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
         unsafe { edge_tts_watch() };
         let _busy = InFlight::new();
         let voice = CString::new(voice).map_err(|_| "音色无效".to_string())?;
-        let mut tries = 0;
+        let mut moves = 0;
+        let mut gpu_fails = 0;
         loop {
-            let started = Instant::now();
+            let behind = engine::background();
             match say(line, &voice) {
-                Ok((pcm, _)) if pcm.is_empty() => return Err("语音合成为空".into()),
-                Ok((pcm, gpu)) => {
-                    // Behind the screen, on the CPU, it rests three times as
-                    // long as it worked: iOS ends an app there that keeps
-                    // most of a core busy for a minute. (Not in the
-                    // bench, which measures the speed itself.)
-                    if !gpu && engine::background() && !cfg!(test) {
-                        std::thread::sleep(started.elapsed() * 3);
-                    }
-                    return Ok(wav(&pcm));
+                Ok(pcm) if pcm.is_empty() => return Err("语音合成为空".into()),
+                Ok(pcm) => return Ok(wav(&pcm)),
+                Err((e, was_gpu)) if moves < 20 && moving(behind, was_gpu, &e) => {
+                    moves += 1;
                 }
-                Err(e) if tries < 2 && LOADED.lock().unwrap().as_ref().is_some_and(|l| l.model.gpu) => {
-                    tries += 1;
-                    // iOS refuses the GPU a moment before the app hears it
-                    // is behind the screen; if it never does, the GPU itself
-                    // could not do it.
-                    let deadline = Instant::now() + Duration::from_secs(3);
-                    while !engine::background() && Instant::now() < deadline {
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    if !engine::background() {
-                        eprintln!("light voice: GPU failed on screen, CPU from now on: {e}");
-                        NO_GPU.store(true, Ordering::SeqCst);
-                    }
+                Err((e, true))
+                    if gpu_fails < 1
+                        && !engine::background()
+                        && (e.contains("compute failed") || e.contains("启动轻量语音失败")) =>
+                {
+                    gpu_fails += 1;
+                    eprintln!("light voice: GPU failed on screen, CPU from now on: {e}");
+                    NO_GPU.store(true, Ordering::SeqCst);
                 }
-                Err(e) => return Err(e),
+                Err((e, _)) => return Err(e),
             }
         }
     }

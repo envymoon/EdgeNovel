@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <mutex>
 #include <shared_mutex>
@@ -26,6 +27,9 @@ static std::atomic<bool>     g_gpu{false};
 // a moment later, in another lane, undo a stop meant for the rest.
 static std::atomic<int64_t>  g_moved{0};
 static std::atomic<bool>     g_background{false};
+static std::mutex            g_bg_mu;
+static std::condition_variable g_bg_cv;
+static std::atomic<int64_t>  g_bg_epoch{0};
 static thread_local std::string g_error;
 
 extern "C" int edge_tts_gpu(void);
@@ -36,10 +40,34 @@ extern "C" int edge_tts_gpu(void);
 // on screen, those on the CPU stop too, to be said again on the GPU at once.
 // A voice already where it belongs goes on.
 extern "C" void edge_tts_set_background(int on) {
-    g_background = on != 0;
-    if (on ? g_gpu.load() : (!g_gpu && edge_tts_gpu())) {
+    const bool behind = on != 0;
+    const bool prev   = g_background.exchange(behind);
+    if (behind ? g_gpu.load() : (!g_gpu && edge_tts_gpu())) {
         g_moved++;
     }
+    if (prev != behind) {
+        {
+            std::lock_guard<std::mutex> lk(g_bg_mu);
+            g_bg_epoch++;
+        }
+        g_bg_cv.notify_all();
+    }
+}
+
+extern "C" int64_t edge_tts_bg_epoch(void) {
+    return g_bg_epoch.load();
+}
+
+// Sleep up to `ns` nanoseconds, waking at once if the app moves between
+// screen and background (`g_bg_epoch` changes from `epoch`).
+extern "C" void edge_tts_bg_sleep(int64_t epoch, int64_t ns) {
+    if (ns <= 0) {
+        return;
+    }
+    std::unique_lock<std::mutex> lk(g_bg_mu);
+    g_bg_cv.wait_for(lk, std::chrono::nanoseconds(ns), [epoch] {
+        return g_bg_epoch.load() != epoch;
+    });
 }
 
 // When the engine last worked or was given a sentence, in steady-clock ns.

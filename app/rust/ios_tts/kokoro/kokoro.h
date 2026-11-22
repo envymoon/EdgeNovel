@@ -27,6 +27,15 @@ void edge_tts_kokoro_lanes(kokoro * k, int n);
 // *n, or NULL with the reason in kokoro_error (asked on the same thread).
 float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed,
                      unsigned seed, int * n);
+// Checkpoint callback for edge_tts_kokoro_speak_checked.
+// mode == 0: quick check (e.g. while waiting for a lane or on GPU stages).
+// mode <  0: lane acquired; reset the pace timer and check whether to stop.
+// mode >  0: a compute chunk just finished; may rest to pace CPU work, then
+//            check whether to stop.
+// Returning non-zero aborts the sentence (error = "cancelled").
+typedef int (*edge_tts_kokoro_check_cb)(int mode, void * user);
+float * edge_tts_kokoro_speak_checked(kokoro * k, const char * phonemes, const char * voice, float speed,
+                                      unsigned seed, int * n, edge_tts_kokoro_check_cb check, void * user);
 void edge_tts_kokoro_free_audio(float * samples);
 const char * edge_tts_kokoro_error(const kokoro * k);
 
