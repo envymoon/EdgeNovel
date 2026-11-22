@@ -1,6 +1,6 @@
 diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
---- a/src/ggml-metal/CMakeLists.txt	2026-10-18 16:17:06.170164700 -0700
-+++ b/src/ggml-metal/CMakeLists.txt	2026-10-18 18:05:58.199814400 -0700
+--- a/src/ggml-metal/CMakeLists.txt	2026-11-21 16:22:45.482698700 -0800
++++ b/src/ggml-metal/CMakeLists.txt	2026-11-21 16:22:46.075104300 -0800
 @@ -193,9 +193,13 @@
      if (GGML_METAL_MACOSX_VERSION_MIN)
          message(STATUS "Adding  -mmacosx-version-min=${GGML_METAL_MACOSX_VERSION_MIN} flag to metal compilation")
@@ -19,8 +19,8 @@ diff -ruN a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
  
      if (GGML_METAL_STD)
 diff -ruN a/src/ggml-metal/ggml-metal-common.cpp b/src/ggml-metal/ggml-metal-common.cpp
---- a/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 16:17:06.170164700 -0700
-+++ b/src/ggml-metal/ggml-metal-common.cpp	2026-10-18 18:05:58.249333600 -0700
+--- a/src/ggml-metal/ggml-metal-common.cpp	2026-11-21 16:22:45.501696600 -0800
++++ b/src/ggml-metal/ggml-metal-common.cpp	2026-11-21 16:22:46.089612000 -0800
 @@ -115,6 +115,8 @@
      }
  }
@@ -31,8 +31,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-common.cpp b/src/ggml-metal/ggml-metal-com
      const ggml_tensor * src0 = op->src[0];
      const ggml_tensor * src1 = op->src[1];
 diff -ruN a/src/ggml-metal/ggml-metal-common.h b/src/ggml-metal/ggml-metal-common.h
---- a/src/ggml-metal/ggml-metal-common.h	2026-10-18 16:17:06.171202200 -0700
-+++ b/src/ggml-metal/ggml-metal-common.h	2026-10-18 18:06:16.864688800 -0700
+--- a/src/ggml-metal/ggml-metal-common.h	2026-11-21 16:22:45.502696800 -0800
++++ b/src/ggml-metal/ggml-metal-common.h	2026-11-21 16:22:46.106612000 -0800
 @@ -56,6 +56,13 @@
  bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
  
@@ -48,9 +48,41 @@ diff -ruN a/src/ggml-metal/ggml-metal-common.h b/src/ggml-metal/ggml-metal-commo
  
  // the few-row MMA kernel for a src0 type and rt src1 tiles: per 32-weight block (q4_0, q8_0 with one tile), q5_K, or the generic 64-weight chunk kernel
 diff -ruN a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-context.m
---- a/src/ggml-metal/ggml-metal-context.m	2026-10-18 16:17:06.172216000 -0700
-+++ b/src/ggml-metal/ggml-metal-context.m	2026-10-18 18:05:58.250333400 -0700
-@@ -153,6 +153,9 @@
+--- a/src/ggml-metal/ggml-metal-context.m	2026-11-21 16:22:45.517700200 -0800
++++ b/src/ggml-metal/ggml-metal-context.m	2026-11-21 16:23:02.943111700 -0800
+@@ -35,6 +35,11 @@
+ 
+     dispatch_queue_t d_queue;
+ 
++    // where its graphs go: the device's, or one of its own (GGML_METAL_OWN_QUEUE at init), so
++    // that graphs of backends on other threads run beside them rather than after them
++    id<MTLCommandQueue> queue;
++    bool own_queue;
++
+     // additional, inference-time compiled pipelines
+     ggml_metal_pipelines_t pipelines_ext;
+ 
+@@ -108,6 +113,10 @@
+         //       the graph encoders and async ops would use the backend queue while the sync ops would use the device queue?
+         //res->queue = [device newCommandQueue]; [TAG_QUEUE_PER_BACKEND]
+         id<MTLCommandQueue> queue = ggml_metal_device_get_queue(dev);
++        const bool own_queue = getenv("GGML_METAL_OWN_QUEUE") != nil;
++        if (own_queue && queue != nil) {
++            queue = [device newCommandQueue];
++        }
+         if (queue == nil) {
+             GGML_LOG_ERROR("%s: error: failed to create command queue\n", __func__);
+             free(res);
+@@ -115,6 +124,8 @@
+         }
+ 
+         res->dev = dev;
++        res->queue = queue;
++        res->own_queue = own_queue;
+         res->lib = ggml_metal_device_get_library(dev);
+         if (res->lib == NULL) {
+             GGML_LOG_WARN("%s: the device does not have a precompiled Metal library - this is unexpected\n", __func__);
+@@ -153,6 +164,9 @@
          }
  
          res->finfo = ggml_metal_device_get_fusion_info(dev);
@@ -60,9 +92,83 @@ diff -ruN a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-cont
          if (ggml_metal_fusion_info_stats(res->finfo)) {
              ggml_metal_fusion_info_labels_init(res->finfo);
              res->n_cb = 0;
+@@ -237,7 +251,9 @@
+ 
+     Block_release(ctx->encode_async);
+ 
+-    //[ctx->queue release]; // [TAG_QUEUE_PER_BACKEND]
++    if (ctx->own_queue) {
++        [ctx->queue release];
++    }
+ 
+     dispatch_release(ctx->d_queue);
+ 
+@@ -342,7 +358,7 @@
+ 
+         // queue the copy operation into the queue of the Metal context
+         // this will be queued at the end, after any currently ongoing GPU operations
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
++        id<MTLCommandQueue> queue = ctx->queue;
+         id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+         id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
+ 
+@@ -388,7 +404,7 @@
+ 
+         // queue the copy operation into the queue of the Metal context
+         // this will be queued at the end, after any currently ongoing GPU operations
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
++        id<MTLCommandQueue> queue = ctx->queue;
+         id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+         id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
+ 
+@@ -424,7 +440,7 @@
+             return false;
+         }
+ 
+-        id<MTLCommandQueue> dst_queue = ggml_metal_device_get_queue(ctx_dst->dev);
++        id<MTLCommandQueue> dst_queue = ctx_dst->queue;
+         id<MTLCommandBuffer> sync_cmd_buf = [dst_queue commandBuffer];
+ 
+         ggml_metal_event_encode_signal(ctx_dst->ev_sync, sync_cmd_buf);
+@@ -438,7 +454,7 @@
+ 
+         // queue the copy operation into the Metal context
+         // this will be queued at the end, after any currently ongoing GPU operations
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx_src->dev);
++        id<MTLCommandQueue> queue = ctx_src->queue;
+         id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+         ggml_metal_event_encode_wait(ctx_dst->ev_sync, cmd_buf);
+         id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
+@@ -549,7 +565,7 @@
+         }
+ 
+         // short-hand
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
++        id<MTLCommandQueue> queue = ctx->queue;
+ 
+         // the main thread commits the first few commands immediately
+         // cmd_buf[n_cb]
+@@ -671,7 +687,7 @@
+ 
+ void ggml_metal_event_record(ggml_metal_t ctx, ggml_metal_event_t ev) {
+     @autoreleasepool {
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
++        id<MTLCommandQueue> queue = ctx->queue;
+         id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+ 
+         ggml_metal_event_encode_signal(ev, cmd_buf);
+@@ -687,7 +703,7 @@
+ 
+ void ggml_metal_event_wait(ggml_metal_t ctx, ggml_metal_event_t ev) {
+     @autoreleasepool {
+-        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
++        id<MTLCommandQueue> queue = ctx->queue;
+         id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+ 
+         ggml_metal_event_encode_wait(ev, cmd_buf);
 diff -ruN a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
---- a/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 16:17:06.173249100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.cpp	2026-10-18 18:05:58.203819000 -0700
+--- a/src/ggml-metal/ggml-metal-device.cpp	2026-11-21 16:22:45.529762200 -0800
++++ b/src/ggml-metal/ggml-metal-device.cpp	2026-11-21 16:22:46.137871300 -0800
 @@ -97,6 +97,36 @@
      return res;
  }
@@ -150,8 +256,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-dev
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
      }
 diff -ruN a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
---- a/src/ggml-metal/ggml-metal-device.h	2026-10-18 16:17:06.173249100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.h	2026-10-18 18:05:58.202825300 -0700
+--- a/src/ggml-metal/ggml-metal-device.h	2026-11-21 16:22:45.540782200 -0800
++++ b/src/ggml-metal/ggml-metal-device.h	2026-11-21 16:22:46.154871600 -0800
 @@ -109,6 +109,8 @@
  
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base              (ggml_metal_library_t lib, enum ggml_op op);
@@ -171,8 +277,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-devic
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_2d (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_col2im_1d         (ggml_metal_library_t lib, const struct ggml_tensor * op);
 diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
---- a/src/ggml-metal/ggml-metal-device.m	2026-10-18 16:17:06.174251100 -0700
-+++ b/src/ggml-metal/ggml-metal-device.m	2026-10-18 18:05:58.203819000 -0700
+--- a/src/ggml-metal/ggml-metal-device.m	2026-11-21 16:22:45.555766000 -0800
++++ b/src/ggml-metal/ggml-metal-device.m	2026-11-21 16:22:46.160872300 -0800
 @@ -507,7 +507,9 @@
      const int64_t t_start = ggml_time_us();
  
@@ -185,8 +291,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-devic
      if (path_lib != nil) {
          // pre-compiled library found: a single combined default.metallib
 diff -ruN a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
---- a/src/ggml-metal/ggml-metal-impl.h	2026-10-18 16:17:06.176248600 -0700
-+++ b/src/ggml-metal/ggml-metal-impl.h	2026-10-18 18:05:58.202825300 -0700
+--- a/src/ggml-metal/ggml-metal-impl.h	2026-11-21 16:22:45.582783600 -0800
++++ b/src/ggml-metal/ggml-metal-impl.h	2026-11-21 16:22:46.173360600 -0800
 @@ -781,6 +781,10 @@
      int32_t  KH;
      int32_t  KW;
@@ -199,8 +305,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
  
  typedef struct {
 diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
---- a/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 16:17:06.177249800 -0700
-+++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-10-18 18:05:58.251333200 -0700
+--- a/src/ggml-metal/ggml-metal-ops.cpp	2026-11-21 16:22:45.597766700 -0800
++++ b/src/ggml-metal/ggml-metal-ops.cpp	2026-11-21 16:22:46.187359600 -0800
 @@ -2227,6 +2227,86 @@
  
      GGML_ASSERT(ne00 % ggml_blck_size(op->src[0]->type) == 0);
@@ -340,8 +446,8 @@ diff -ruN a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cp
  
      if (KH*KW <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline)) {
 diff -ruN a/src/ggml-metal/kernels/conv.metal b/src/ggml-metal/kernels/conv.metal
---- a/src/ggml-metal/kernels/conv.metal	2026-10-18 16:17:06.184267300 -0700
-+++ b/src/ggml-metal/kernels/conv.metal	2026-10-18 18:05:58.193473500 -0700
+--- a/src/ggml-metal/kernels/conv.metal	2026-11-21 16:22:45.681322300 -0800
++++ b/src/ggml-metal/kernels/conv.metal	2026-11-21 16:22:46.198364000 -0800
 @@ -118,6 +118,99 @@
  template [[host_name("kernel_im2col_ext_f32")]] kernel im2col_ext_t kernel_im2col_ext<float>;
  template [[host_name("kernel_im2col_ext_f16")]] kernel im2col_ext_t kernel_im2col_ext<half>;
@@ -443,8 +549,8 @@ diff -ruN a/src/ggml-metal/kernels/conv.metal b/src/ggml-metal/kernels/conv.meta
  kernel void kernel_col2im_1d(
          constant ggml_metal_kargs_col2im_1d & args,
 diff -ruN a/src/ggml-metal/kernels/quantize.metal b/src/ggml-metal/kernels/quantize.metal
---- a/src/ggml-metal/kernels/quantize.metal	2026-10-18 16:17:06.200689300 -0700
-+++ b/src/ggml-metal/kernels/quantize.metal	2026-10-18 18:05:58.195813900 -0700
+--- a/src/ggml-metal/kernels/quantize.metal	2026-11-21 16:22:45.908250500 -0800
++++ b/src/ggml-metal/kernels/quantize.metal	2026-11-21 16:22:46.211870300 -0800
 @@ -37,6 +37,90 @@
  
  typedef decltype(kernel_cpy_t_t<float, float>) kernel_cpy_t;

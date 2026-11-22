@@ -30,7 +30,9 @@ FetchContent_Declare(edge_qwentts
 # The ggml it is pinned to. The patch lets the app say where the compiled Metal
 # library is, compiles it for the oldest iOS that runs the engine, reads its
 # fusion switch at every load, and moves the codec's data by faster kernels
-# (GGML_METAL_FAST_MOVE, the same values).
+# (GGML_METAL_FAST_MOVE, the same values), and lets a backend have a GPU
+# queue of its own (GGML_METAL_OWN_QUEUE), for the light voice's sentences at
+# once.
 FetchContent_Declare(edge_qwentts_ggml
     URL "https://codeload.github.com/ServeurpersoCom/ggml/tar.gz/${EDGE_QWENTTS_GGML_COMMIT}"
     URL_HASH SHA256=aa59ede8471d7d6c679e697c83c5a9392b3f8fc8cbc16d5b11dfab21865c1139

@@ -16,6 +16,7 @@
 #include "gguf.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -85,6 +86,9 @@ struct kokoro {
     float src_w[HARMONICS] = {}, src_b = 0;
     std::string debug_dir;
     bool quiet = false;
+    // Sentences still to time op by op (EDGE_KOKORO_PROFILE at load), into
+    // the log: each op on its own, so slower, and only for those.
+    std::atomic<int> profile{0};
 };
 
 namespace {
@@ -491,8 +495,43 @@ void compute(const kokoro * k, Lane * l, Graph & g) {
     if (!ggml_gallocr_alloc_graph(l->alloc, g.gf)) throw std::string("out of memory");
 }
 
-void run(Lane * l, Graph & g) {
-    if (ggml_backend_graph_compute(l->backend, g.gf) != GGML_STATUS_SUCCESS) throw std::string("compute failed");
+// Time by op and shape, when profiling: "<graph> <op> <out shape> [<weight
+// shape>]" -> (count, seconds).
+using Prof = std::map<std::string, std::pair<int, double>>;
+
+void run(Lane * l, Graph & g, Prof * prof = nullptr, const char * what = "") {
+    if (!prof) {
+        if (ggml_backend_graph_compute(l->backend, g.gf) != GGML_STATUS_SUCCESS) throw std::string("compute failed");
+        return;
+    }
+    // One op a graph, each waited for.
+    ggml_init_params p = {ggml_graph_overhead_custom(1, false), nullptr, true};
+    ggml_context * c = ggml_init(p);
+    ggml_cgraph * one = ggml_new_graph_custom(c, 1, false);
+    for (int i = 0; i < ggml_graph_n_nodes(g.gf); i++) {
+        ggml_tensor * n = ggml_graph_node(g.gf, i);
+        if (ggml_is_empty(n) || n->op == GGML_OP_NONE || n->op == GGML_OP_VIEW || n->op == GGML_OP_RESHAPE ||
+            n->op == GGML_OP_PERMUTE || n->op == GGML_OP_TRANSPOSE)
+            continue;
+        ggml_graph_clear(one);
+        ggml_graph_add_node(one, n);
+        const auto a = std::chrono::steady_clock::now();
+        const bool ok = ggml_backend_graph_compute(l->backend, one) == GGML_STATUS_SUCCESS;
+        const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
+        if (!ok) {
+            ggml_free(c);
+            throw std::string("compute failed");
+        }
+        char key[160];
+        int len = snprintf(key, sizeof key, "%s %s %lldx%lld", what, ggml_op_desc(n), (long long) n->ne[0], (long long) n->ne[1]);
+        if (n->op == GGML_OP_MUL_MAT || n->op == GGML_OP_CPY || n->op == GGML_OP_CONT)
+            snprintf(key + len, sizeof key - len, " %s%lldx%lld nb0=%zu", n->op == GGML_OP_MUL_MAT ? "w=" : "src=",
+                     (long long) n->src[0]->ne[0], (long long) n->src[0]->ne[1], n->src[n->op == GGML_OP_MUL_MAT]->nb[0]);
+        auto & e = (*prof)[key];
+        e.first++;
+        e.second += dt;
+    }
+    ggml_free(c);
 }
 
 std::vector<int> to_ids(const kokoro * k, const std::string & ps, int & chars) {
@@ -532,6 +571,13 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
     const float * ref = vit->second.data() + (size_t) std::min(chars - 1, 509) * 256;
     std::vector<float> s_dec(ref, ref + 128), s_pred(ref + 128, ref + 256);
     G b{k, nullptr};
+    Prof profiled;
+    Prof * prof = nullptr;
+    for (int left = k->profile.load(); left > 0;)
+        if (k->profile.compare_exchange_weak(left, left - 1)) {
+            prof = &profiled;
+            break;
+        }
 
     // 1. Text: BERT -> d_en [T][512]; text encoder convolutions -> [T][512].
     std::vector<float> d_en, te;
@@ -586,7 +632,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         for (int i = 0; i < T; i++) pos[i] = i;
         ggml_backend_tensor_set(in_ids, ids.data(), 0, T * sizeof(int));
         ggml_backend_tensor_set(in_pos, pos.data(), 0, T * sizeof(int));
-        run(l, g);
+        run(l, g, prof, "bert");
         d_en = fetch(den);
         te = fetch(e);
         if (!k->debug_dir.empty()) dump(k, "bert", fetch(bert));
@@ -656,7 +702,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         compute(k, l, g);
         ggml_backend_tensor_set(x, sh_t.data(), 0, sh_t.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_pred.data(), 0, S * sizeof(float));
-        run(l, g);
+        run(l, g, prof, "f0n");
         f0 = fetch(outs[0]);
         nn = fetch(outs[1]);
     }
@@ -743,7 +789,7 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
         ggml_backend_tensor_set(in_n, nn.data(), 0, nn.size() * sizeof(float));
         ggml_backend_tensor_set(in_har, har.data(), 0, har.size() * sizeof(float));
         ggml_backend_tensor_set(s, s_dec.data(), 0, S * sizeof(float));
-        run(l, g);
+        run(l, g, prof, "dec");
         post = fetch(x);
         for (auto & pr : probes) dump(k, pr.first.c_str(), fetch(pr.second));
         if ((int) x->ne[0] != frames) throw std::string("frame count mismatch");
@@ -754,9 +800,30 @@ std::vector<float> speak(kokoro * k, Lane * l, const std::string & ps, const std
     lap("istft");
     if (const char * log = getenv("EDGE_KOKORO_LOG")) {
         if (FILE * f = fopen(log, "a")) {
-            fprintf(f, "%s audio=%.2f phonemes=%d%s lanes=%d mem=%zuMB\n", k->gpu ? "gpu" : "cpu",
-                    audio.size() / 24000.0, chars, took.c_str(), k->most,
-                    ggml_gallocr_get_buffer_size(l->alloc, 0) >> 20);
+            // When it finished, to tell from the lines how fast sentences
+            // came out together.
+            const double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+            std::string out(512, '\0');
+            out.resize(snprintf(&out[0], out.size(), "%s audio=%.2f phonemes=%d%s lanes=%d mem=%zuMB at=%.3f%s\n",
+                                k->gpu ? "gpu" : "cpu", audio.size() / 24000.0, chars, took.c_str(), k->most,
+                                ggml_gallocr_get_buffer_size(l->alloc, 0) >> 20, now, prof ? " profiled" : ""));
+            if (prof) {
+                std::vector<std::pair<double, std::string>> by;
+                double all = 0;
+                for (auto & [key, e] : *prof) {
+                    char buf[256];
+                    snprintf(buf, sizeof buf, "prof %s n=%d ms=%.2f\n", key.c_str(), e.first, e.second * 1000);
+                    by.push_back({e.second, buf});
+                    all += e.second;
+                }
+                std::sort(by.rbegin(), by.rend());
+                if (by.size() > 40) by.resize(40);
+                char buf[64];
+                snprintf(buf, sizeof buf, "prof total ms=%.1f\n", all * 1000);
+                out += buf;
+                for (auto & e : by) out += e.second;
+            }
+            fwrite(out.data(), 1, out.size(), f);
             fclose(f);
         }
     }
@@ -801,6 +868,7 @@ static thread_local std::string error;
 kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
     auto * k = new kokoro();
     k->threads = threads > 0 ? threads : default_threads();
+    if (const char * p = getenv("EDGE_KOKORO_PROFILE")) k->profile = atoi(p);
     gguf_context * g = nullptr;
     FILE * f = nullptr;
     try {

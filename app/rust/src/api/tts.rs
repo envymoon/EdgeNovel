@@ -369,6 +369,8 @@ fn ensure() -> Result<(), String> {
     let first = !engine::loaded();
     // Set for the load about to happen, not under a voice that is running.
     if engine::needs_load() {
+        // The light voice's: this one runs as it always has.
+        std::env::remove_var("GGML_METAL_OWN_QUEUE");
         if engine::background() || !engine::gpu() {
             std::env::remove_var("EDGE_TTS_BATCH");
         } else {
@@ -1070,15 +1072,33 @@ mod light {
             let _ = std::fs::remove_file(&log);
         }
         std::env::set_var("EDGE_KOKORO_LOG", &log);
+        // As many sentences at once as the reader chose for the other voice,
+        // on the GPU, with its engine settings and a GPU queue for each, so
+        // they run there side by side, not in turn; one at a time on the
+        // CPU, where it works behind the screen and must stay light.
+        let dir = tts_dir()?;
+        let (mut lanes, env) = tuned(dir);
+        if gpu {
+            for (k, v) in env {
+                std::env::set_var(k, v);
+            }
+            std::env::set_var("GGML_METAL_OWN_QUEUE", "1");
+        } else {
+            lanes = 1;
+        }
+        // `profile` beside it, put there over USB: the first sentences timed
+        // op by op into the log, one at a time.
+        if dir.join("profile").exists() {
+            std::env::set_var("EDGE_KOKORO_PROFILE", "3");
+            lanes = 1;
+        } else {
+            std::env::remove_var("EDGE_KOKORO_PROFILE");
+        }
         let path = CString::new(model.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string())?;
         let k = unsafe { edge_tts_kokoro_load(path.as_ptr(), gpu as c_int, 0) };
         if k.is_null() {
             return Err("启动轻量语音失败".into());
         }
-        // As many sentences at once as the reader chose for the other voice,
-        // on the GPU; one at a time on the CPU, where it works behind the
-        // screen and must stay light.
-        let lanes = if gpu { tuned(&tts_dir()?).0 } else { 1 };
         unsafe { edge_tts_kokoro_lanes(k, lanes as c_int) };
         *slot = Some(Loaded { model: Arc::new(Model { k, gpu }), zh });
         Ok(())
