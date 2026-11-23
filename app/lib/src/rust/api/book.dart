@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `around`, `background_outdated`, `background_sources`, `cache`, `chapter_chunks`, `chapter_records`, `chapter_titles`, `clip`, `cut_text`, `cuts_for`, `data_dir`, `db_path`, `decode_file`, `digest`, `ensure_loaded`, `excerpt`, `first_paragraph`, `is_cut`, `is_loaded`, `lead_of`, `lead_sentences`, `pace_scores_quietly`, `plate_context`, `plate_plan`, `plot_score`, `read_quietly`, `recut_book`, `remember_name`, `remember_person`, `remember_relation`, `residual_people`, `residual_relations`, `scan_cached`, `scan_span`, `shown`, `snippet`, `source_label`, `store`, `summary_excerpt`, `unjudged_names`, `verdicts_of`, `with_text`, `without_closing_title`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Loaded`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Called once at startup with a directory Flutter obtained from the platform.
 /// Rust must not guess where an app may write: it differs on every OS, and on
@@ -226,12 +226,17 @@ Future<List<SearchHit>> searchText({
 );
 
 /// 节奏图: one intensity score per chapter, in table-of-contents order — 0 is
-/// this book's average, higher is more intense. `None` for a chapter too short
+/// this book's median, higher is more intense. `None` for a chapter too short
 /// to say (an author's note). Counted from the whole text by
 /// `novel_core::pace`, no model, a few dozen milliseconds for a long book, so it
 /// is ready the moment the book is and is never stored.
 Future<List<double?>> chapterPace({required String path}) =>
     RustLib.instance.api.crateApiBookChapterPace(path: path);
+
+/// 节奏图详情: per-chapter score and concise tags for UI hints around the
+/// reader's current chapter.
+Future<List<ChapterPaceInfo>> chapterPaceDetail({required String path}) =>
+    RustLib.instance.api.crateApiBookChapterPaceDetail(path: path);
 
 /// 作者口癖: analyze author tics & writing style across the whole book without a model.
 Future<AuthorTics> authorTics({required String path}) =>
@@ -821,6 +826,25 @@ class ChapterInfo {
           end == other.end &&
           summary == other.summary &&
           mood == other.mood;
+}
+
+/// Per-chapter pacing score + 1-2 concise driver tags (冲突/危机/悬疑/情绪/快节奏/日常/铺垫/推进).
+class ChapterPaceInfo {
+  final double? score;
+  final List<String> tags;
+
+  const ChapterPaceInfo({this.score, required this.tags});
+
+  @override
+  int get hashCode => score.hashCode ^ tags.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChapterPaceInfo &&
+          runtimeType == other.runtimeType &&
+          score == other.score &&
+          tags == other.tags;
 }
 
 enum ParaKind {

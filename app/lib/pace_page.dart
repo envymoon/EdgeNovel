@@ -20,6 +20,7 @@ import 'theme.dart';
 /// was asked for as the whole curve with a dot for where the reader is.
 
 final _paceCache = <String, Future<List<double?>>>{};
+final _paceDetailCache = <String, Future<List<ChapterPaceInfo>>>{};
 
 /// One book's scores, fetched once per session: counting is quick, but the
 /// reader's strip rebuilds on every page turn. A cached result whose length no
@@ -42,10 +43,35 @@ Future<List<double?>> loadPace(String path, int chapters) async {
   }
 }
 
+/// Scores + concise driver tags per chapter, cached per session.
+Future<List<ChapterPaceInfo>> loadPaceDetail(String path, int chapters) async {
+  final cached = _paceDetailCache[path];
+  if (cached != null) {
+    try {
+      final v = await cached;
+      if (v.length == chapters) return v;
+    } catch (_) {}
+  }
+  final fresh = chapterPaceDetail(path: path);
+  _paceDetailCache[path] = fresh;
+  try {
+    final v = await fresh;
+    _paceCache[path] = Future.value([for (final c in v) c.score]);
+    return v;
+  } catch (_) {
+    _paceDetailCache.remove(path);
+    rethrow;
+  }
+}
+
 /// Stands in for the Rust side in widget tests, which have no native library.
 @visibleForTesting
-void seedPaceForTest(String path, List<double?> scores) =>
-    _paceCache[path] = Future.value(scores);
+void seedPaceForTest(String path, List<double?> scores) {
+  _paceCache[path] = Future.value(scores);
+  _paceDetailCache[path] = Future.value([
+    for (final s in scores) ChapterPaceInfo(score: s, tags: const []),
+  ]);
+}
 
 /// Per-chapter scores (0 is the book's average, higher is more intense, null
 /// for a chapter too short to say) and the few ways the UI reads them.
@@ -152,12 +178,70 @@ class PaceCurve {
   String describe(int i) {
     final x = raw[i];
     if (x == null) return '篇幅太短，未计算';
-    final v = raw.whereType<double>();
-    final p = v.where((y) => y < x).length / v.length;
+    final p = _percentileOf(x);
     if (p >= 0.9) return '全书最激烈的一成';
     if (p >= 0.7) return '较激烈';
     if (p >= 0.3) return '中等';
     return '平缓';
+  }
+
+  /// Short intensity tag for chip display.
+  String levelTag(int i) {
+    final x = raw[i];
+    if (x == null) return '未计算';
+    final p = _percentileOf(x);
+    if (p >= 0.9) return '高潮';
+    if (p >= 0.7) return '较激烈';
+    if (p >= 0.3) return '中等';
+    return '平缓';
+  }
+
+  double _percentileOf(double x) {
+    final v = raw.whereType<double>();
+    if (v.isEmpty) return 0.5;
+    return v.where((y) => y < x).length / v.length;
+  }
+
+  /// Up to 5 chapter indices centered around [anchor] (1 before, current, 3 after),
+  /// shifted at book boundaries so the window stays full when possible.
+  List<int> nearbyWindow(int anchor, {int before = 1, int after = 3}) {
+    final n = raw.length;
+    if (n == 0) return const [];
+    final a = anchor.clamp(0, n - 1).toInt();
+    final want = math.min(n, before + 1 + after);
+    var start = (a - before).clamp(0, math.max(0, n - want)).toInt();
+    final end = math.min(n, start + want);
+    if (end - start < want) {
+      start = math.max(0, end - want);
+    }
+    return [for (var i = start; i < end; i++) i];
+  }
+
+  /// One-line non-spoiler hint for the stretch around [anchor].
+  String? trendHint(int anchor) {
+    if (raw.isEmpty) return null;
+    final a = anchor.clamp(0, raw.length - 1);
+    final cur = raw[a];
+    final curP = cur == null ? null : _percentileOf(cur);
+    final nextScores = <double>[];
+    for (var i = a + 1; i <= math.min(raw.length - 1, a + 3); i++) {
+      final s = raw[i];
+      if (s != null) nextScores.add(s);
+    }
+    if (curP != null && curP >= 0.78) return '当前正处高能段';
+    if (nextScores.isNotEmpty) {
+      final maxNext = nextScores.reduce(math.max);
+      final maxNextP = _percentileOf(maxNext);
+      if (maxNextP >= 0.8 || (cur != null && maxNext - cur >= 0.75)) {
+        return '接下来节奏升温';
+      }
+      if ((curP == null || curP < 0.35) && maxNextP < 0.45) {
+        return '当前处于平缓铺垫段';
+      }
+    } else if (curP != null && curP < 0.35) {
+      return '当前处于平缓铺垫段';
+    }
+    return '当前节奏平稳推进';
   }
 }
 
@@ -193,6 +277,7 @@ class _PacePageState extends State<PacePage> {
   static const _pad = 8.0;
 
   PaceCurve? _curve;
+  List<ChapterPaceInfo> _details = const [];
   List<double?> _bars = const [];
   List<double?> _line = const [];
   List<int> _peaks = const [];
@@ -217,7 +302,11 @@ class _PacePageState extends State<PacePage> {
 
   Future<void> _load() async {
     try {
-      final v = await loadPace(widget.info.path, widget.info.chapters.length);
+      final details = await loadPaceDetail(
+        widget.info.path,
+        widget.info.chapters.length,
+      );
+      final v = [for (final d in details) d.score];
       final c = PaceCurve(v);
       // Bars are single chapters; the line is a five-chapter average drawn on
       // the same scale, so a bar above the line really is above its stretch.
@@ -225,6 +314,7 @@ class _PacePageState extends State<PacePage> {
       if (!mounted) return;
       setState(() {
         _curve = c;
+        _details = details;
         _bars = PaceCurve.scale(v, b);
         _line = PaceCurve.scale(c.smooth(2), b);
         _peaks = c.peaks();
@@ -298,6 +388,12 @@ class _PacePageState extends State<PacePage> {
     final accent = paceColor(t);
     final chapters = widget.info.chapters;
     final sel = _selected;
+    final anchor = widget.current ?? 0;
+    final nearby = curve.nearbyWindow(anchor);
+    final hint = curve.trendHint(anchor);
+    final selTags = (sel != null && sel < _details.length)
+        ? _details[sel].tags
+        : const <String>[];
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
       children: [
@@ -313,7 +409,13 @@ class _PacePageState extends State<PacePage> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            '第 ${sel + 1} 章 · ${curve.describe(sel)}',
+                            [
+                              '第 ${sel + 1} 章',
+                              curve.describe(sel),
+                              ...selTags,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(color: t.muted, fontSize: 11.5),
                           ),
                           const SizedBox(height: 3),
@@ -362,40 +464,48 @@ class _PacePageState extends State<PacePage> {
               ),
           ],
         ),
-        if (_peaks.isNotEmpty) ...[
+        if (nearby.isNotEmpty) ...[
           const SizedBox(height: 22),
-          Text('最激烈的几段', style: TextStyle(color: t.muted, fontSize: 11)),
-          const SizedBox(height: 6),
-          for (final p in _peaks)
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _select(p, scroll: true),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 92,
-                      child: Text(
-                        '第 ${p + 1} 章',
-                        style: TextStyle(
-                          color: p == sel ? accent : t.muted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        chapters[p].title,
-                        translate: false,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: t.text, fontSize: 13.5),
-                      ),
-                    ),
-                  ],
-                ),
+          Row(
+            children: [
+              Text(
+                widget.current != null ? '当前阅读附近' : '开篇章节节奏',
+                style: TextStyle(color: t.muted, fontSize: 11.5),
               ),
+              if (hint != null) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    hint,
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final i in nearby)
+            _nearbyChapterRow(
+              t: t,
+              accent: accent,
+              index: i,
+              title: chapters[i].title,
+              level: curve.levelTag(i),
+              tags: i < _details.length ? _details[i].tags : const <String>[],
+              isCurrent: i == widget.current,
+              isSelected: i == sel,
             ),
         ],
         const SizedBox(height: 16),
@@ -417,6 +527,111 @@ class _PacePageState extends State<PacePage> {
       ],
     );
   }
+
+  Widget _nearbyChapterRow({
+    required ReadingTheme t,
+    required Color accent,
+    required int index,
+    required String title,
+    required String level,
+    required List<String> tags,
+    required bool isCurrent,
+    required bool isSelected,
+  }) {
+    final isHigh = level == '高潮' || level == '较激烈';
+    final chipBg = isHigh
+        ? accent.withValues(alpha: 0.14)
+        : t.muted.withValues(alpha: 0.10);
+    final chipFg = isHigh ? accent : t.muted;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _select(index, scroll: true),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accent.withValues(alpha: 0.08)
+              : isCurrent
+              ? t.muted.withValues(alpha: 0.06)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '第 ${index + 1} 章',
+                  style: TextStyle(
+                    color: isCurrent || isSelected ? accent : t.muted,
+                    fontSize: 12,
+                    fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+                if (isCurrent) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '在读',
+                      style: TextStyle(
+                        color: t.background,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    translate: false,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: t.text, fontSize: 13.5),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                _tagChip(level, bg: chipBg, fg: chipFg),
+                for (final tag in tags)
+                  _tagChip(
+                    tag,
+                    bg: t.muted.withValues(alpha: 0.10),
+                    fg: t.muted,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tagChip(String label, {required Color bg, required Color fg}) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(label, style: TextStyle(color: fg, fontSize: 11)),
+      );
 
   Widget _legend(ReadingTheme t, Widget mark, String label) => Row(
     mainAxisSize: MainAxisSize.min,

@@ -159,6 +159,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo dco_decode_chapter_info(dynamic raw);
 
   @protected
+  ChapterPaceInfo dco_decode_chapter_pace_info(dynamic raw);
+
+  @protected
   CleanupGroup dco_decode_cleanup_group(dynamic raw);
 
   @protected
@@ -244,6 +247,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChapterInfo> dco_decode_list_chapter_info(dynamic raw);
+
+  @protected
+  List<ChapterPaceInfo> dco_decode_list_chapter_pace_info(dynamic raw);
 
   @protected
   List<CleanupGroup> dco_decode_list_cleanup_group(dynamic raw);
@@ -598,6 +604,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ChapterInfo sse_decode_chapter_info(SseDeserializer deserializer);
 
   @protected
+  ChapterPaceInfo sse_decode_chapter_pace_info(SseDeserializer deserializer);
+
+  @protected
   CleanupGroup sse_decode_cleanup_group(SseDeserializer deserializer);
 
   @protected
@@ -687,6 +696,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ChapterInfo> sse_decode_list_chapter_info(SseDeserializer deserializer);
+
+  @protected
+  List<ChapterPaceInfo> sse_decode_list_chapter_pace_info(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<CleanupGroup> sse_decode_list_cleanup_group(
@@ -1098,6 +1112,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_chapter_info(ChapterInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_chapter_pace_info(
+    ChapterPaceInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cleanup_group(CleanupGroup self, SseSerializer serializer);
 
   @protected
@@ -1205,6 +1225,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_chapter_info(
     List<ChapterInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_chapter_pace_info(
+    List<ChapterPaceInfo> self,
     SseSerializer serializer,
   );
 

@@ -1108,7 +1108,7 @@ pub(crate) fn snippet(
 }
 
 /// 节奏图: one intensity score per chapter, in table-of-contents order — 0 is
-/// this book's average, higher is more intense. `None` for a chapter too short
+/// this book's median, higher is more intense. `None` for a chapter too short
 /// to say (an author's note). Counted from the whole text by
 /// `novel_core::pace`, no model, a few dozen milliseconds for a long book, so it
 /// is ready the moment the book is and is never stored.
@@ -1117,6 +1117,28 @@ pub fn chapter_pace(path: String) -> Result<Vec<Option<f64>>, String> {
     let guard = cache().read().unwrap();
     let l = guard.get(&path).ok_or("书未打开")?;
     Ok(pace::scores(&l.text, &l.chapters))
+}
+
+/// Per-chapter pacing score + 1-2 concise driver tags (冲突/危机/悬疑/情绪/快节奏/日常/铺垫/推进).
+#[derive(Debug, Clone)]
+pub struct ChapterPaceInfo {
+    pub score: Option<f64>,
+    pub tags: Vec<String>,
+}
+
+/// 节奏图详情: per-chapter score and concise tags for UI hints around the
+/// reader's current chapter.
+pub fn chapter_pace_detail(path: String) -> Result<Vec<ChapterPaceInfo>, String> {
+    ensure_loaded(&path)?;
+    let guard = cache().read().unwrap();
+    let l = guard.get(&path).ok_or("书未打开")?;
+    Ok(pace::analyze(&l.text, &l.chapters)
+        .into_iter()
+        .map(|c| ChapterPaceInfo {
+            score: c.score,
+            tags: c.tags.into_iter().map(|s| s.to_string()).collect(),
+        })
+        .collect())
 }
 
 /// One recurring phrase / writing tic discovered in a book.

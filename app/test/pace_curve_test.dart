@@ -48,4 +48,29 @@ void main() {
       0.5,
     ]);
   });
+
+  test('nearbyWindow returns up to 5 chapters around anchor', () {
+    final c = PaceCurve([for (var i = 0; i < 20; i++) i.toDouble()]);
+    expect(c.nearbyWindow(0), [0, 1, 2, 3, 4]);
+    expect(c.nearbyWindow(5), [4, 5, 6, 7, 8]);
+    expect(c.nearbyWindow(19), [15, 16, 17, 18, 19]);
+  });
+
+  test('trendHint detects high-tension, rising, and calm stretches', () {
+    final c = PaceCurve([
+      0.0,
+      0.1,
+      0.2,
+      0.1,
+      0.2,
+      0.3,
+      2.5,
+      3.0,
+      0.2,
+      0.1,
+    ]);
+    expect(c.trendHint(0), '当前处于平缓铺垫段');
+    expect(c.trendHint(4), '接下来节奏升温');
+    expect(c.trendHint(7), '当前正处高能段');
+  });
 }
