@@ -244,10 +244,30 @@ fn shape_hash(line: &str) -> Option<u64> {
 }
 
 fn narrow(c: char) -> char {
-    match c {
-        '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+    match c as u32 {
+        // Fullwidth ASCII variants (e.g. ｃｏｍ, １０１).
+        0xFF01..=0xFF5E => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+        // Unicode Planck constant (italic 'h' missing from the italic block).
+        0x210E => 'h',
+        // Mathematical Alphanumeric Symbols: bold/italic/script/fraktur/sans/mono
+        // A-Z and a-z, which pirated novel sites use to disguise domains
+        // (e.g. 101𝑘𝑎𝑛.𝑐𝑜𝑚).
+        u @ 0x1D400..=0x1D6A3 => {
+            let offset = (u - 0x1D400) % 52;
+            let base = if offset < 26 { b'A' as u32 + offset } else { b'a' as u32 + (offset - 26) };
+            char::from_u32(base).unwrap_or(c)
+        }
+        // Mathematical bold/double-struck/sans/monospace digits 0-9.
+        u @ 0x1D7CE..=0x1D7FF => {
+            let digit = (u - 0x1D7CE) % 10;
+            char::from_u32(b'0' as u32 + digit).unwrap_or(c)
+        }
         _ => c,
     }
+}
+
+fn fold_ascii(s: &str) -> String {
+    s.chars().map(narrow).collect()
 }
 
 fn is_han(c: char) -> bool {
@@ -436,10 +456,11 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
     let mut cuts: Vec<(Range<usize>, Kind)> = Vec::new();
     for m in ASIDE.find_iter(t) {
         let a = m.as_str();
+        let folded = fold_ascii(a);
         let inner = a.trim_matches(['（', '(', '【', '[', '）', ')', '】', ']']);
-        if ADDR.is_match(a) {
+        if ADDR.is_match(a) || ADDR.is_match(&folded) {
             cuts.push((m.range(), Kind::Address));
-        } else if WATERMARK.is_match(a) {
+        } else if WATERMARK.is_match(a) || WATERMARK.is_match(&folded) {
             cuts.push((m.range(), Kind::Watermark));
         } else if FURNITURE.is_match(a) || FURNITURE.is_match(inner) || APP_ASIDE.is_match(inner) {
             cuts.push((m.range(), Kind::SiteNotice));
@@ -550,9 +571,12 @@ fn classify(line: &str, opening: bool) -> Vec<(Kind, bool, Vec<Range<usize>>)> {
         && ((t.chars().count() < 80 && furniture.iter().any(|(_, ok)| !ok)) || scraps(rest))
     {
         Some(if ADDR.is_match(t) { Kind::Address } else { Kind::SiteNotice })
-    } else if !quoted && n < 150 && ADDR.is_match(rest) && {
-        let words = words(&ADDR.replace_all(rest, ""));
-        words < 6 || (n < 60 && AD_STRONG.is_match(rest))
+    } else if !quoted && n < 150 && {
+        let folded = fold_ascii(rest);
+        ADDR.is_match(&folded) && {
+            let words = words(&ADDR.replace_all(&folded, ""));
+            words < 6 || (n < 60 && AD_STRONG.is_match(rest))
+        }
     } {
         Some(Kind::Address)
     } else if opening && BYLINE.is_match(rest) {
@@ -1048,5 +1072,24 @@ mod tests {
         let more = cuts.and(&[at..at + "丙丁\n".len()]);
         assert_eq!(more.apply(text), "甲乙\n戊");
         assert_eq!(more.ranges().len(), 1);
+    }
+
+    #[test]
+    fn unicode_italic_domain_ad_is_caught() {
+        let (text, ch) = chapters(
+            1,
+            |_| "【记住全网最快小说站101𝑘𝑎𝑛.𝑐𝑜𝑚】\n他推开门。【记住全网最快小说站101𝑘𝑎𝑛.𝑐𝑜𝑚】风灌了进来。\n记住全网最快小说站101𝑘𝑎𝑛.𝑐𝑜𝑚\n".to_string(),
+        );
+        let groups = find(&text, &ch);
+        let cut = Cuts::new(
+            groups
+                .iter()
+                .filter(|g| g.checked)
+                .flat_map(|g| g.items.iter().flat_map(|f| f.cuts.clone()))
+                .collect(),
+        );
+        let out = cut.apply(&text);
+        assert!(!out.contains("101𝑘𝑎𝑛"), "ad remained in: {out}");
+        assert!(out.contains("他推开门。风灌了进来。"), "story damaged: {out}");
     }
 }

@@ -325,7 +325,7 @@ void main() {
 
     expect(find.byTooltip('目录'), findsOneWidget);
     expect(find.byTooltip('阅读助手'), findsOneWidget);
-    expect(find.byTooltip('字典'), findsOneWidget);
+    expect(find.byTooltip('选词'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('目录'));
@@ -818,10 +818,22 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byTooltip('字典'));
+    await tester.tap(find.byTooltip('选词'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('退出'), findsOneWidget);
+    // Dragging horizontally while selecting text must not turn the page.
+    final pageBefore = tester
+        .widget<PagedReader>(find.byType(PagedReader))
+        .pageInfo
+        .value
+        .$1;
+    await tester.dragFrom(const Offset(300, 380), const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<PagedReader>(find.byType(PagedReader)).pageInfo.value.$1,
+      pageBefore,
+    );
     // The 标注 kept so far open from the same bar.
     await tester.tap(find.byTooltip('标注'));
     await tester.pumpAndSettle();
@@ -831,7 +843,7 @@ void main() {
     expect(find.text('退出'), findsOneWidget);
     await tester.tap(find.text('退出'));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('字典'), findsOneWidget);
+    expect(find.byTooltip('选词'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

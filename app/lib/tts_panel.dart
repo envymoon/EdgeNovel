@@ -145,7 +145,8 @@ class _TtsPanelState extends State<TtsPanel> {
           ? ''
           : info.chapters[chapter].title;
       final label = TextStyle(color: t.text, fontSize: 15);
-      final system = _voiceReady == false;
+      final system = _voiceReady == false && AppPlatformSupport.isMobile;
+      final needAiVoice = _voiceReady == false;
       return Material(
         color: t.raisedSurface,
         elevation: 8,
@@ -224,8 +225,8 @@ class _TtsPanelState extends State<TtsPanel> {
                       child: const Text('停止'),
                     ),
                   )
-                // The AI voice, where this iOS runs it.
-                else if (system && AppPlatformSupport.hasAiVoice)
+                // The AI voice, when not installed yet.
+                else if (needAiVoice && AppPlatformSupport.hasAiVoice)
                   Row(
                     children: [
                       Expanded(child: Text('AI 语音', style: label)),
@@ -238,7 +239,7 @@ class _TtsPanelState extends State<TtsPanel> {
                       ),
                     ],
                   )
-                else if (!system)
+                else if (!needAiVoice)
                   Row(
                     children: [
                       Text('合成', style: label),
@@ -268,7 +269,7 @@ class _TtsPanelState extends State<TtsPanel> {
                       ),
                     ],
                   ),
-                if (!system) ...[
+                if (!needAiVoice) ...[
                   const SizedBox(height: 18),
                   Text('音色', style: label),
                   const SizedBox(height: 8),

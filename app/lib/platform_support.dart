@@ -69,11 +69,10 @@ abstract final class AppPlatformSupport {
   /// download.
   static bool get hasBundledImageEngine => isMobile;
 
-  /// Phone 听书 plays chapters spoken ahead into files (tts_chapters.dart)
-  /// and nothing else: listening is mostly with the screen locked, and a
-  /// phone cannot speak as fast as it plays. With no AI voice installed the
-  /// phone's own voice reads instead.
-  static bool get speaksByChapter => isMobile;
+  /// Chapter-based 听书 (tts_chapters.dart + TtsPanel): shared across iOS,
+  /// Android, and Windows so every platform uses the same synthesis queue,
+  /// spoken-chapter library, and unified panel.
+  static bool get speaksByChapter => hasReadAloud;
 
   static bool isMobilePlatform(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.iOS;

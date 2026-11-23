@@ -156,8 +156,13 @@ class TtsController extends ChangeNotifier {
     unawaited(Future.delayed(const Duration(seconds: 5), old.dispose));
   }
 
-  /// iPhone: chapters spoken ahead are played, and nothing else.
+  /// Chapters spoken ahead are played via [TtsChapters].
   static bool get _byChapter => AppPlatformSupport.speaksByChapter;
+
+  /// Only iOS and Android expose the native `novel/speech` system TTS channel.
+  static bool get _hasSystemSpeech =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
 
   /// iPhone without the AI voice: the phone's own reads (AppDelegate.swift).
   static const _speech = MethodChannel('novel/speech');
@@ -284,7 +289,8 @@ class TtsController extends ChangeNotifier {
     if (_utts.isEmpty) fromIndex ??= -1;
     if (_byChapter) {
       if (await aiVoiceReady()) return _startSpoken(fromIndex);
-      return _startSystem(fromIndex);
+      if (_hasSystemSpeech) return _startSystem(fromIndex);
+      throw '朗读语音未安装';
     }
     if (!settings.ttsRemote && !await _localSpeech.ready(settings.ttsLocalVoice)) {
       throw '朗读语音未安装';

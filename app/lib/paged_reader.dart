@@ -1023,11 +1023,11 @@ class PagedReaderState extends State<PagedReader>
             },
             onPointerMove: (e) {
               if ((e.position - _downAt).distance > 12) _hold?.cancel();
-              if (_curlMode) _dragCurl(e);
+              if (_curlMode && !widget.annotationMode) _dragCurl(e);
             },
             // The pages do not scroll in 仿真: a notch of the wheel turns one,
             // and the notches that come while it turns are let go by.
-            onPointerSignal: _curlMode
+            onPointerSignal: (_curlMode && !widget.annotationMode)
                 ? (e) {
                     if (e is PointerScrollEvent &&
                         e.scrollDelta.dy != 0 &&
@@ -1141,7 +1141,11 @@ class PagedReaderState extends State<PagedReader>
         key: ValueKey('$_signature|$_lead'),
         controller: _ctrl,
         // 仿真: the finger turns the page over (_dragCurl), never slides it.
-        physics: _curlMode ? const NeverScrollableScrollPhysics() : null,
+        // In selection/annotation mode the page stays locked so dragging
+        // selects text instead of turning the page.
+        physics: (_curlMode || widget.annotationMode)
+            ? const NeverScrollableScrollPhysics()
+            : null,
         itemCount: _lead + _pages.length + _trail,
         onPageChanged: (at) {
           final i = at - _lead;

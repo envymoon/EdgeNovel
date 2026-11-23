@@ -268,7 +268,24 @@ class _TextCleanupPageState extends State<TextCleanupPage> {
     }
     if (_groups.isEmpty) {
       return Center(
-        child: Text('没有找到', style: TextStyle(color: t.muted)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('没有找到', style: TextStyle(color: t.text, fontSize: 15)),
+                const SizedBox(height: 10),
+                Text(
+                  '若有漏网广告，可在阅读页点选词图标选中广告文字并「标为广告」，或点右上角 + 手动添加。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: t.muted, fontSize: 12.5, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
     return Center(
@@ -276,13 +293,36 @@ class _TextCleanupPageState extends State<TextCleanupPage> {
         constraints: const BoxConstraints(maxWidth: 760),
         child: ListView.separated(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
-          itemCount: _groups.length,
+          itemCount: _groups.length + 1,
           separatorBuilder: (_, _) => const SizedBox(height: 8),
-          itemBuilder: (_, i) => _groupRow(t, _groups[i]),
+          itemBuilder: (_, i) =>
+              i == 0 ? _adHint(t) : _groupRow(t, _groups[i - 1]),
         ),
       ),
     );
   }
+
+  Widget _adHint(ReadingTheme t) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: t.surface,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: t.outline),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.highlight_alt, size: 17, color: t.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '若有漏网广告，可在阅读页点选词图标选中广告文字并「标为广告」，或点右上角 + 手动添加。',
+            style: TextStyle(color: t.muted, fontSize: 12, height: 1.45),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _groupRow(ReadingTheme t, _Group g) {
     final count = g.group.items.length;

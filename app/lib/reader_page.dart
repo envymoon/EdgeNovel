@@ -1211,8 +1211,8 @@ class _ReaderPageState extends State<ReaderPage> {
           const PopupMenuItem(
             value: 'dictionary',
             child: ListTile(
-              leading: SizedBox(width: 24, child: Center(child: _Zi())),
-              title: Text('字典'),
+              leading: Icon(Icons.highlight_alt),
+              title: Text('选词'),
               contentPadding: EdgeInsets.zero,
             ),
           ),
@@ -1340,8 +1340,8 @@ class _ReaderPageState extends State<ReaderPage> {
                           _narrowReaderMenu(t)
                         else ...[
                           _readerIconButton(
-                            tooltip: context.tr('字典'),
-                            glyph: const _Zi(),
+                            tooltip: context.tr('选词'),
+                            icon: Icons.highlight_alt,
                             color: t.muted,
                             onPressed: _startSelecting,
                             compact: compact,
@@ -2411,26 +2411,6 @@ class _Stepper extends StatelessWidget {
         ),
         OutlinedButton(style: style, onPressed: onMore, child: more),
       ],
-    );
-  }
-}
-
-/// 字典's mark: the character itself, in the icon's colour and size.
-class _Zi extends StatelessWidget {
-  const _Zi();
-
-  @override
-  Widget build(BuildContext context) {
-    final icon = IconTheme.of(context);
-    return Text(
-      '字',
-      translate: false,
-      style: TextStyle(
-        color: icon.color,
-        fontSize: (icon.size ?? 24) * 0.8,
-        fontWeight: FontWeight.w600,
-        height: 1,
-      ),
     );
   }
 }

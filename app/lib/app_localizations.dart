@@ -345,6 +345,9 @@ const _english = <String, String>{
   '全选': 'Select all',
   '全不选': 'Select none',
   '标为广告': 'Mark as ad',
+  '选词': 'Select text',
+  '若有漏网广告，可在阅读页点选词图标选中广告文字并「标为广告」，或点右上角 + 手动添加。':
+      'For missed ads, tap Select text in the reader to highlight and "Mark as ad", or tap + above.',
   '网址': 'Web addresses',
   '网站提示': 'Site notices',
   '站名水印': 'Site watermarks',
