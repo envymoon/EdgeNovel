@@ -6,7 +6,7 @@
   <img src="docs/assets/novel-icon.ico" width="112" alt="Zhiyue">
 </p>
 
-<h3 align="center">A quiet way to read Chinese web fiction.</h3>
+<h3 align="center">A local-first Chinese web fiction reader with offline AI analysis</h3>
 
 <p align="center">
   <img alt="On-device AI" src="https://img.shields.io/badge/AI-on--device-8a6d1d">
@@ -16,72 +16,55 @@
 
 ---
 
-## Import a TXT of a few thousand chapters, and Zhiyue reads it for you first
+## Features
 
-- **Cast and relationships**: who the lead is and who stands closest to whom, on one map.
-- **Romance structure**: one heroine or several, named outright.
-- **Pacing chart**: how much is career, romance and power-ups, where it drags and where it soars, at a glance.
-- **Chapter overview**: one line per chapter, to catch up whenever you forget.
-- **Evidence from the text**: every finding links back to the original passage, so you can judge for yourself.
+### Reading & Text Cleanup
 
-## While you read
+- **Reading**: Local book import with paged/scroll modes, typography customization, blue-light filter, eye-rest reminders, and local reading stats.
+- **Word Selection & Dictionary**: Toggle selection mode to lock page turns while highlighting text, look up words with an optional offline dictionary, or mark repeated lines as ads.
+- **Text Cleanup**: Automatically groups site URLs, notices, watermarks, obfuscated domains, and repeated boilerplate lines for batch removal. Original files are never modified and can be restored at any time without losing progress or notes.
 
-- **Semantic search**: search for what happened, like "the lead's first breakthrough", without remembering the exact words.
-- **Read aloud**: lifelike voices made on your own device, as you listen or ahead of time.
-- **AI covers**: paints a cover, on your own device, for books that have none.
-- **Reading stats**: how much and how fast you read, counted from your own reading only.
+### Offline AI Analysis & Search
 
-## Find books
+- **Book Report**: Cast & relationships, romance structure, pacing chart, and chapter overviews, with links to supporting passages.
+- **Semantic Search**: Search by plot meaning rather than exact wording.
 
-- **Import Legado (开源阅读) book sources**: one file or one link, thousands of sources at once.
-- **One-tap check**: dead sites are weeded out for you.
-- **Search every source, download whole books**: missing or cut-off chapters are filled in from other sources.
+### Local Read-Aloud & Covers
 
-## No internet, no API key, not a cent
+- **Read-Aloud**: On-device speech synthesis with per-chapter progress tracking, streaming synthesis, and chapter pre-generation (iOS also includes a 200 MB lightweight voice pack).
+- **AI Covers**: Generates covers locally for books without cover art.
 
-All the AI runs on your own device. No account, no subscription, no API key, no per-use fees. Each model is downloaded once when you first need it, and keeps working offline.
+### Book Sources
 
-## Made for phones
+- **Legado Compatibility**: Batch-import Legado book sources via file or URL, with one-tap dead-source checking.
+- **Multi-Source Search & Download**: Search across sources and download full books, filling in missing or truncated chapters from alternate sources.
 
-| | |
-| --- | --- |
-| **Runs on a 4 GB phone** | Designed around a phone with 4 GB of memory. Measured on an iPhone 14, the whole app uses about 350 MB for chapter overviews, about 850 MB for relationships, and at most about 1.4 GB while reading aloud |
-| **Nothing cut for phones** | Phones run the same AI as the desktop, with nothing scaled down |
-| **Fast** | Measured on an iPhone 14: the AI is ready in about a second, and each chapter overview takes about 3 seconds |
-| **Stays out of your way** | Three modes: unnoticed, balanced and finish now; battery, charging, temperature and idle time decide when it runs |
-| **Stops any time** | Switch away and it stops at once with its progress saved; come back and it picks up where it left off, without losing a chapter |
+## Local Execution & Data Safety
 
-## Your books and data stay yours
-
-- **Your books never leave your device.** Novel text, reading progress, notes and AI results are stored only on your device.
-- **Nothing is collected.** No analytics, no tracking, no ads.
-- **The AI never leaves your device.** Analysis, search, read-aloud and image generation all run locally; not one line of text goes to the cloud.
-- **Updates keep your shelf.** Before a new version first starts, your bookshelf and settings are backed up automatically.
-
-## FAQ
-
-**Will it run on my phone?**
-Android needs a 64-bit (ARM64) phone. iOS installs on any version, with AI from iOS 16.4.
-
-**Will it get hot or drain the battery?**
-By default it works unnoticed, in small slices while you are not touching the screen, and pauses on low battery or when the phone runs hot.
-
-**How accurate is the AI?**
-It is not perfect, which is why every finding comes with evidence from the text, one tap away.
-
-**How much do the models download?**
-They are not bundled with the app. Each is downloaded only when you use its feature, downloads resume after interruptions, and you can delete any model in Settings.
-
-**Will an update lose my bookshelf?**
-No. Your data is stored apart from the app, and each new version backs it up before its first start.
+- **Fully Offline, Zero Cost**: Analysis, search, read-aloud, and image generation all run locally. No text is uploaded, and there are no accounts, API keys, ads, or analytics. Models are not bundled—each downloads on demand (with resume support) and can be deleted in Settings.
+- **Low-Impact Scheduling**: Hardware acceleration via Vulkan (Windows) and Metal (iOS). Background tasks offer idle, balanced, and immediate modes, automatically pausing and resuming based on battery, temperature, and app state.
+- **System Requirements**: Windows x64; Android 7.0+ (ARM64); iOS 13+ to install (iOS 16.4+ for AI features).
+- **Separate Data Storage**: Bookshelf, progress, and settings are stored apart from the app binary. Windows automatically backs up data before first launch of a new version; on Android and iOS, install over the existing app rather than uninstalling first.
 
 ## Download
 
 | Platform | Download |
 | --- | --- |
-| Windows | [Zhiyue 1.2.0](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.2.0) (unzip and run `novel.exe`; keep the whole folder together) |
-| Android | [Preview](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.0.0-preview.1) (ARM64) |
-| iOS | Coming soon |
+| Windows | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.4) (unzip and run `novel.exe`; keep the whole folder together) |
+| Android | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.4) (ARM64; install over existing app) |
+| iOS | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.4) (unsigned; sign and install over existing app) |
+
+## Changelog
+
+**1.5.4** (Windows / Android / iOS) — Reworked pacing analysis with nearby chapter tags; streamlined 4-tab bottom navigation and settings; added blue-light filter, eye-rest reminder, and shelf last-read time; synced Windows to chapter-based read-aloud and added 200 MB lightweight voice pack on iOS; improved obfuscated ad-domain cleanup, locked page turning in selection mode, and added optional offline dictionary; added author tics and cast appearance views.
+
+**1.5.3** (iOS) — Lock screen, Control Center, and headphone controls for read-aloud; fixed background synthesis stopping after screen lock and long-press-to-read in paged mode.
+
+**1.5.2** (iOS) — Per-chapter read-aloud progress, steadier tone, faster synthesis, and background synthesis fixes; chapter and character selection in book reports.
+
+**1.5.1** (iOS) — Smoother page turns, read-aloud starting from current page or long-pressed sentence; fixed bottom-line clipping after font changes.
+
+**1.5.0** — Added Text Cleanup to group and batch-remove embedded ads and boilerplate with one-tap restoration.
 
 ---
 
