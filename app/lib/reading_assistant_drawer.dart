@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart' hide Text;
+import 'package:flutter/services.dart';
 
 import 'app_localizations.dart';
 import 'platform_support.dart';
@@ -41,8 +42,10 @@ class ReadingAssistantDrawer extends StatelessWidget {
       backgroundColor: t.surface,
       child: SafeArea(
         child: ListenableBuilder(
-          listenable: reader,
-          builder: (context, _) => ListView(
+          listenable: Listenable.merge([reader, settings]),
+          builder: (context, _) {
+            final t = settings.theme;
+            return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
               Padding(
@@ -135,11 +138,184 @@ class ReadingAssistantDrawer extends StatelessWidget {
                     ),
                 ],
               ),
+              const SizedBox(height: 18),
+              _section(t, '护眼'),
+              _group(
+                t,
+                children: [
+                  _eyeFilterTile(t),
+                  Divider(
+                    height: 1,
+                    indent: 46,
+                    endIndent: 12,
+                    color: t.muted.withValues(alpha: 0.14),
+                  ),
+                  _eyeReminderTile(context, t),
+                ],
+              ),
             ],
-          ),
+          );
+          },
         ),
       ),
     );
+  }
+
+  Widget _eyeFilterTile(ReadingTheme t) {
+    final pct = ((settings.eyeCareStrength - 0.15) / (0.85 - 0.15) * 100)
+        .round()
+        .clamp(0, 100);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          dense: true,
+          minTileHeight: 54,
+          contentPadding: const EdgeInsets.fromLTRB(13, 1, 8, 1),
+          leading: Icon(Icons.wb_twilight_outlined, color: t.muted, size: 20),
+          title: Text(
+            '防蓝光滤镜',
+            style: TextStyle(color: t.text, fontSize: 13.5),
+          ),
+          subtitle: Text(
+            settings.eyeCareFilter ? '柔和暖光 · $pct%' : '已关闭',
+            style: TextStyle(color: t.muted, fontSize: 10.5, height: 1.3),
+          ),
+          trailing: Switch.adaptive(
+            value: settings.eyeCareFilter,
+            onChanged: settings.setEyeCareFilter,
+          ),
+          onTap: () => settings.setEyeCareFilter(!settings.eyeCareFilter),
+        ),
+        if (settings.eyeCareFilter)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+            child: Row(
+              children: [
+                Text('柔和', style: TextStyle(color: t.muted, fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: settings.eyeCareStrength,
+                    min: 0.15,
+                    max: 0.85,
+                    onChanged: settings.setEyeCareStrength,
+                  ),
+                ),
+                Text('强效', style: TextStyle(color: t.muted, fontSize: 11)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _eyeReminderTile(BuildContext context, ReadingTheme t) {
+    final mins = settings.eyeCareReminderMinutes;
+    final isCustom = !ReadingSettings.eyeCareReminderPresets.contains(mins);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          dense: true,
+          minTileHeight: 54,
+          contentPadding: const EdgeInsets.fromLTRB(13, 1, 8, 1),
+          leading: Icon(Icons.visibility_outlined, color: t.muted, size: 20),
+          title: Text(
+            '护眼提醒',
+            style: TextStyle(color: t.text, fontSize: 13.5),
+          ),
+          subtitle: Text(
+            settings.eyeCareReminder ? '每 $mins 分钟提醒休息' : '已关闭',
+            style: TextStyle(color: t.muted, fontSize: 10.5, height: 1.3),
+          ),
+          trailing: Switch.adaptive(
+            value: settings.eyeCareReminder,
+            onChanged: settings.setEyeCareReminder,
+          ),
+          onTap: () => settings.setEyeCareReminder(!settings.eyeCareReminder),
+        ),
+        if (settings.eyeCareReminder)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final preset in ReadingSettings.eyeCareReminderPresets)
+                  ChoiceChip(
+                    label: Text('$preset 分', style: const TextStyle(fontSize: 11.5)),
+                    visualDensity: VisualDensity.compact,
+                    selected: mins == preset,
+                    onSelected: (_) =>
+                        settings.setEyeCareReminderMinutes(preset),
+                  ),
+                ChoiceChip(
+                  label: Text(
+                    isCustom ? '$mins 分' : '自定义',
+                    style: const TextStyle(fontSize: 11.5),
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  selected: isCustom,
+                  onSelected: (_) => _askCustomReminder(context, t),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _askCustomReminder(BuildContext context, ReadingTheme t) async {
+    final ctl = TextEditingController(
+      text: settings.eyeCareReminderMinutes.toString(),
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: t.raisedSurface,
+        title: Text(
+          '自定义提醒间隔',
+          style: TextStyle(color: t.text, fontSize: 16),
+        ),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          style: TextStyle(color: t.text),
+          decoration: InputDecoration(
+            hintText: '1 - 180',
+            suffixText: context.tr('分钟'),
+          ),
+          onSubmitted: (v) {
+            final parsed = int.tryParse(v.trim());
+            if (parsed != null && parsed >= 1) {
+              Navigator.pop(dialogContext, parsed);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text('取消', style: TextStyle(color: t.muted)),
+          ),
+          FilledButton.tonal(
+            onPressed: () {
+              final parsed = int.tryParse(ctl.text.trim());
+              if (parsed != null && parsed >= 1) {
+                Navigator.pop(dialogContext, parsed);
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    ctl.dispose();
+    if (result != null) {
+      settings.setEyeCareReminderMinutes(result);
+    }
   }
 
   Widget _section(ReadingTheme t, String text) => Padding(

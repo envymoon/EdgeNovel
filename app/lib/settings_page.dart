@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
-import 'appearance_page.dart';
 import 'dictionary_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
@@ -22,8 +21,13 @@ import 'youshu_reviews.dart' show youshuOffered;
 /// enters that feature's own management page.
 class SettingsPage extends StatelessWidget {
   final ReadingSettings settings;
+  final bool embedded;
 
-  const SettingsPage({super.key, required this.settings});
+  const SettingsPage({
+    super.key,
+    required this.settings,
+    this.embedded = false,
+  });
 
   /// Keep in step with `version:` in pubspec.yaml.
   static const appVersion = '1.5.4';
@@ -69,72 +73,127 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  void _pickTheme(BuildContext context) {
+    final t = settings.theme;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: t.raisedSurface,
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [ThemeSwatches(settings: settings)],
+        ),
+      ),
+    );
+  }
+
+  Widget _aiBanner(BuildContext context, ReadingTheme t) => Material(
+    clipBehavior: Clip.antiAlias,
+    color: t.raisedSurface,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: t.text.withValues(alpha: 0.22)),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: InkWell(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => AiPage(settings: settings)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: t.text.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.auto_awesome, size: 22, color: t.text),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'AI 管理',
+                    style: TextStyle(
+                      color: t.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '模型、引擎与生成数据',
+                    style: TextStyle(color: t.muted, fontSize: 12.5),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: t.muted, size: 22),
+          ],
+        ),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final t = settings.theme;
     final compact =
         AppPlatformSupport.layoutForWidth(MediaQuery.sizeOf(context).width) ==
         AppLayoutClass.compact;
-    return Scaffold(
-      backgroundColor: t.background,
-      appBar: AppBar(
-        backgroundColor: t.topBar,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: IconThemeData(color: t.muted),
-        title: Text('设置', style: TextStyle(color: t.text, fontSize: 17)),
-      ),
-      body: SafeArea(
-        top: false,
-        child: Center(
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) {
+        final t = settings.theme;
+        final content = Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 680),
             child: ListView(
               padding: EdgeInsets.fromLTRB(
                 compact ? 16 : 24,
-                8,
+                12,
                 compact ? 16 : 24,
                 40,
               ),
               children: [
-                if (windowsAppearance) ...[
-                  _entry(
-                    t,
-                    icon: Icons.palette_outlined,
-                    title: '外观',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AppearancePage(settings: settings),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                if (AppPlatformSupport.hasAiEngine) ...[
+                  _aiBanner(context, t),
+                  const SizedBox(height: 22),
                 ],
                 _sectionLabel(t, '阅读'),
                 _group(
                   t,
                   children: [
-                    ListenableBuilder(
-                      listenable: settings,
-                      builder: (context, _) => SwitchListTile(
-                        minTileHeight: 62,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 3,
-                        ),
-                        secondary: Icon(
-                          Icons.menu_book_outlined,
-                          size: 20,
-                          color: t.muted,
-                        ),
-                        title: Text(
-                          '打开书时先进扫书页',
-                          style: TextStyle(color: t.text, fontSize: 14),
-                        ),
-                        value: settings.openBookToDetail,
-                        onChanged: settings.setOpenBookToDetail,
+                    _entry(
+                      t,
+                      icon: Icons.palette_outlined,
+                      title: '主题色',
+                      trailing: t.name,
+                      onTap: () => _pickTheme(context),
+                    ),
+                    SwitchListTile(
+                      minTileHeight: 62,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 3,
                       ),
+                      secondary: Icon(
+                        Icons.menu_book_outlined,
+                        size: 20,
+                        color: t.muted,
+                      ),
+                      title: Text(
+                        '打开书时先进扫书页',
+                        style: TextStyle(color: t.text, fontSize: 14),
+                      ),
+                      value: settings.openBookToDetail,
+                      onChanged: settings.setOpenBookToDetail,
                     ),
                     _entry(
                       t,
@@ -204,26 +263,6 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                if (AppPlatformSupport.hasAiEngine) ...[
-                  const SizedBox(height: 24),
-                  _sectionLabel(t, 'AI 管理'),
-                  _group(
-                    t,
-                    children: [
-                      _entry(
-                        t,
-                        icon: Icons.auto_awesome_outlined,
-                        title: '模型、引擎与生成数据',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => AiPage(settings: settings),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
                 const SizedBox(height: 24),
                 _sectionLabel(t, '数据与隐私'),
                 _group(
@@ -281,8 +320,20 @@ class SettingsPage extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
+        );
+        if (embedded) return content;
+        return Scaffold(
+          backgroundColor: t.background,
+          appBar: AppBar(
+            backgroundColor: t.topBar,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            iconTheme: IconThemeData(color: t.muted),
+            title: Text('设置', style: TextStyle(color: t.text, fontSize: 17)),
+          ),
+          body: SafeArea(top: false, child: content),
+        );
+      },
     );
   }
 

@@ -86,6 +86,11 @@ class _ReaderPageState extends State<ReaderPage> {
   late final TtsController _tts;
 
   Timer? _eggTimer;
+  Timer? _eyeReminderTimer;
+  int _eyeReminderSeconds = 0;
+  bool _eyeReminderShowing = false;
+  late bool _lastEyeReminderOn;
+  late int _lastEyeReminderMinutes;
   int _lastPageNum = 1;
   int _eggWindowChars = 0;
   List<double?>? _eggPace;
@@ -115,6 +120,76 @@ class _ReaderPageState extends State<ReaderPage> {
     _unlistenGesture = GestureTurn.instance.listen(_onGesture);
     widget.settings.addListener(_syncGesture);
     _syncGesture();
+    _lastEyeReminderOn = widget.settings.eyeCareReminder;
+    _lastEyeReminderMinutes = widget.settings.eyeCareReminderMinutes;
+    widget.settings.addListener(_syncEyeReminder);
+    _eyeReminderTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _onEyeReminderTick(),
+    );
+  }
+
+  void _syncEyeReminder() {
+    final on = widget.settings.eyeCareReminder;
+    final mins = widget.settings.eyeCareReminderMinutes;
+    if (on != _lastEyeReminderOn || mins != _lastEyeReminderMinutes) {
+      _lastEyeReminderOn = on;
+      _lastEyeReminderMinutes = mins;
+      _eyeReminderSeconds = 0;
+    }
+  }
+
+  void _onEyeReminderTick() {
+    if (!mounted ||
+        !widget.settings.eyeCareReminder ||
+        _eyeReminderShowing ||
+        _closing) {
+      return;
+    }
+    final life = WidgetsBinding.instance.lifecycleState;
+    if (life != null && life != AppLifecycleState.resumed) return;
+    _eyeReminderSeconds += 5;
+    final target = widget.settings.eyeCareReminderMinutes * 60;
+    if (_eyeReminderSeconds < target) return;
+    _eyeReminderSeconds = 0;
+    unawaited(_showEyeReminderDialog());
+  }
+
+  Future<void> _showEyeReminderDialog() async {
+    if (!mounted || _eyeReminderShowing) return;
+    _eyeReminderShowing = true;
+    final t = widget.settings.theme;
+    final mins = widget.settings.eyeCareReminderMinutes;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: t.raisedSurface,
+          icon: Icon(Icons.visibility_outlined, color: t.muted, size: 28),
+          title: Text('护眼提醒', style: TextStyle(color: t.text, fontSize: 17)),
+          content: Text(
+            '已经连续阅读 $mins 分钟了，建议远眺 20 秒、眨眨眼，让眼睛休息一下。',
+            style: TextStyle(color: t.muted, fontSize: 13.5, height: 1.55),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                widget.settings.setEyeCareReminder(false);
+                Navigator.pop(dialogContext);
+              },
+              child: Text('关闭提醒', style: TextStyle(color: t.muted)),
+            ),
+            FilledButton.tonal(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _eyeReminderShowing = false;
+      _eyeReminderSeconds = 0;
+    }
   }
 
   void _initEasterEggs() {
@@ -232,6 +307,8 @@ class _ReaderPageState extends State<ReaderPage> {
   void dispose() {
     _lookupTimer?.cancel();
     _eggTimer?.cancel();
+    _eyeReminderTimer?.cancel();
+    widget.settings.removeListener(_syncEyeReminder);
     _pageInfo.removeListener(_onEggPageTurn);
     EasterEggEngine.instance.dismissBanner();
     _unlistenGesture();
@@ -497,12 +574,24 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  /// Under the left thumb with the bars: the night switch, and beside it the
-  /// way to everything else about how the page looks. Always the same widget,
-  /// hidden rather than removed: see [NightToggle.visible].
+  /// Under the left thumb with the bars: the TOC button, the night switch, and
+  /// beside it the way to everything else about how the page looks. Always the
+  /// same widget, hidden rather than removed: see [NightToggle.visible].
   Widget _thumbButtons(ReadingTheme t, {required bool visible}) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
+      if (visible) ...[
+        FloatingActionButton.small(
+          heroTag: null,
+          tooltip: context.tr('目录'),
+          elevation: 1,
+          backgroundColor: t.raisedSurface,
+          foregroundColor: t.text,
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          child: const Icon(Icons.list),
+        ),
+        const SizedBox(width: 12),
+      ],
       NightToggle(settings: widget.settings, floating: true, visible: visible),
       if (visible) ...[
         const SizedBox(width: 12),
@@ -1260,15 +1349,16 @@ class _ReaderPageState extends State<ReaderPage> {
                           if (AppPlatformSupport.hasReadAloud)
                             _ttsMenu(t, compact: compact),
                         ],
-                        Builder(
-                          builder: (ctx) => _readerIconButton(
-                            tooltip: context.tr('目录'),
-                            icon: Icons.list,
-                            color: t.muted,
-                            onPressed: () => Scaffold.of(ctx).openDrawer(),
-                            compact: compact,
+                        if (!compact)
+                          Builder(
+                            builder: (ctx) => _readerIconButton(
+                              tooltip: context.tr('目录'),
+                              icon: Icons.list,
+                              color: t.muted,
+                              onPressed: () => Scaffold.of(ctx).openDrawer(),
+                              compact: compact,
+                            ),
                           ),
-                        ),
                         Builder(
                           builder: (ctx) => _readerIconButton(
                             tooltip: context.tr('阅读助手'),

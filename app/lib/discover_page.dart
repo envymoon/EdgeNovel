@@ -22,8 +22,14 @@ import 'theme.dart';
 class DiscoverPage extends StatefulWidget {
   final ReaderState reader;
   final ReadingSettings settings;
+  final bool embedded;
 
-  const DiscoverPage({super.key, required this.reader, required this.settings});
+  const DiscoverPage({
+    super.key,
+    required this.reader,
+    required this.settings,
+    this.embedded = false,
+  });
 
   @override
   State<DiscoverPage> createState() => _DiscoverPageState();
@@ -113,15 +119,16 @@ class _DiscoverPageState extends State<DiscoverPage> {
       ..sort((a, b) => b.offers.length.compareTo(a.offers.length));
 
     return Scaffold(
-      backgroundColor: t.raisedSurface,
+      backgroundColor: widget.embedded ? t.background : t.raisedSurface,
       appBar: AppBar(
+        automaticallyImplyLeading: !widget.embedded,
         backgroundColor: t.topBar,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: t.muted),
         title: TextField(
           controller: _ctl,
-          autofocus: true,
+          autofocus: !widget.embedded,
           textInputAction: TextInputAction.search,
           style: TextStyle(color: t.text, fontSize: 15),
           cursorColor: t.text,

@@ -50,14 +50,17 @@ void main() {
       try {
         await show(summary: '主角在此章找到线索。');
         expect(find.text('读到 第 9 章'), findsOneWidget);
+        expect(find.textContaining('上次阅读'), findsOneWidget);
         expect(find.text('主角在此章找到线索。'), findsOneWidget);
         final summary = tester.widget<Text>(find.text('主角在此章找到线索。'));
         expect(summary.maxLines, 2);
         await show();
         expect(find.text('读到 第 9 章'), findsOneWidget);
+        expect(find.textContaining('上次阅读'), findsOneWidget);
         expect(find.text('主角在此章找到线索。'), findsNothing);
         await show(summary: '主角在此章找到线索。', opened: null);
         expect(find.text('尚未开始'), findsOneWidget);
+        expect(find.textContaining('上次阅读'), findsNothing);
         expect(find.text('主角在此章找到线索。'), findsNothing);
         expect(tester.takeException(), isNull);
       } finally {

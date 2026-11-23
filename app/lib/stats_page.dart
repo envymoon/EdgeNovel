@@ -12,8 +12,13 @@ import 'theme.dart';
 /// arithmetic over recorded sessions — no AI, no estimates, nothing invented.
 class StatsPage extends StatefulWidget {
   final ReadingSettings settings;
+  final bool embedded;
 
-  const StatsPage({super.key, required this.settings});
+  const StatsPage({
+    super.key,
+    required this.settings,
+    this.embedded = false,
+  });
 
   @override
   State<StatsPage> createState() => _StatsPageState();
@@ -127,6 +132,14 @@ class _StatsPageState extends State<StatsPage> {
   @override
   Widget build(BuildContext context) {
     final t = widget.settings.theme;
+    final content = _error != null
+        ? Center(
+            child: Text(_error!, style: TextStyle(color: t.muted)),
+          )
+        : _stats == null
+        ? Center(child: Bloom(color: t.muted, size: 34))
+        : _body(_stats!, t);
+    if (widget.embedded) return content;
     return Scaffold(
       backgroundColor: t.background,
       appBar: AppBar(
@@ -136,13 +149,7 @@ class _StatsPageState extends State<StatsPage> {
         iconTheme: IconThemeData(color: t.muted),
         title: Text('阅读数据', style: TextStyle(color: t.text, fontSize: 17)),
       ),
-      body: _error != null
-          ? Center(
-              child: Text(_error!, style: TextStyle(color: t.muted)),
-            )
-          : _stats == null
-          ? Center(child: Bloom(color: t.muted, size: 34))
-          : _body(_stats!, t),
+      body: content,
     );
   }
 

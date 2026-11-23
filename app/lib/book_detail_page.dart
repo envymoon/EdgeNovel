@@ -10,7 +10,6 @@ import 'cover.dart';
 import 'landmine_page.dart';
 import 'tics_page.dart';
 import 'pace_page.dart';
-import 'place_graph_page.dart';
 import 'plate_page.dart';
 import 'platform_support.dart';
 import 'reader_state.dart';
@@ -671,15 +670,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
               ),
             ),
           ),
-          _line(t),
-          _entry(
-            t,
-            icon: Icons.map_outlined,
-            title: '地点图',
-            onTap: () => _open(
-              PlaceGraphPage(book: widget.book, settings: widget.settings),
-            ),
-          ),
+          // 地点图 (place_graph_page.dart) is hidden, not deleted: dialogue mentions
+          // often get counted as visits, so the signal is too noisy for now.
           if (AppPlatformSupport.hasAiEngine && landmineEntryVisible) ...[
             _line(t),
             _entry(

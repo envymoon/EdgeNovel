@@ -265,6 +265,26 @@ class ReadingSettings extends ChangeNotifier {
 
   /// Local reading easter eggs (master toggle; low-frequency surprise banners).
   bool easterEggs = true;
+
+  /// Warm blue-light eye-care filter overlay and its strength (0.15..0.85).
+  bool eyeCareFilter = false;
+  double eyeCareStrength = 0.45;
+
+  /// Periodic eye-rest reminder while actively reading.
+  bool eyeCareReminder = false;
+  int eyeCareReminderMinutes = 45;
+  static const eyeCareReminderPresets = [20, 30, 45, 60];
+
+  ColorFilter? get eyeCareColorFilter {
+    if (!eyeCareFilter) return null;
+    final s = eyeCareStrength.clamp(0.15, 0.85);
+    return ColorFilter.matrix(<double>[
+      1.0, 0, 0, 0, 0,
+      0, 1.0 - 0.14 * s, 0, 0, 0,
+      0, 0, 1.0 - 0.42 * s, 0, 0,
+      0, 0, 0, 1.0, 0,
+    ]);
+  }
   PageMode pageMode = PageMode.paged;
   double pageWidth = 720;
 
@@ -360,6 +380,13 @@ class ReadingSettings extends ChangeNotifier {
     s.firstLineIndent = p.getBool('firstLineIndent') ?? s.firstLineIndent;
     s.paceStrip = p.getBool('paceStrip') ?? s.paceStrip;
     s.easterEggs = p.getBool('readingEggs') ?? s.easterEggs;
+    s.eyeCareFilter = p.getBool('eyeCareFilter') ?? s.eyeCareFilter;
+    s.eyeCareStrength =
+        (p.getDouble('eyeCareStrength') ?? s.eyeCareStrength).clamp(0.15, 0.85);
+    s.eyeCareReminder = p.getBool('eyeCareReminder') ?? s.eyeCareReminder;
+    s.eyeCareReminderMinutes =
+        (p.getInt('eyeCareReminderMinutes') ?? s.eyeCareReminderMinutes)
+            .clamp(1, 180);
     // A saved choice stays; only a first run gets the new default.
     s.pageMode =
         PageMode.values[(p.getInt('pageMode') ?? s.pageMode.index).clamp(
@@ -400,6 +427,10 @@ class ReadingSettings extends ChangeNotifier {
     p.setBool('firstLineIndent', firstLineIndent);
     p.setBool('paceStrip', paceStrip);
     p.setBool('readingEggs', easterEggs);
+    p.setBool('eyeCareFilter', eyeCareFilter);
+    p.setDouble('eyeCareStrength', eyeCareStrength);
+    p.setBool('eyeCareReminder', eyeCareReminder);
+    p.setInt('eyeCareReminderMinutes', eyeCareReminderMinutes);
     p.setInt('pageMode', pageMode.index);
     p.setDouble('pageWidth', pageWidth);
     p.setDouble('wheelScale', wheelScale);
@@ -603,6 +634,34 @@ class ReadingSettings extends ChangeNotifier {
 
   void setEasterEggs(bool v) {
     easterEggs = v;
+    notifyListeners();
+    _persist();
+  }
+
+  void setEyeCareFilter(bool v) {
+    if (eyeCareFilter == v) return;
+    eyeCareFilter = v;
+    notifyListeners();
+    _persist();
+  }
+
+  void setEyeCareStrength(double v) {
+    eyeCareStrength = v.clamp(0.15, 0.85);
+    notifyListeners();
+    _persist();
+  }
+
+  void setEyeCareReminder(bool v) {
+    if (eyeCareReminder == v) return;
+    eyeCareReminder = v;
+    notifyListeners();
+    _persist();
+  }
+
+  void setEyeCareReminderMinutes(int minutes) {
+    final clamped = minutes.clamp(1, 180);
+    if (eyeCareReminderMinutes == clamped) return;
+    eyeCareReminderMinutes = clamped;
     notifyListeners();
     _persist();
   }

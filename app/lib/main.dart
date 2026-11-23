@@ -375,10 +375,17 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
             GlobalCupertinoLocalizations.delegate,
           ],
           navigatorKey: _navigator,
-          builder: (context, child) => AppLanguageScope(
-            language: settings.language,
-            child: _withTaskBar(child ?? const SizedBox.shrink()),
-          ),
+          builder: (context, child) {
+            Widget content = AppLanguageScope(
+              language: settings.language,
+              child: _withTaskBar(child ?? const SizedBox.shrink()),
+            );
+            final filter = settings.eyeCareColorFilter;
+            if (filter != null) {
+              content = ColorFiltered(colorFilter: filter, child: content);
+            }
+            return content;
+          },
           theme: buildAppTheme(settings),
           home: _reading
               ? ReaderPage(

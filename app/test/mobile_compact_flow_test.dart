@@ -236,14 +236,11 @@ void main() {
 
     expect(find.text('窄屏测试小说'), findsWidgets);
     expect(find.byTooltip('导入 TXT'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.byTooltip('更多'));
-    await tester.pumpAndSettle();
-    expect(find.text('找书'), findsOneWidget);
-    expect(find.text('AI 管理'), findsOneWidget);
+    expect(find.byTooltip('更多'), findsNothing);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.text('书架'), findsWidgets);
     expect(find.text('阅读数据'), findsOneWidget);
-    expect(find.text('主题色'), findsOneWidget);
+    expect(find.text('找书'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -262,14 +259,15 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.byTooltip('更多'));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('设置'));
       await tester.pumpAndSettle();
 
       expect(find.byType(SettingsPage), findsOneWidget);
-      expect(find.text('阅读字体'), findsOneWidget);
+      expect(find.text('AI 管理'), findsOneWidget);
       expect(find.text('模型、引擎与生成数据'), findsOneWidget);
+      expect(find.text('主题色'), findsOneWidget);
+      expect(find.text('外观'), findsNothing);
+      expect(find.text('阅读字体'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

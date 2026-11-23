@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:flutter/material.dart' hide Text;
 
-import 'ai_page.dart';
 import 'app_localizations.dart';
 import 'bloom.dart';
 import 'book_detail_page.dart';
@@ -39,6 +38,7 @@ class ShelfPage extends StatefulWidget {
 }
 
 class _ShelfPageState extends State<ShelfPage> {
+  int _tab = 0;
   bool _dragging = false;
   bool _searching = false;
   String _query = '';
@@ -69,9 +69,6 @@ class _ShelfPageState extends State<ShelfPage> {
   @override
   Widget build(BuildContext context) {
     final t = widget.settings.theme;
-    final compact =
-        AppPlatformSupport.layoutForWidth(MediaQuery.sizeOf(context).width) ==
-        AppLayoutClass.compact;
     return ListenableBuilder(
       listenable: Listenable.merge([
         widget.reader,
@@ -95,234 +92,224 @@ class _ShelfPageState extends State<ShelfPage> {
           return inCategory && matches;
         }).toList();
         return Scaffold(
-          appBar: AppBar(
-            backgroundColor: t.topBar,
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-            title: _searching
-                ? TextField(
-                    autofocus: true,
-                    style: TextStyle(color: t.text, fontSize: 15),
-                    cursorColor: t.text,
-                    decoration: InputDecoration(
-                      hintText: context.tr('书名或作者'),
-                      hintStyle: TextStyle(color: t.muted, fontSize: 15),
-                      border: InputBorder.none,
+          appBar: switch (_tab) {
+            1 => AppBar(
+              backgroundColor: t.topBar,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              title: Text(
+                '阅读数据',
+                style: TextStyle(color: t.text, fontSize: 17),
+              ),
+              actions: [NightToggle(settings: widget.settings)],
+            ),
+            2 => null,
+            3 => AppBar(
+              backgroundColor: t.topBar,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              title: Text(
+                '设置',
+                style: TextStyle(color: t.text, fontSize: 17),
+              ),
+              actions: [NightToggle(settings: widget.settings)],
+            ),
+            _ => AppBar(
+              backgroundColor: t.topBar,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              title: _searching
+                  ? TextField(
+                      autofocus: true,
+                      style: TextStyle(color: t.text, fontSize: 15),
+                      cursorColor: t.text,
+                      decoration: InputDecoration(
+                        hintText: context.tr('书名或作者'),
+                        hintStyle: TextStyle(color: t.muted, fontSize: 15),
+                        border: InputBorder.none,
+                      ),
+                      onChanged: (v) => setState(() => _query = v),
+                    )
+                  : Text(
+                      '书架',
+                      style: TextStyle(color: t.text, fontSize: 17),
                     ),
-                    onChanged: (v) => setState(() => _query = v),
-                  )
-                : Text('书架', style: TextStyle(color: t.text, fontSize: 17)),
-            actions: [
-              IconButton(
-                tooltip: context.tr(
-                  widget.settings.shelfCoverMode ? '详情模式' : '封面模式',
-                ),
-                icon: Icon(
-                  widget.settings.shelfCoverMode
-                      ? Icons.view_list_outlined
-                      : Icons.grid_view_outlined,
-                ),
-                color: t.muted,
-                onPressed: () => widget.settings.setShelfCoverMode(
-                  !widget.settings.shelfCoverMode,
-                ),
-              ),
-              NightToggle(settings: widget.settings),
-              IconButton(
-                tooltip: context.tr(_searching ? '关闭搜索' : '搜索'),
-                icon: Icon(_searching ? Icons.close : Icons.search),
-                color: t.muted,
-                onPressed: () => setState(() {
-                  _searching = !_searching;
-                  _query = '';
-                }),
-              ),
-              if (!compact)
+              actions: [
                 IconButton(
-                  tooltip: context.tr('找书'),
-                  icon: const Icon(Icons.travel_explore),
+                  tooltip: context.tr(
+                    widget.settings.shelfCoverMode ? '详情模式' : '封面模式',
+                  ),
+                  icon: Icon(
+                    widget.settings.shelfCoverMode
+                        ? Icons.view_list_outlined
+                        : Icons.grid_view_outlined,
+                  ),
                   color: t.muted,
-                  onPressed: _openDiscover,
+                  onPressed: () => widget.settings.setShelfCoverMode(
+                    !widget.settings.shelfCoverMode,
+                  ),
                 ),
-              IconButton(
-                tooltip: context.tr('导入 TXT'),
-                icon: const Icon(Icons.add),
-                color: t.muted,
-                onPressed: _import,
-              ),
-              PopupMenuButton<String>(
-                tooltip: context.tr('更多'),
-                icon: Icon(Icons.more_vert, color: t.muted),
-                onSelected: _handleShelfMenu,
-                itemBuilder: (_) => [
-                  if (compact)
-                    const PopupMenuItem(
-                      value: 'discover',
-                      child: ListTile(
-                        leading: Icon(Icons.travel_explore),
-                        title: Text('找书'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  if (AppPlatformSupport.hasAiEngine)
-                    PopupMenuItem(
-                      value: 'ai',
-                      child: ListTile(
-                        leading: Icon(Icons.auto_awesome_outlined),
-                        title: Text('AI 管理'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  PopupMenuItem(
-                    value: 'stats',
-                    child: ListTile(
-                      leading: Icon(Icons.insights_outlined),
-                      title: Text('阅读数据'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'theme',
-                    child: ListTile(
-                      leading: Icon(Icons.palette_outlined),
-                      title: Text('主题色'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'settings',
-                    child: ListTile(
-                      leading: Icon(Icons.tune),
-                      title: Text('设置'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          body: SafeArea(
-            top: false,
-            child: DesktopBookDrop(
-              onDraggingChanged: (value) => setState(() => _dragging = value),
-              onPathsDropped: _addBooks,
-              child: Container(
-                // A visible answer to "can I drop this here?" the moment the file
-                // enters the window, not after it lands.
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: _dragging
-                        ? t.text.withValues(alpha: 0.5)
-                        : Colors.transparent,
-                    width: 2,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
+                NightToggle(settings: widget.settings),
+                IconButton(
+                  tooltip: context.tr(_searching ? '关闭搜索' : '搜索'),
+                  icon: Icon(_searching ? Icons.close : Icons.search),
+                  color: t.muted,
+                  onPressed: () => setState(() {
+                    _searching = !_searching;
+                    _query = '';
+                  }),
                 ),
-                child: Column(
-                  children: [
-                    _categoryBar(t),
-                    Expanded(
-                      child: widget.reader.loading
-                          ? Center(child: Bloom(color: t.muted, size: 34))
-                          : books.isEmpty
-                          ? _empty(t)
-                          : widget.settings.shelfCoverMode
-                          ? LayoutBuilder(
-                              builder: (context, constraints) {
-                                final columns = (constraints.maxWidth / 140)
-                                    .floor()
-                                    .clamp(2, 12);
-                                return GridView.builder(
-                                  padding: const EdgeInsets.all(16),
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: columns,
-                                        mainAxisExtent: 208,
-                                        crossAxisSpacing: 12,
-                                        mainAxisSpacing: 16,
-                                      ),
-                                  itemCount: books.length,
-                                  itemBuilder: (_, i) => _coverCard(books[i]),
-                                );
-                              },
-                            )
-                          : q.isNotEmpty
-                          ? ListView.separated(
-                              padding: const EdgeInsets.all(16),
-                              itemCount: books.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 12),
-                              itemBuilder: (context, i) => _card(books[i]),
-                            )
-                          // Press-and-hold, then drag. The top pinned zone
-                          // is hand-ordered; dropping a book there pins it
-                          // at that slot, dragging one out unpins it. The
-                          // rest of the shelf orders itself by recency.
-                          : ReorderableListView.builder(
-                              padding: const EdgeInsets.all(16),
-                              buildDefaultDragHandles: false,
-                              itemCount: books.length,
-                              onReorderItem: (a, b) => _reorder(books, a, b),
-                              itemBuilder: (context, i) => Padding(
-                                key: ValueKey(books[i].id),
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: ReorderableDelayedDragStartListener(
-                                  index: i,
-                                  child: _card(books[i]),
+                IconButton(
+                  tooltip: context.tr('导入 TXT'),
+                  icon: const Icon(Icons.add),
+                  color: t.muted,
+                  onPressed: _import,
+                ),
+              ],
+            ),
+          },
+          body: switch (_tab) {
+            1 => SafeArea(
+              top: false,
+              child: StatsPage(settings: widget.settings, embedded: true),
+            ),
+            2 => DiscoverPage(
+              reader: widget.reader,
+              settings: widget.settings,
+              embedded: true,
+            ),
+            3 => SafeArea(
+              top: false,
+              child: SettingsPage(settings: widget.settings, embedded: true),
+            ),
+            _ => SafeArea(
+              top: false,
+              child: DesktopBookDrop(
+                onDraggingChanged: (value) =>
+                    setState(() => _dragging = value),
+                onPathsDropped: _addBooks,
+                child: Container(
+                  // A visible answer to "can I drop this here?" the moment the file
+                  // enters the window, not after it lands.
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: _dragging
+                          ? t.text.withValues(alpha: 0.5)
+                          : Colors.transparent,
+                      width: 2,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      _categoryBar(t),
+                      Expanded(
+                        child: widget.reader.loading
+                            ? Center(child: Bloom(color: t.muted, size: 34))
+                            : books.isEmpty
+                            ? _empty(t)
+                            : widget.settings.shelfCoverMode
+                            ? LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final columns =
+                                      (constraints.maxWidth / 140)
+                                          .floor()
+                                          .clamp(2, 12);
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.all(16),
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: columns,
+                                          mainAxisExtent: 208,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 16,
+                                        ),
+                                    itemCount: books.length,
+                                    itemBuilder: (_, i) =>
+                                        _coverCard(books[i]),
+                                  );
+                                },
+                              )
+                            : q.isNotEmpty
+                            ? ListView.separated(
+                                padding: const EdgeInsets.all(16),
+                                itemCount: books.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 12),
+                                itemBuilder: (context, i) => _card(books[i]),
+                              )
+                            // Press-and-hold, then drag. The top pinned zone
+                            // is hand-ordered; dropping a book there pins it
+                            // at that slot, dragging one out unpins it. The
+                            // rest of the shelf orders itself by recency.
+                            : ReorderableListView.builder(
+                                padding: const EdgeInsets.all(16),
+                                buildDefaultDragHandles: false,
+                                itemCount: books.length,
+                                onReorderItem: (a, b) =>
+                                    _reorder(books, a, b),
+                                itemBuilder: (context, i) => Padding(
+                                  key: ValueKey(books[i].id),
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: ReorderableDelayedDragStartListener(
+                                    index: i,
+                                    child: _card(books[i]),
+                                  ),
                                 ),
                               ),
-                            ),
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            ),
+          },
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: t.topBar,
+              border: Border(top: BorderSide(color: t.outline)),
+            ),
+            child: NavigationBar(
+              height: 62,
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              selectedIndex: _tab,
+              onDestinationSelected: (index) => setState(() {
+                _tab = index;
+                if (index != 0 && _searching) {
+                  _searching = false;
+                  _query = '';
+                }
+              }),
+              destinations: [
+                NavigationDestination(
+                  icon: const Icon(Icons.auto_stories_outlined),
+                  selectedIcon: const Icon(Icons.auto_stories),
+                  label: context.tr('书架'),
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.insights_outlined),
+                  selectedIcon: const Icon(Icons.insights),
+                  label: context.tr('阅读数据'),
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.travel_explore_outlined),
+                  selectedIcon: const Icon(Icons.travel_explore),
+                  label: context.tr('找书'),
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.settings_outlined),
+                  selectedIcon: const Icon(Icons.settings),
+                  label: context.tr('设置'),
+                ),
+              ],
             ),
           ),
         );
       },
     );
   }
-
-  void _handleShelfMenu(String value) {
-    switch (value) {
-      case 'discover':
-        _openDiscover();
-        return;
-      case 'ai':
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => AiPage(settings: widget.settings)),
-        );
-        return;
-      case 'stats':
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => StatsPage(settings: widget.settings),
-          ),
-        );
-        return;
-      case 'theme':
-        _pickTheme();
-        return;
-      case 'settings':
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SettingsPage(settings: widget.settings),
-          ),
-        );
-        return;
-    }
-  }
-
-  void _openDiscover() => Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) =>
-          DiscoverPage(reader: widget.reader, settings: widget.settings),
-    ),
-  );
 
   Widget _categoryBar(ReadingTheme t) => SizedBox(
     height: 50,
@@ -520,25 +507,6 @@ class _ShelfPageState extends State<ShelfPage> {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  /// The same swatches the reader has, on the shelf. It writes to the shared
-  /// [ReadingSettings], so the shelf recolours under the sheet and the choice is
-  /// already in force the next time a book is opened.
-  void _pickTheme() {
-    final t = widget.settings.theme;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: t.raisedSurface,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [ThemeSwatches(settings: widget.settings)],
         ),
       ),
     );
@@ -1140,7 +1108,21 @@ class BookCard extends StatelessWidget {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                    if (item.lastOpenedAt case final ts?) ...[
+                      Text(
+                        _formatLastRead(context, ts.toInt()),
+                        translate: false,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: theme.muted,
+                          fontSize: 11.5,
+                          height: 1.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
 
                     // The location is the latest stop, not the furthest chapter.
                     Row(
@@ -1340,5 +1322,36 @@ class BookCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static String _formatLastRead(BuildContext context, int seconds) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    String two(int v) => v.toString().padLeft(2, '0');
+    final hm = '${two(dt.hour)}:${two(dt.minute)}';
+    final prefix = context.tr('上次阅读');
+    if (diff.isNegative) {
+      return '$prefix ${dt.year}/${dt.month}/${dt.day} $hm';
+    }
+    if (diff.inSeconds < 60) {
+      return '$prefix ${context.tr('刚刚')}';
+    }
+    if (diff.inMinutes < 60) {
+      return '$prefix ${diff.inMinutes} ${context.tr('分钟前')}';
+    }
+    final today = DateTime(now.year, now.month, now.day);
+    final date = DateTime(dt.year, dt.month, dt.day);
+    final dayDiff = today.difference(date).inDays;
+    if (dayDiff == 0) {
+      return '$prefix ${context.tr('今天')} $hm';
+    }
+    if (dayDiff == 1) {
+      return '$prefix ${context.tr('昨天')} $hm';
+    }
+    if (dt.year == now.year) {
+      return '$prefix ${dt.month}/${dt.day} $hm';
+    }
+    return '$prefix ${dt.year}/${dt.month}/${dt.day}';
   }
 }
