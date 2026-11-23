@@ -32,8 +32,8 @@ abstract class StageEdgeEngineTask : DefaultTask() {
 
     @TaskAction
     fun stage() {
-        // The chat engine, the 听书 engine and the picture engine.
-        val engines = listOf("libedge_llama_server.so", "libedge_tts_server.so", "libedge_sd_cli.so")
+        // The chat engine, the 听书 engine (Qwen3-TTS + Kokoro light) and the picture engine.
+        val engines = listOf("libedge_llama_server.so", "libedge_tts_server.so", "libedge_kokoro.so", "libedge_sd_cli.so")
         val files = abis.get().flatMap { abi -> engines.map { "$abi/$it" } }
         for (file in files) {
             check(nativeDirectory.file(file).get().asFile.isFile) {

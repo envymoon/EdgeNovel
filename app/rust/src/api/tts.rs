@@ -220,7 +220,13 @@ fn light_bytes(dir: &Path) -> i64 {
 /// need the light voice, the others the engine and the voice model.
 pub fn tts_voice_ready(voice: String) -> Result<bool, String> {
     if voice.starts_with(LIGHT_VOICE) {
-        return Ok(cfg!(in_process_engine) && light_files(tts_dir()?).is_some());
+        #[cfg(in_process_engine)]
+        let engine_ok = true;
+        #[cfg(all(not(in_process_engine), any(windows, target_os = "android")))]
+        let engine_ok = light_dyn::available();
+        #[cfg(all(not(in_process_engine), not(any(windows, target_os = "android"))))]
+        let engine_ok = false;
+        return Ok(engine_ok && light_files(tts_dir()?).is_some());
     }
     tts_ready()
 }
@@ -311,11 +317,18 @@ pub fn stop_tts() {
 }
 
 #[cfg(not(in_process_engine))]
-fn kill() {
+fn kill_child() {
     if let Some(mut child) = server().lock().unwrap().take() {
         let _ = child.kill();
         let _ = child.wait();
     }
+}
+
+#[cfg(not(in_process_engine))]
+fn kill() {
+    kill_child();
+    #[cfg(any(windows, target_os = "android"))]
+    light_dyn::unload();
 }
 
 #[cfg(in_process_engine)]
@@ -579,7 +592,9 @@ fn say(line: &str, voice: &str) -> Result<Vec<u8>, String> {
     match voice.strip_prefix(LIGHT_VOICE) {
         #[cfg(in_process_engine)]
         Some(name) => light::speak(line, name),
-        #[cfg(not(in_process_engine))]
+        #[cfg(all(not(in_process_engine), any(windows, target_os = "android")))]
+        Some(name) => light_dyn::speak(line, name),
+        #[cfg(all(not(in_process_engine), not(any(windows, target_os = "android"))))]
         Some(_) => Err("此设备没有轻量语音".into()),
         None => speak(line, voice),
     }
@@ -1282,6 +1297,299 @@ mod light {
     #[cfg(test)]
     pub fn on_gpu() -> Option<bool> {
         LOADED.lock().unwrap().as_ref().map(|l| l.model.gpu)
+    }
+}
+
+/// The light voice (Kokoro 1.1-zh) on Windows (`edge_kokoro.dll`) and Android
+/// (`libedge_kokoro.so`), dynamically loaded at runtime so its ggml symbols
+/// stay isolated from llama.cpp and the main app binary.
+#[cfg(all(not(in_process_engine), any(windows, target_os = "android")))]
+mod light_dyn {
+    use super::{kill_child, last_used, light_files, pieces, tts_dir, wav, InFlight, BUSY, IDLE, LIFECYCLE};
+    use novel_core::zh_g2p::Zh;
+    use std::ffi::{c_char, c_int, CStr, CString};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::Duration;
+
+    #[repr(C)]
+    struct Kokoro {
+        _private: [u8; 0],
+    }
+
+    type FnLoad = unsafe extern "C" fn(*const c_char, c_int, c_int) -> *mut Kokoro;
+    type FnFree = unsafe extern "C" fn(*mut Kokoro);
+    type FnLanes = unsafe extern "C" fn(*mut Kokoro, c_int);
+    type FnSpeak = unsafe extern "C" fn(*mut Kokoro, *const c_char, *const c_char, f32, u32, *mut c_int) -> *mut f32;
+    type FnFreeAudio = unsafe extern "C" fn(*mut f32);
+    type FnError = unsafe extern "C" fn(*const Kokoro) -> *const c_char;
+
+    #[derive(Clone, Copy)]
+    struct Api {
+        load: FnLoad,
+        free: FnFree,
+        lanes: FnLanes,
+        speak: FnSpeak,
+        free_audio: FnFreeAudio,
+        error: FnError,
+    }
+
+    unsafe impl Send for Api {}
+    unsafe impl Sync for Api {}
+
+    #[cfg(windows)]
+    mod dl {
+        use std::ffi::{c_char, c_void, CStr, OsStr};
+        use std::os::windows::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LoadLibraryW(name: *const u16) -> *mut c_void;
+            fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
+        }
+
+        fn wide(s: &OsStr) -> Vec<u16> {
+            s.encode_wide().chain(std::iter::once(0)).collect()
+        }
+
+        fn beside_exe() -> Option<PathBuf> {
+            let p = std::env::current_exe().ok()?.parent()?.join("edge_kokoro.dll");
+            p.is_file().then_some(p)
+        }
+
+        pub fn available() -> bool {
+            beside_exe().is_some()
+        }
+
+        pub unsafe fn open() -> Result<*mut c_void, String> {
+            if let Some(p) = beside_exe() {
+                let w = wide(p.as_os_str());
+                let h = LoadLibraryW(w.as_ptr());
+                if !h.is_null() {
+                    return Ok(h);
+                }
+            }
+            let w = wide(OsStr::new("edge_kokoro.dll"));
+            let h = LoadLibraryW(w.as_ptr());
+            if h.is_null() {
+                Err("未找到轻量语音引擎 edge_kokoro.dll".into())
+            } else {
+                Ok(h)
+            }
+        }
+
+        pub unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
+            let p = GetProcAddress(h, name.as_ptr());
+            if p.is_null() {
+                Err(format!("轻量语音引擎缺少接口 {}", name.to_string_lossy()))
+            } else {
+                Ok(p)
+            }
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    mod dl {
+        use std::ffi::{c_void, CStr};
+
+        pub fn available() -> bool {
+            crate::android_engine::bundled("libedge_kokoro.so").is_some()
+        }
+
+        pub unsafe fn open() -> Result<*mut c_void, String> {
+            let h = libc::dlopen(c"libedge_kokoro.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            if h.is_null() {
+                let err = libc::dlerror();
+                let msg = if err.is_null() {
+                    "未知错误".to_string()
+                } else {
+                    CStr::from_ptr(err).to_string_lossy().into_owned()
+                };
+                Err(format!("加载轻量语音引擎失败: {msg}"))
+            } else {
+                Ok(h)
+            }
+        }
+
+        pub unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
+            let p = libc::dlsym(h, name.as_ptr());
+            if p.is_null() {
+                Err(format!("轻量语音引擎缺少接口 {}", name.to_string_lossy()))
+            } else {
+                Ok(p)
+            }
+        }
+    }
+
+    pub fn available() -> bool {
+        dl::available()
+    }
+
+    fn api() -> Result<Api, String> {
+        static API: OnceLock<Result<Api, String>> = OnceLock::new();
+        API.get_or_init(|| unsafe {
+            let h = dl::open()?;
+            Ok(Api {
+                load: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_load")?),
+                free: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_free")?),
+                lanes: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_lanes")?),
+                speak: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_speak")?),
+                free_audio: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_free_audio")?),
+                error: std::mem::transmute(dl::sym(h, c"edge_tts_kokoro_error")?),
+            })
+        })
+        .clone()
+    }
+
+    struct Model {
+        api: Api,
+        k: *mut Kokoro,
+        gpu: bool,
+    }
+
+    unsafe impl Send for Model {}
+    unsafe impl Sync for Model {}
+
+    impl Drop for Model {
+        fn drop(&mut self) {
+            unsafe { (self.api.free)(self.k) };
+        }
+    }
+
+    struct Loaded {
+        model: Arc<Model>,
+        zh: Arc<Zh>,
+    }
+
+    static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
+    static NO_GPU: AtomicBool = AtomicBool::new(false);
+
+    fn wanted_gpu() -> bool {
+        if NO_GPU.load(Ordering::SeqCst) {
+            return false;
+        }
+        #[cfg(target_os = "android")]
+        {
+            crate::android_engine::use_gpu()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            true
+        }
+    }
+
+    fn loaded() -> bool {
+        LOADED.lock().unwrap().is_some()
+    }
+
+    pub fn unload() {
+        let Some(l) = LOADED.lock().unwrap().take() else { return };
+        let model = l.model;
+        while Arc::strong_count(&model) > 1 {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn ensure(slot: &mut Option<Loaded>, gpu: bool) -> Result<(), String> {
+        if slot.as_ref().is_some_and(|l| l.model.gpu == gpu) {
+            return Ok(());
+        }
+        let api = api()?;
+        let (model_path, text_path) = light_files(tts_dir()?).ok_or("轻量语音未安装")?;
+        let zh = match slot.take() {
+            Some(l) => {
+                let old = l.model;
+                while Arc::strong_count(&old) > 1 {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                drop(old);
+                l.zh
+            }
+            None => {
+                let bytes = std::fs::read(&text_path).map_err(|e| format!("读取轻量语音失败: {e}"))?;
+                Arc::new(Zh::load(&bytes)?)
+            }
+        };
+        let path = CString::new(model_path.to_string_lossy().as_bytes()).map_err(|_| "路径无效".to_string())?;
+        let k = unsafe { (api.load)(path.as_ptr(), gpu as c_int, 0) };
+        if k.is_null() {
+            return Err("启动轻量语音失败".into());
+        }
+        unsafe { (api.lanes)(k, 1) };
+        *slot = Some(Loaded {
+            model: Arc::new(Model { api, k, gpu }),
+            zh,
+        });
+        Ok(())
+    }
+
+    fn say(line: &str, voice: &CStr) -> Result<Vec<u8>, (String, bool)> {
+        let (model, zh) = {
+            let _g = LIFECYCLE.lock().unwrap();
+            kill_child();
+            let mut slot = LOADED.lock().unwrap();
+            let first = slot.is_none();
+            let want = wanted_gpu();
+            ensure(&mut slot, want).map_err(|e| (e, want))?;
+            if first {
+                watch_idle();
+            }
+            let l = slot.as_ref().unwrap();
+            (l.model.clone(), l.zh.clone())
+        };
+        let mut pcm = Vec::new();
+        for piece in pieces(&zh.phonemes(line)) {
+            let ps = CString::new(piece).map_err(|_| ("文本无效".to_string(), model.gpu))?;
+            let mut n: c_int = 0;
+            let samples = unsafe { (model.api.speak)(model.k, ps.as_ptr(), voice.as_ptr(), 1.0, 1, &mut n) };
+            if samples.is_null() {
+                let why = unsafe { CStr::from_ptr((model.api.error)(model.k)) }
+                    .to_string_lossy()
+                    .into_owned();
+                return Err((format!("语音合成失败: {why}"), model.gpu));
+            }
+            for &x in unsafe { std::slice::from_raw_parts(samples, n.max(0) as usize) } {
+                let s = (x.clamp(-1.0, 1.0) * 32767.0).round_ties_even() as i16;
+                pcm.extend_from_slice(&s.to_le_bytes());
+            }
+            unsafe { (model.api.free_audio)(samples) };
+        }
+        Ok(pcm)
+    }
+
+    pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+        let _busy = InFlight::new();
+        let voice = CString::new(voice).map_err(|_| "音色无效".to_string())?;
+        match say(line, &voice) {
+            Ok(pcm) if pcm.is_empty() => Err("语音合成为空".into()),
+            Ok(pcm) => Ok(wav(&pcm)),
+            Err((e, true)) => {
+                eprintln!("light voice: GPU failed, falling back to CPU: {e}");
+                NO_GPU.store(true, Ordering::SeqCst);
+                #[cfg(target_os = "android")]
+                crate::android_engine::mark_gpu_failed();
+                match say(line, &voice) {
+                    Ok(pcm) if pcm.is_empty() => Err("语音合成为空".into()),
+                    Ok(pcm) => Ok(wav(&pcm)),
+                    Err((e2, _)) => Err(e2),
+                }
+            }
+            Err((e, false)) => Err(e),
+        }
+    }
+
+    fn watch_idle() {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(5));
+            if !loaded() {
+                return;
+            }
+            if BUSY.load(Ordering::SeqCst) == 0 && last_used().lock().unwrap().elapsed() > IDLE {
+                unload();
+                return;
+            }
+        });
     }
 }
 

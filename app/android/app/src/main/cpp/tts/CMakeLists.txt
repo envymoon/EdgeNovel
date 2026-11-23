@@ -70,3 +70,18 @@ target_link_libraries(edge_tts PRIVATE ggml ggml-base ggml-cpu ggml-vulkan httpl
 set_target_properties(edge_tts PROPERTIES
     OUTPUT_NAME libedge_tts_server.so
     RUNTIME_OUTPUT_DIRECTORY "${EDGE_OUTPUT_DIR}")
+
+# The light voice (Kokoro 1.1-zh), built as a shared library on the same ggml
+# (with Vulkan + CPU) and dlopen'd by rust_lib_novel.
+add_library(edge_kokoro SHARED
+    "${EDGE_CPP}/vulkan11_shim.cpp"
+    "${EDGE_REPO}/app/rust/ios_tts/kokoro/kokoro.cpp")
+target_compile_definitions(edge_kokoro PRIVATE EDGE_KOKORO_SHARED)
+target_include_directories(edge_kokoro PRIVATE
+    "${EDGE_REPO}/app/rust/ios_tts/kokoro"
+    "${Vulkan_INCLUDE_DIR}")
+target_link_libraries(edge_kokoro PRIVATE ggml ggml-base ggml-cpu ggml-vulkan Threads::Threads)
+set_target_properties(edge_kokoro PROPERTIES
+    OUTPUT_NAME edge_kokoro
+    LIBRARY_OUTPUT_DIRECTORY "${EDGE_OUTPUT_DIR}")
+add_dependencies(edge_tts edge_kokoro)

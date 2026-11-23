@@ -50,10 +50,12 @@ abstract final class AppPlatformSupport {
       defaultTargetPlatform == TargetPlatform.android ||
       (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
 
-  /// The light voice: a small model run in the app's own engine, so iPhone
-  /// alone, from the same 16.4.
+  /// The light voice (Kokoro 1.1-zh): compiled into the app on iOS (16.4+),
+  /// bundled as libedge_kokoro.so on Android, and edge_kokoro.dll on Windows.
   static bool get hasLightVoice =>
-      defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable;
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.android ||
+      (defaultTargetPlatform == TargetPlatform.iOS && iosEngineAvailable);
 
   /// The 听书 engine ships inside the app, so only the voice is a download.
   static bool get hasBundledTtsEngine => isMobile;

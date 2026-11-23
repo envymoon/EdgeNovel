@@ -34,6 +34,15 @@
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #endif
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -968,7 +977,19 @@ kokoro * edge_tts_kokoro_load(const char * path, int gpu, int threads) {
             k->w[ggml_get_name(t)] = t;
         k->wbuf = ggml_backend_alloc_ctx_tensors(k->wctx, k->lanes[0]->backend);
         if (!k->wbuf) throw std::string("out of memory for weights");
+#ifdef _WIN32
+        {
+            const int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
+            if (wlen > 0) {
+                std::vector<wchar_t> wpath(wlen);
+                MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath.data(), wlen);
+                f = _wfopen(wpath.data(), L"rb");
+            }
+            if (!f) f = fopen(path, "rb");
+        }
+#else
         f = fopen(path, "rb");
+#endif
         if (!f) throw std::string("cannot open ") + path;
         std::vector<uint8_t> buf;
         for (int64_t i = 0; i < gguf_get_n_tensors(g); i++) {

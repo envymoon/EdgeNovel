@@ -5,27 +5,39 @@
 extern "C" {
 #endif
 
+#ifndef EDGE_KOKORO_API
+#  if defined(EDGE_KOKORO_SHARED)
+#    if defined(_WIN32)
+#      define EDGE_KOKORO_API __declspec(dllexport)
+#    else
+#      define EDGE_KOKORO_API __attribute__((visibility("default")))
+#    endif
+#  else
+#    define EDGE_KOKORO_API
+#  endif
+#endif
+
 typedef struct kokoro kokoro;
 
 // gpu: run the big parts on the GPU when one is there. threads: CPU threads,
 // 0 for as many as performance cores.
 // NULL when the file cannot be read; the reason goes to stderr.
-kokoro * edge_tts_kokoro_load(const char * gguf_path, int gpu, int threads);
-void edge_tts_kokoro_free(kokoro * k);
+EDGE_KOKORO_API kokoro * edge_tts_kokoro_load(const char * gguf_path, int gpu, int threads);
+EDGE_KOKORO_API void edge_tts_kokoro_free(kokoro * k);
 
-int edge_tts_kokoro_voice_count(const kokoro * k);
-const char * edge_tts_kokoro_voice_name(const kokoro * k, int i);
+EDGE_KOKORO_API int edge_tts_kokoro_voice_count(const kokoro * k);
+EDGE_KOKORO_API const char * edge_tts_kokoro_voice_name(const kokoro * k, int i);
 
 // How many sentences may be spoken at once, from as many threads (1 to 4;
 // 1 at first). Each has memory of its own for what it computes; the weights
 // are shared. On the CPU they share the threads.
-void edge_tts_kokoro_lanes(kokoro * k, int n);
+EDGE_KOKORO_API void edge_tts_kokoro_lanes(kokoro * k, int n);
 
 // phonemes: the model's own alphabet (UTF-8), at most 510 of them.
 // speed: 1 is the voice's own pace. seed: the source noise.
 // Returns malloc'd samples (free with kokoro_free_audio) and their count in
 // *n, or NULL with the reason in kokoro_error (asked on the same thread).
-float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed,
+EDGE_KOKORO_API float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * voice, float speed,
                      unsigned seed, int * n);
 // Checkpoint callback for edge_tts_kokoro_speak_checked.
 // mode == 0: quick check (e.g. while waiting for a lane or on GPU stages).
@@ -34,14 +46,14 @@ float * edge_tts_kokoro_speak(kokoro * k, const char * phonemes, const char * vo
 //            check whether to stop.
 // Returning non-zero aborts the sentence (error = "cancelled").
 typedef int (*edge_tts_kokoro_check_cb)(int mode, void * user);
-float * edge_tts_kokoro_speak_checked(kokoro * k, const char * phonemes, const char * voice, float speed,
+EDGE_KOKORO_API float * edge_tts_kokoro_speak_checked(kokoro * k, const char * phonemes, const char * voice, float speed,
                                       unsigned seed, int * n, edge_tts_kokoro_check_cb check, void * user);
-void edge_tts_kokoro_free_audio(float * samples);
-const char * edge_tts_kokoro_error(const kokoro * k);
+EDGE_KOKORO_API void edge_tts_kokoro_free_audio(float * samples);
+EDGE_KOKORO_API const char * edge_tts_kokoro_error(const kokoro * k);
 
 // Checking against the original: every intermediate is written to dir as raw
 // float32, and the source noise is left out when quiet.
-void edge_tts_kokoro_debug(kokoro * k, const char * dir, int quiet);
+EDGE_KOKORO_API void edge_tts_kokoro_debug(kokoro * k, const char * dir, int quiet);
 
 #ifdef __cplusplus
 }
