@@ -31,7 +31,7 @@
 
 ### Local Read-Aloud & Covers
 
-- **Read-Aloud**: On-device speech synthesis with per-chapter progress tracking, streaming synthesis, and chapter pre-generation (iOS also includes a 200 MB lightweight voice pack).
+- **Read-Aloud**: On-device speech synthesis with per-chapter progress tracking, streaming synthesis, and chapter pre-generation (plus a 200 MB lightweight voice pack).
 - **AI Covers**: Generates covers locally for books without cover art.
 
 ### Book Sources
@@ -56,7 +56,7 @@
 
 ## Changelog
 
-**1.5.4** (Windows / Android / iOS) — Reworked pacing analysis with nearby chapter tags; streamlined 4-tab bottom navigation and settings; added blue-light filter, eye-rest reminder, and shelf last-read time; synced Windows to chapter-based read-aloud and added 200 MB lightweight voice pack on iOS; improved obfuscated ad-domain cleanup, locked page turning in selection mode, and added optional offline dictionary; added author tics and cast appearance views.
+**1.5.4** (Windows / Android / iOS) — Reworked pacing analysis with nearby chapter tags; streamlined 4-tab bottom navigation and settings; added blue-light filter, eye-rest reminder, and shelf last-read time.
 
 **1.5.3** (iOS) — Lock screen, Control Center, and headphone controls for read-aloud; fixed background synthesis stopping after screen lock and long-press-to-read in paged mode.
 
