@@ -50,11 +50,13 @@
 
 | Platform | Download |
 | --- | --- |
-| Windows | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.4) (unzip and run `novel.exe`; keep the whole folder together) |
-| Android | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.4) (ARM64; install over existing app) |
-| iOS | [Zhiyue 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.4) (unsigned; sign and install over existing app) |
+| Windows | [Zhiyue 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.5) (unzip and run `novel.exe`; keep the whole folder together) |
+| Android | [Zhiyue 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.5) (ARM64; install over existing app) |
+| iOS | [Zhiyue 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.5) (unsigned; sign and install over existing app) |
 
 ## Changelog
+
+**1.5.5** (Windows / Android / iOS) — Fixed some known issues.
 
 **1.5.4** (Windows / Android / iOS) — Reworked pacing analysis with nearby chapter tags; streamlined 4-tab bottom navigation and settings; added blue-light filter, eye-rest reminder, and shelf last-read time.
 
