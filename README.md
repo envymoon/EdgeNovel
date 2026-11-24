@@ -50,11 +50,13 @@
 
 | 平台 | 下载 |
 | --- | --- |
-| Windows | [挚阅 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.4)（解压后运行 `novel.exe`，整个文件夹一起保留） |
-| Android | [挚阅 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.4)（ARM64，升级请直接覆盖安装） |
-| iOS | [挚阅 1.5.4](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.4)（未签名，需自行签名后覆盖安装） |
+| Windows | [挚阅 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/windows-v1.5.5)（解压后运行 `novel.exe`，整个文件夹一起保留） |
+| Android | [挚阅 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/android-v1.5.5)（ARM64，升级请直接覆盖安装） |
+| iOS | [挚阅 1.5.5](https://github.com/envymoon/EdgeNovel/releases/tag/ios-v1.5.5)（未签名，需自行签名后覆盖安装） |
 
 ## 版本更新
+
+**1.5.5**（Windows / Android / iOS）　修复了一些已知问题。
 
 **1.5.4**（Windows / Android / iOS）　重构节奏分析与附近章节标签提示；精简底部四标签导航与设置页，新增防蓝光滤镜、护眼提醒与书架上次阅读时间。
 
