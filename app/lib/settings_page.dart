@@ -4,6 +4,7 @@ import 'app_localizations.dart';
 import 'dictionary_page.dart';
 import 'ai_page.dart';
 import 'ai_runtime_page.dart';
+import 'appearance_page.dart';
 import 'feedback_page.dart';
 import 'font_page.dart';
 import 'lan_sync_page.dart';
@@ -177,6 +178,18 @@ class SettingsPage extends StatelessWidget {
                       title: '主题色',
                       trailing: t.name,
                       onTap: () => _pickTheme(context),
+                    ),
+                    _entry(
+                      t,
+                      icon: Icons.style_outlined,
+                      title: '外观',
+                      subtitle: '界面字体与配色',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AppearancePage(settings: settings),
+                        ),
+                      ),
                     ),
                     SwitchListTile(
                       minTileHeight: 62,

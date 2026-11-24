@@ -266,7 +266,7 @@ void main() {
       expect(find.text('AI 管理'), findsOneWidget);
       expect(find.text('模型、引擎与生成数据'), findsOneWidget);
       expect(find.text('主题色'), findsOneWidget);
-      expect(find.text('外观'), findsNothing);
+      expect(find.text('外观'), findsOneWidget);
       expect(find.text('阅读字体'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
