@@ -888,10 +888,11 @@ class _ShelfPageState extends State<ShelfPage> {
     await widget.reader.loadLibrary();
   }
 
-  /// Where did the book land relative to the pinned zone? Inside it: pin at
-  /// exactly that slot. Out of it (for a pinned book): unpin. Entirely within
-  /// the recency zone: nothing to persist — recency owns that order, and
-  /// pretending otherwise would silently un-stick on the next read.
+  /// Reorders the shelf on drag-and-drop with immediate in-memory update (no
+  /// snap-back flicker):
+  /// - Dropping into the pinned zone pins the book at that slot.
+  /// - Dragging a pinned book below the pinned zone unpins it at that slot.
+  /// - Dragging among unpinned books persists the custom manual order.
   Future<void> _reorder(
     List<ShelfItem> books,
     int oldIndex,
@@ -899,20 +900,53 @@ class _ShelfPageState extends State<ShelfPage> {
   ) async {
     if (newIndex == oldIndex) return;
     final moved = books[oldIndex];
-    final zone = [
+    final nextVisible = [...books]
+      ..removeAt(oldIndex)
+      ..insert(newIndex, moved);
+    final visibleIds = {for (final b in books) b.id};
+    var vi = 0;
+    final nextFull = [
+      for (final b in widget.reader.shelf)
+        if (visibleIds.contains(b.id)) nextVisible[vi++] else b,
+    ];
+
+    final pinnedBefore = [
       for (final b in books)
         if (b.pinned && b.id != moved.id) b.id,
     ];
-    if (newIndex <= zone.length) {
-      await setPinOrder(
-        ids: Int64List.fromList([...zone]..insert(newIndex, moved.id)),
-      );
+    final intoPinned =
+        (pinnedBefore.isNotEmpty && newIndex < pinnedBefore.length) ||
+        (moved.pinned && newIndex <= pinnedBefore.length);
+
+    if (intoPinned) {
+      final nextPinIds = [
+        for (final b in nextFull)
+          if (b.pinned || b.id == moved.id) b.id,
+      ];
+      widget.reader.applyShelfOrderLocally(nextFull);
+      await setPinOrder(ids: Int64List.fromList(nextPinIds));
+      await widget.reader.loadLibrary();
     } else if (moved.pinned) {
+      final nextUnpinnedIds = [
+        for (final b in nextFull)
+          if (!b.pinned || b.id == moved.id) b.id,
+      ];
+      widget.reader.applyShelfOrderLocally(
+        nextFull,
+        manualUnpinnedOrder: nextUnpinnedIds,
+      );
       await setBookPinned(bookId: moved.id, pinned: false);
+      await widget.reader.loadLibrary();
     } else {
-      return;
+      final nextUnpinnedIds = [
+        for (final b in nextFull)
+          if (!b.pinned) b.id,
+      ];
+      widget.reader.applyShelfOrderLocally(
+        nextFull,
+        manualUnpinnedOrder: nextUnpinnedIds,
+      );
     }
-    await widget.reader.loadLibrary();
   }
 
   /// The escape hatch for a wrong encoding guess: mojibake in the title or the

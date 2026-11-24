@@ -198,10 +198,13 @@ class ReaderState extends ChangeNotifier {
     : aiRuntime = aiRuntime ?? AiRuntimeSettings.instance;
 
   static const _queueKey = 'aiRuntime.queue.v1';
+  static const _manualOrderKey = 'shelf.manualOrder.v1';
   final AiRuntimeSettings aiRuntime;
   final ReadingSessionStore? readingSessionStore;
 
   List<ShelfItem> shelf = const [];
+  List<int> _manualShelfOrder = const [];
+  bool _manualOrderLoaded = false;
   BookInfo? info;
   int chapterIndex = 0;
   List<Paragraph> paragraphs = const [];
@@ -1268,8 +1271,73 @@ class ReaderState extends ChangeNotifier {
     _scheduleAi();
   }
 
+  Future<void> _ensureManualOrderLoaded() async {
+    if (_manualOrderLoaded) return;
+    _manualOrderLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList(_manualOrderKey);
+      if (saved != null && saved.isNotEmpty) {
+        _manualShelfOrder = [for (final s in saved) ?int.tryParse(s)];
+      }
+    } catch (_) {}
+  }
+
+  List<ShelfItem> _applyManualOrder(List<ShelfItem> raw) {
+    if (_manualShelfOrder.isEmpty) return raw;
+    final pinned = <ShelfItem>[];
+    final unpinned = <ShelfItem>[];
+    for (final b in raw) {
+      if (b.pinned) {
+        pinned.add(b);
+      } else {
+        unpinned.add(b);
+      }
+    }
+    final rank = <int, int>{};
+    for (var i = 0; i < _manualShelfOrder.length; i++) {
+      rank[_manualShelfOrder[i]] = i;
+    }
+    final fresh = <ShelfItem>[];
+    final ordered = <ShelfItem>[];
+    for (final b in unpinned) {
+      if (rank.containsKey(b.id)) {
+        ordered.add(b);
+      } else {
+        fresh.add(b);
+      }
+    }
+    ordered.sort((a, b) => rank[a.id]!.compareTo(rank[b.id]!));
+    return [...pinned, ...fresh, ...ordered];
+  }
+
+  /// Immediately updates the in-memory shelf order (avoiding snap-back flicker
+  /// after drag-and-drop) and persists any custom unpinned ordering.
+  void applyShelfOrderLocally(
+    List<ShelfItem> reordered, {
+    List<int>? manualUnpinnedOrder,
+  }) {
+    shelf = reordered;
+    if (manualUnpinnedOrder != null) {
+      _manualOrderLoaded = true;
+      _manualShelfOrder = List<int>.unmodifiable(manualUnpinnedOrder);
+      unawaited(
+        SharedPreferences.getInstance()
+            .then(
+              (p) => p.setStringList(
+                _manualOrderKey,
+                [for (final id in _manualShelfOrder) '$id'],
+              ),
+            )
+            .catchError((_) => false),
+      );
+    }
+    notifyListeners();
+  }
+
   Future<void> loadLibrary() async {
-    shelf = await listBooks();
+    await _ensureManualOrderLoaded();
+    shelf = _applyManualOrder(await listBooks());
     notifyListeners();
     // Books imported before genre tags existed carry none, and nothing would
     // ever give them any: a book is tagged when it is decoded. Tag them once,
@@ -1277,7 +1345,7 @@ class ReaderState extends ChangeNotifier {
     if (shelf.any((b) => b.genreTags.isEmpty)) {
       final n = await backfillGenres();
       if (n > 0) {
-        shelf = await listBooks();
+        shelf = _applyManualOrder(await listBooks());
         notifyListeners();
       }
     }
