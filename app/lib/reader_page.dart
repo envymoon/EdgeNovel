@@ -111,7 +111,12 @@ class _ReaderPageState extends State<ReaderPage> {
     );
     _tts.addListener(_onTtsTick);
     TtsPrepare.instance.addListener(_onPrepareTick);
-    _resumed = AppLifecycleListener(onResume: _onPrepareTick);
+    _resumed = AppLifecycleListener(
+      onResume: _onReaderResume,
+      onHide: _onReaderBackground,
+      onPause: _onReaderBackground,
+      onDetach: _onReaderBackground,
+    );
     widget.reader.addListener(_onChapter);
     _pageInfo.addListener(_onEggPageTurn);
     _initEasterEggs();
@@ -128,6 +133,17 @@ class _ReaderPageState extends State<ReaderPage> {
       const Duration(seconds: 5),
       (_) => _onEyeReminderTick(),
     );
+  }
+
+  void _onReaderBackground() {
+    _eyeReminderSeconds = 0;
+    _eggWindowChars = 0;
+    EasterEggEngine.instance.onBackground();
+  }
+
+  void _onReaderResume() {
+    _onPrepareTick();
+    EasterEggEngine.instance.onResume();
   }
 
   void _syncEyeReminder() {
@@ -214,6 +230,11 @@ class _ReaderPageState extends State<ReaderPage> {
     _eggTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       final cur = widget.reader.info;
       if (!mounted || cur == null) return;
+      final life = WidgetsBinding.instance.lifecycleState;
+      if (life != null && life != AppLifecycleState.resumed) {
+        _eggWindowChars = 0;
+        return;
+      }
       final chars = _eggWindowChars;
       _eggWindowChars = 0;
       EasterEggEngine.instance.onSpeedWindow(

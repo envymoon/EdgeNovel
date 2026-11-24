@@ -344,6 +344,11 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
         reader.aiRunnable) {
       unawaited(_background.invokeMethod('schedule'));
     }
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      EasterEggEngine.instance.onBackground();
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||

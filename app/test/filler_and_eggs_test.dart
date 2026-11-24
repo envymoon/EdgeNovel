@@ -161,4 +161,44 @@ void main() {
     expect(engine.activeBanner.value, isNull);
     expect(engine.unlockedCount, 0);
   });
+
+  test('onBackground resets continuous session duration and counters', () {
+    final engine = EasterEggEngine.instance;
+    engine.resetForTest();
+    engine.onBookOpen(bookId: 1, bookTitle: '诡秘', enabled: true);
+
+    // Simulate 200 minutes having elapsed, then the phone locking (background).
+    engine.backdateSessionForTest(const Duration(minutes: 200));
+    for (var i = 0; i < 290; i++) {
+      engine.onPageTurn(
+        backward: false,
+        visibleText: '正文内容',
+        baselineCharsPerMin: 500,
+        bookTitle: '诡秘',
+        enabled: true,
+      );
+    }
+    engine.onBackground();
+    engine.onResume();
+
+    // After waking up, neither iron_eyes nor marathon_pages should fire.
+    engine.onSpeedWindow(
+      chars: 250,
+      secs: 30,
+      baselineCharsPerMin: 500,
+      bookTitle: '诡秘',
+      enabled: true,
+    );
+    for (var i = 0; i < 20; i++) {
+      engine.onPageTurn(
+        backward: false,
+        visibleText: '正文内容',
+        baselineCharsPerMin: 500,
+        bookTitle: '诡秘',
+        enabled: true,
+      );
+    }
+    expect(engine.unlocked.containsKey('iron_eyes'), isFalse);
+    expect(engine.unlocked.containsKey('marathon_pages'), isFalse);
+  });
 }

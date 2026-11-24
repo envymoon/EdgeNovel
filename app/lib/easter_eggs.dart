@@ -369,16 +369,7 @@ class EasterEggEngine extends ChangeNotifier {
     }
   }
 
-  /// Called when a book is opened in the reader.
-  void onBookOpen({
-    required int bookId,
-    required String bookTitle,
-    required bool enabled,
-    int totalChars = 0,
-    int currentChapter = 0,
-  }) {
-    unawaited(ensureLoaded());
-    final now = DateTime.now();
+  void _resetSessionTrackers(DateTime? now) {
     _sessionStart = now;
     _pageEnteredAt = now;
     _fastWindows = 0;
@@ -390,10 +381,26 @@ class EasterEggEngine extends ChangeNotifier {
     _chapterJumps.clear();
     _consecutiveHighPace = 0;
     _recentPaces.clear();
+    _sessionDictLookups = 0;
+    if (!_ttsPlaying) {
+      _nightTtsStart = null;
+    }
+  }
+
+  /// Called when a book is opened in the reader.
+  void onBookOpen({
+    required int bookId,
+    required String bookTitle,
+    required bool enabled,
+    int totalChars = 0,
+    int currentChapter = 0,
+  }) {
+    unawaited(ensureLoaded());
+    final now = DateTime.now();
+    _resetSessionTrackers(now);
     _lastChapter = null;
     _nightTtsStart = null;
     _bookTotalChars = totalChars;
-    _sessionDictLookups = 0;
 
     // Long reunion: reopened a book untouched for >= 30 days.
     final prevMs = _bookLastOpenedMs['$bookId'];
@@ -452,10 +459,18 @@ class EasterEggEngine extends ChangeNotifier {
     }
   }
 
+  /// Called when the app goes to background or the screen locks, resetting all
+  /// continuous-session trackers so off-screen time is never accumulated.
+  void onBackground() {
+    _resetSessionTrackers(null);
+  }
+
   /// Called when the app returns to foreground so background time is never
-  /// counted as single-page dwell.
+  /// counted as single-page dwell or continuous session time.
   void onResume() {
-    _pageEnteredAt = DateTime.now();
+    final now = DateTime.now();
+    _sessionStart ??= now;
+    _pageEnteredAt = now;
   }
 
   /// Called when text cleanup removes ads/watermarks.
@@ -1143,6 +1158,11 @@ class EasterEggEngine extends ChangeNotifier {
     if (activeBanner.value != null) {
       activeBanner.value = null;
     }
+  }
+
+  @visibleForTesting
+  void backdateSessionForTest(Duration ago) {
+    _sessionStart = DateTime.now().subtract(ago);
   }
 
   @visibleForTesting
