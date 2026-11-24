@@ -548,8 +548,8 @@ class PagedReaderState extends State<PagedReader>
     } else if (dir > 0) {
       final lastChapter =
           r.info != null && r.chapterIndex >= r.info!.chapters.length - 1;
-      if (lastChapter) {
-        widget.onForwardOffEnd?.call();
+      if (lastChapter && widget.onForwardOffEnd != null) {
+        widget.onForwardOffEnd!();
       } else {
         r.next();
       }
