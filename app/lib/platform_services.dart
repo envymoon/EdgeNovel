@@ -269,7 +269,9 @@ class AppExecutionPolicy {
       AppExecutionPolicy(mobile: AppPlatformSupport.isMobile);
 
   bool aiAllowedIn(AppLifecycleState state) =>
-      !mobile || state == AppLifecycleState.resumed;
+      !mobile ||
+      state == AppLifecycleState.resumed ||
+      state == AppLifecycleState.inactive;
 }
 
 class AppServices {

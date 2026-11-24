@@ -11,6 +11,7 @@ import 'cover.dart';
 import 'cover_generator.dart';
 import 'discover_page.dart';
 import 'desktop_book_drop.dart';
+import 'easter_eggs.dart';
 import 'night_toggle.dart';
 import 'platform_support.dart';
 import 'platform_services.dart';
@@ -49,7 +50,16 @@ class _ShelfPageState extends State<ShelfPage> {
   @override
   void initState() {
     super.initState();
-    widget.reader.loadLibrary();
+    widget.reader.loadLibrary().then((_) {
+      if (!mounted) return;
+      EasterEggEngine.instance.onShelfLoaded(
+        books: [
+          for (final b in widget.reader.shelf)
+            (chapters: b.chapterCount, lastChapter: b.lastChapter),
+        ],
+        enabled: widget.settings.easterEggs,
+      );
+    });
   }
 
   Future<void> _addBooks(Iterable<String> paths) async {

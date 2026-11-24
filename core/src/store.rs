@@ -116,6 +116,37 @@ pub struct BookStorage {
     pub chunk_bytes: i64,
 }
 
+/// Snapshot of a book removed from the shelf, kept so lifetime reading stats,
+/// speed comparisons and portraits do not shrink when the user frees disk space.
+#[derive(Debug, Clone)]
+pub struct BookStatArchive {
+    pub id: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub genre_tags: Option<String>,
+    pub total_bytes: i64,
+    pub chapter_count: i64,
+    pub finished_chapters: i64,
+    pub finished_bytes: i64,
+    pub is_finished: bool,
+    pub annotations: i64,
+    pub content_hash: Option<String>,
+    pub archived_at: i64,
+}
+
+/// One row in the per-book reading statistics list, covering both books still on
+/// the shelf and archived records of books the user removed.
+#[derive(Debug, Clone)]
+pub struct BookStatEntry {
+    pub id: i64,
+    pub is_archived: bool,
+    pub title: String,
+    pub seconds: i64,
+    pub chapters_finished: i64,
+    pub is_finished: bool,
+    pub archived_at: Option<i64>,
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS books (
     id            INTEGER PRIMARY KEY,
@@ -355,6 +386,45 @@ CREATE TABLE IF NOT EXISTS sources (
     checked_at INTEGER,
     added_at   INTEGER NOT NULL
 );
+
+-- Archived reading statistics of books removed from the shelf. Kept until the
+-- user explicitly deletes them in 阅读数据, so removing a finished book never
+-- erases lifetime hours, streaks or speed comparisons.
+CREATE TABLE IF NOT EXISTS book_stat_archives (
+    id                INTEGER PRIMARY KEY,
+    title             TEXT NOT NULL,
+    author            TEXT,
+    genre_tags        TEXT,
+    total_bytes       INTEGER NOT NULL,
+    chapter_count     INTEGER NOT NULL,
+    finished_chapters INTEGER NOT NULL DEFAULT 0,
+    finished_bytes    INTEGER NOT NULL DEFAULT 0,
+    is_finished       INTEGER NOT NULL DEFAULT 0,
+    annotations       INTEGER NOT NULL DEFAULT 0,
+    content_hash      TEXT,
+    archived_at       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS archived_reading_events (
+    id           INTEGER PRIMARY KEY,
+    archive_id   INTEGER NOT NULL REFERENCES book_stat_archives(id) ON DELETE CASCADE,
+    started_at   INTEGER NOT NULL,
+    ended_at     INTEGER NOT NULL,
+    start_offset INTEGER NOT NULL,
+    end_offset   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archived_events_archive
+    ON archived_reading_events(archive_id, started_at);
+
+CREATE TABLE IF NOT EXISTS archived_reading_windows (
+    archive_id INTEGER NOT NULL REFERENCES book_stat_archives(id) ON DELETE CASCADE,
+    chapter    INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    secs       INTEGER NOT NULL,
+    chars      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archived_windows_archive
+    ON archived_reading_windows(archive_id, started_at);
 "#;
 
 /// When the same text is split differently, keep what is stored by chapter number
@@ -521,6 +591,9 @@ impl Store {
         let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN source TEXT", []);
         let _ = conn.execute("ALTER TABLE person_summaries ADD COLUMN basis INTEGER", []);
         let _ = conn.execute("ALTER TABLE books ADD COLUMN cuts_base INTEGER", []);
+        let _ = conn.execute("ALTER TABLE books ADD COLUMN sync_uid TEXT", []);
+        let _ = conn.execute("ALTER TABLE books ADD COLUMN content_hash TEXT", []);
+        let _ = conn.execute("ALTER TABLE books ADD COLUMN progress_updated_at INTEGER", []);
         // 前情提要 was removed from the product. Its old generated paragraphs
         // lived in settings as recap:<book>:<chapter>; discard that unreachable
         // cache during migration instead of leaving stale AI text behind.
@@ -906,9 +979,10 @@ impl Store {
     }
 
     pub fn save_progress(&self, book_id: i64, chapter: i64, offset: i64) -> Result<()> {
+        let ts = now();
         self.conn.execute(
-            "UPDATE books SET last_chapter = ?2, last_offset = ?3, last_opened_at = ?4 WHERE id = ?1",
-            params![book_id, chapter, offset, now()],
+            "UPDATE books SET last_chapter = ?2, last_offset = ?3, last_opened_at = ?4, progress_updated_at = ?4 WHERE id = ?1",
+            params![book_id, chapter, offset, ts],
         )?;
         Ok(())
     }
@@ -1063,8 +1137,107 @@ impl Store {
     }
 
     pub fn remove_book(&self, book_id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM books WHERE id = ?1", [book_id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        let has_stats: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM reading_events WHERE book_id = ?1)
+                 OR EXISTS(SELECT 1 FROM reading_windows WHERE book_id = ?1)
+                 OR EXISTS(SELECT 1 FROM completed_chapters WHERE book_id = ?1)
+                 OR EXISTS(SELECT 1 FROM annotations WHERE book_id = ?1)",
+            [book_id],
+            |r| r.get(0),
+        )?;
+        if has_stats {
+            let meta: Option<(
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+                i64,
+                Option<String>,
+            )> = tx
+                .query_row(
+                    "SELECT COALESCE(custom_title, title),
+                            COALESCE(custom_author, author),
+                            genre_tags, total_bytes, chapter_count, last_chapter, content_hash
+                     FROM books WHERE id = ?1",
+                    [book_id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            if let Some((
+                title,
+                author,
+                genre_tags,
+                total_bytes,
+                chapter_count,
+                last_chapter,
+                content_hash,
+            )) = meta
+            {
+                let (finished_chapters, finished_bytes): (i64, i64) = tx.query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(c.end - c.body_start), 0)
+                     FROM completed_chapters d
+                     JOIN chapters c ON c.book_id = d.book_id AND c.idx = d.chapter
+                     WHERE d.book_id = ?1",
+                    [book_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                let annotations: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM annotations WHERE book_id = ?1",
+                    [book_id],
+                    |r| r.get(0),
+                )?;
+                let is_finished = chapter_count > 0 && last_chapter + 1 >= chapter_count;
+                tx.execute(
+                    "INSERT INTO book_stat_archives
+                        (title, author, genre_tags, total_bytes, chapter_count,
+                         finished_chapters, finished_bytes, is_finished, annotations,
+                         content_hash, archived_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        title,
+                        author,
+                        genre_tags,
+                        total_bytes,
+                        chapter_count,
+                        finished_chapters,
+                        finished_bytes,
+                        i64::from(is_finished),
+                        annotations,
+                        content_hash,
+                        now(),
+                    ],
+                )?;
+                let archive_id = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO archived_reading_events
+                        (archive_id, started_at, ended_at, start_offset, end_offset)
+                     SELECT ?2, started_at, ended_at, start_offset, end_offset
+                     FROM reading_events WHERE book_id = ?1",
+                    params![book_id, archive_id],
+                )?;
+                tx.execute(
+                    "INSERT INTO archived_reading_windows
+                        (archive_id, chapter, started_at, secs, chars)
+                     SELECT ?2, chapter, started_at, secs, chars
+                     FROM reading_windows WHERE book_id = ?1",
+                    params![book_id, archive_id],
+                )?;
+            }
+        }
+        tx.execute("DELETE FROM books WHERE id = ?1", [book_id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1104,12 +1277,16 @@ impl Store {
         Ok(by_hash.or(Some(old_index)))
     }
 
-    /// Raw sessions since a cutoff. Day-bucketing happens in the UI, which knows
-    /// the local timezone; unix seconds do not.
+    /// Raw sessions since a cutoff (live shelf books use positive `book_id`;
+    /// archived deleted books use `-archive_id`). Day-bucketing happens in the UI.
     pub fn events_since(&self, since: i64) -> Result<Vec<(i64, i64, i64)>> {
         let mut st = self.conn.prepare(
             "SELECT book_id, started_at, ended_at FROM reading_events
-             WHERE started_at >= ?1 ORDER BY started_at",
+             WHERE started_at >= ?1
+             UNION ALL
+             SELECT -archive_id, started_at, ended_at FROM archived_reading_events
+             WHERE started_at >= ?1
+             ORDER BY started_at",
         )?;
         let rows = st.query_map([since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect()
@@ -1139,7 +1316,11 @@ impl Store {
     pub fn windows_since(&self, since: i64) -> Result<Vec<crate::reading_stats::Window>> {
         let mut st = self.conn.prepare(
             "SELECT book_id, chapter, started_at, secs, chars FROM reading_windows
-             WHERE started_at >= ?1 ORDER BY started_at",
+             WHERE started_at >= ?1
+             UNION ALL
+             SELECT -archive_id, chapter, started_at, secs, chars FROM archived_reading_windows
+             WHERE started_at >= ?1
+             ORDER BY started_at",
         )?;
         let rows = st.query_map([since], |r| {
             Ok(crate::reading_stats::Window {
@@ -1154,28 +1335,50 @@ impl Store {
     }
 
     /// Chapters the reader finished — seen from first line to last, see
-    /// `completed_chapters` — and the bytes of body text in them.
+    /// `completed_chapters` — and the bytes of body text in them (including archived books).
     pub fn finished_chapters(&self) -> Result<(i64, i64)> {
-        self.conn.query_row(
+        let (live_n, live_b): (i64, i64) = self.conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(c.end - c.body_start), 0)
              FROM completed_chapters d
              JOIN chapters c ON c.book_id = d.book_id AND c.idx = d.chapter",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        )?;
+        let (arch_n, arch_b): (i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(SUM(finished_chapters), 0), COALESCE(SUM(finished_bytes), 0)
+             FROM book_stat_archives",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((live_n + arch_n, live_b + arch_b))
     }
 
     pub fn annotation_count(&self) -> Result<i64> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get(0))
+        let live: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get(0))?;
+        let arch: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(annotations), 0) FROM book_stat_archives",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(live + arch)
     }
 
-    /// Total reading time per book, most-read first.
+    /// Total reading time per book (shelf + archived), most-read first.
     pub fn time_per_book(&self) -> Result<Vec<(String, i64)>> {
         let mut st = self.conn.prepare(
-            "SELECT COALESCE(b.custom_title, b.title), SUM(e.ended_at - e.started_at) AS t
-             FROM reading_events e JOIN books b ON b.id = e.book_id
-             GROUP BY e.book_id ORDER BY t DESC",
+            "SELECT title, t FROM (
+                SELECT COALESCE(b.custom_title, b.title) AS title,
+                       SUM(e.ended_at - e.started_at) AS t
+                FROM reading_events e JOIN books b ON b.id = e.book_id
+                GROUP BY e.book_id
+                UNION ALL
+                SELECT a.title AS title,
+                       SUM(e.ended_at - e.started_at) AS t
+                FROM archived_reading_events e JOIN book_stat_archives a ON a.id = e.archive_id
+                GROUP BY e.archive_id
+             ) ORDER BY t DESC",
         )?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect()
@@ -1755,6 +1958,9 @@ impl Store {
     pub fn clear_events(&self) -> Result<()> {
         self.conn.execute("DELETE FROM reading_events", [])?;
         self.conn.execute("DELETE FROM reading_windows", [])?;
+        self.conn.execute("DELETE FROM archived_reading_events", [])?;
+        self.conn.execute("DELETE FROM archived_reading_windows", [])?;
+        self.conn.execute("DELETE FROM book_stat_archives", [])?;
         Ok(())
     }
 
@@ -1881,6 +2087,135 @@ impl Store {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    pub fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+
+    pub fn archived_books(&self) -> Result<Vec<BookStatArchive>> {
+        let mut st = self.conn.prepare(
+            "SELECT id, title, author, genre_tags, total_bytes, chapter_count,
+                    finished_chapters, finished_bytes, is_finished, annotations,
+                    content_hash, archived_at
+             FROM book_stat_archives ORDER BY archived_at DESC",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(BookStatArchive {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                author: r.get(2)?,
+                genre_tags: r.get(3)?,
+                total_bytes: r.get(4)?,
+                chapter_count: r.get(5)?,
+                finished_chapters: r.get(6)?,
+                finished_bytes: r.get(7)?,
+                is_finished: r.get::<_, i64>(8)? != 0,
+                annotations: r.get(9)?,
+                content_hash: r.get(10)?,
+                archived_at: r.get(11)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// All books (shelf + archived) that have recorded reading stats, sorted by
+    /// total reading time descending, so the user can inspect or manually delete
+    /// any single book's reading statistics.
+    pub fn book_stat_entries(&self) -> Result<Vec<BookStatEntry>> {
+        let mut st = self.conn.prepare(
+            "SELECT id, is_archived, title, seconds, chapters_finished, is_finished, archived_at
+             FROM (
+                SELECT b.id AS id,
+                       0 AS is_archived,
+                       COALESCE(b.custom_title, b.title) AS title,
+                       COALESCE((SELECT SUM(e.ended_at - e.started_at) FROM reading_events e WHERE e.book_id = b.id), 0) AS seconds,
+                       (SELECT COUNT(*) FROM completed_chapters c WHERE c.book_id = b.id) AS chapters_finished,
+                       CASE WHEN b.chapter_count > 0 AND b.last_chapter + 1 >= b.chapter_count THEN 1 ELSE 0 END AS is_finished,
+                       NULL AS archived_at
+                FROM books b
+                WHERE EXISTS(SELECT 1 FROM reading_events e WHERE e.book_id = b.id)
+                   OR EXISTS(SELECT 1 FROM reading_windows w WHERE w.book_id = b.id)
+                UNION ALL
+                SELECT a.id AS id,
+                       1 AS is_archived,
+                       a.title AS title,
+                       COALESCE((SELECT SUM(e.ended_at - e.started_at) FROM archived_reading_events e WHERE e.archive_id = a.id), 0) AS seconds,
+                       a.finished_chapters AS chapters_finished,
+                       a.is_finished AS is_finished,
+                       a.archived_at AS archived_at
+                FROM book_stat_archives a
+             )
+             ORDER BY seconds DESC, title ASC",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(BookStatEntry {
+                id: r.get(0)?,
+                is_archived: r.get::<_, i64>(1)? != 0,
+                title: r.get(2)?,
+                seconds: r.get(3)?,
+                chapters_finished: r.get(4)?,
+                is_finished: r.get::<_, i64>(5)? != 0,
+                archived_at: r.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Manually delete reading statistics for a single book.
+    /// For archived books, removes the archive snapshot and its archived events/windows.
+    /// For shelf books, clears only reading_events & reading_windows without touching the book or progress.
+    pub fn delete_book_stats(&self, is_archived: bool, id: i64) -> Result<()> {
+        if is_archived {
+            self.conn
+                .execute("DELETE FROM book_stat_archives WHERE id = ?1", [id])?;
+        } else {
+            self.conn
+                .execute("DELETE FROM reading_events WHERE book_id = ?1", [id])?;
+            self.conn
+                .execute("DELETE FROM reading_windows WHERE book_id = ?1", [id])?;
+        }
+        Ok(())
+    }
+
+    pub fn book_events(&self, book_id: i64) -> Result<Vec<(i64, i64, i64, i64)>> {
+        let mut st = self.conn.prepare(
+            "SELECT started_at, ended_at, start_offset, end_offset
+             FROM reading_events WHERE book_id = ?1 ORDER BY started_at",
+        )?;
+        let rows = st.query_map([book_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
+        rows.collect()
+    }
+
+    pub fn book_windows(&self, book_id: i64) -> Result<Vec<crate::reading_stats::Window>> {
+        let mut st = self.conn.prepare(
+            "SELECT book_id, chapter, started_at, secs, chars
+             FROM reading_windows WHERE book_id = ?1 ORDER BY started_at",
+        )?;
+        let rows = st.query_map([book_id], |r| {
+            Ok(crate::reading_stats::Window {
+                book_id: r.get(0)?,
+                chapter: r.get(1)?,
+                started: r.get(2)?,
+                secs: r.get(3)?,
+                chars: r.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn book_text_cuts_count(&self, book_id: i64) -> Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM text_cuts WHERE book_id = ?1",
+            [book_id],
+            |r| r.get(0),
+        )
     }
 }
 
@@ -2171,9 +2506,11 @@ mod tests {
         assert_eq!(s.windows_since(150).unwrap().len(), 1);
 
         s.remove_book(a).unwrap();
+        // Removing a book archives its reading windows instead of dropping them.
         let left = s.windows_since(0).unwrap();
-        assert_eq!(left.len(), 1);
-        assert_eq!(left[0].book_id, b);
+        assert_eq!(left.len(), 3);
+        assert!(left.iter().any(|w| w.book_id == b));
+        assert_eq!(left.iter().filter(|w| w.book_id < 0).count(), 2);
 
         s.clear_events().unwrap();
         assert!(s.windows_since(0).unwrap().is_empty());
@@ -2437,5 +2774,42 @@ mod tests {
         assert_eq!(s.library().unwrap()[0].id, a);
         s.set_pinned(a, false).unwrap();
         assert_eq!(s.library().unwrap()[0].id, b);
+    }
+
+    #[test]
+    fn removing_book_archives_reading_stats_until_deleted_manually() {
+        let mut s = mem();
+        let id = s
+            .upsert_book(&book("gone.txt"), &[chapter(0, 11), chapter(1, 22)])
+            .unwrap();
+        s.save_progress(id, 1, 120).unwrap();
+        s.mark_chapter_completed(id, 0).unwrap();
+        s.mark_chapter_completed(id, 1).unwrap();
+        s.log_event(id, 1_000, 1_600, 0, 500).unwrap();
+        s.log_window(id, 0, 1_000, 600, 3_600).unwrap();
+
+        // Remove the book from the shelf.
+        s.remove_book(id).unwrap();
+        assert!(s.library().unwrap().is_empty());
+
+        // Reading events, speed windows, finished chapters and per-book time survive.
+        assert_eq!(s.events_since(0).unwrap().len(), 1);
+        assert_eq!(s.windows_since(0).unwrap().len(), 1);
+        assert_eq!(s.finished_chapters().unwrap().0, 2);
+        let per_book = s.time_per_book().unwrap();
+        assert_eq!(per_book.len(), 1);
+        assert_eq!(per_book[0].1, 600);
+
+        let entries = s.book_stat_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].is_archived);
+        assert!(entries[0].is_finished);
+
+        // User explicitly deletes the archived stats entry.
+        s.delete_book_stats(true, entries[0].id).unwrap();
+        assert!(s.events_since(0).unwrap().is_empty());
+        assert!(s.windows_since(0).unwrap().is_empty());
+        assert_eq!(s.finished_chapters().unwrap().0, 0);
+        assert!(s.book_stat_entries().unwrap().is_empty());
     }
 }

@@ -903,7 +903,7 @@ mod engine {
         unsafe { CStr::from_ptr(edge_tts_error()) }.to_string_lossy().into_owned()
     }
 
-    pub fn unload() {
+    pub(super) fn unload() {
         if LOADED.lock().unwrap().take().is_some() {
             unsafe { edge_tts_unload() };
         }
@@ -1058,7 +1058,7 @@ mod light {
 
     /// Lets it go once the sentences under way are done, so it is never in
     /// memory together with the other voice.
-    pub fn unload() {
+    pub(super) fn unload() {
         let Some(l) = LOADED.lock().unwrap().take() else { return };
         let model = l.model;
         while Arc::strong_count(&model) > 1 {
@@ -1249,7 +1249,7 @@ mod light {
         }
     }
 
-    pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+    pub(super) fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
         unsafe { edge_tts_watch() };
         let _busy = InFlight::new();
         let voice = CString::new(voice).map_err(|_| "音色无效".to_string())?;
@@ -1358,11 +1358,11 @@ mod light_dyn {
             p.is_file().then_some(p)
         }
 
-        pub fn available() -> bool {
+        pub(super) fn available() -> bool {
             beside_exe().is_some()
         }
 
-        pub unsafe fn open() -> Result<*mut c_void, String> {
+        pub(super) unsafe fn open() -> Result<*mut c_void, String> {
             if let Some(p) = beside_exe() {
                 let w = wide(p.as_os_str());
                 let h = LoadLibraryW(w.as_ptr());
@@ -1379,7 +1379,7 @@ mod light_dyn {
             }
         }
 
-        pub unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
+        pub(super) unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
             let p = GetProcAddress(h, name.as_ptr());
             if p.is_null() {
                 Err(format!("轻量语音引擎缺少接口 {}", name.to_string_lossy()))
@@ -1393,11 +1393,11 @@ mod light_dyn {
     mod dl {
         use std::ffi::{c_void, CStr};
 
-        pub fn available() -> bool {
+        pub(super) fn available() -> bool {
             crate::android_engine::bundled("libedge_kokoro.so").is_some()
         }
 
-        pub unsafe fn open() -> Result<*mut c_void, String> {
+        pub(super) unsafe fn open() -> Result<*mut c_void, String> {
             let h = libc::dlopen(c"libedge_kokoro.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
             if h.is_null() {
                 let err = libc::dlerror();
@@ -1412,7 +1412,7 @@ mod light_dyn {
             }
         }
 
-        pub unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
+        pub(super) unsafe fn sym(h: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
             let p = libc::dlsym(h, name.as_ptr());
             if p.is_null() {
                 Err(format!("轻量语音引擎缺少接口 {}", name.to_string_lossy()))
@@ -1422,7 +1422,7 @@ mod light_dyn {
         }
     }
 
-    pub fn available() -> bool {
+    pub(super) fn available() -> bool {
         dl::available()
     }
 
@@ -1483,7 +1483,7 @@ mod light_dyn {
         LOADED.lock().unwrap().is_some()
     }
 
-    pub fn unload() {
+    pub(super) fn unload() {
         let Some(l) = LOADED.lock().unwrap().take() else { return };
         let model = l.model;
         while Arc::strong_count(&model) > 1 {
@@ -1558,7 +1558,7 @@ mod light_dyn {
         Ok(pcm)
     }
 
-    pub fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
+    pub(super) fn speak(line: &str, voice: &str) -> Result<Vec<u8>, String> {
         let _busy = InFlight::new();
         let voice = CString::new(voice).map_err(|_| "音色无效".to_string())?;
         match say(line, &voice) {

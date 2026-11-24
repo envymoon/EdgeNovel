@@ -26,6 +26,13 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>隔空翻页用前置相机看你的头和手，画面不保存也不上传。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>局域网三端同步需要访问同一 Wi-Fi 下的其他挚阅设备，数据仅在本地传输不经云端。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>

@@ -89,4 +89,25 @@ class ShelfCategories extends ChangeNotifier {
     _prefs?.setStringList('shelfCategories', _names);
     _prefs?.setString('shelfBookCategories', jsonEncode(_bookCategories));
   }
+
+  /// Export category names for LAN sync (union-merged on the receiving device).
+  List<String> exportSyncNames() => List<String>.from(_names);
+
+  /// Union-merge remote category names without removing any local categories.
+  int mergeSyncNames(List<dynamic> remoteNames) {
+    var added = 0;
+    for (final raw in remoteNames) {
+      if (raw is! String) continue;
+      final name = raw.trim();
+      if (name.isNotEmpty && !_names.contains(name)) {
+        _names.add(name);
+        added++;
+      }
+    }
+    if (added > 0) {
+      _persist();
+      notifyListeners();
+    }
+    return added;
+  }
 }

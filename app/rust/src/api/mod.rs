@@ -6,4 +6,5 @@ pub mod image;
 pub mod simple;
 pub mod source;
 pub mod stats;
+pub mod sync;
 pub mod tts;

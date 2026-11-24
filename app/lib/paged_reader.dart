@@ -292,6 +292,10 @@ class PagedReader extends StatefulWidget {
   /// chapter stays.
   final bool Function()? onBackOffStart;
 
+  /// Paging forward off the very last page of the final chapter (e.g. to open
+  /// the end-of-book completion reading report).
+  final VoidCallback? onForwardOffEnd;
+
   /// 听书: the page follows the sentence being spoken, and shows it.
   final TtsController? tts;
 
@@ -316,6 +320,7 @@ class PagedReader extends StatefulWidget {
     this.compactTapZones = false,
     this.onToggleControls,
     this.onBackOffStart,
+    this.onForwardOffEnd,
     this.tts,
     this.footer,
     this.plateBefore,
@@ -541,7 +546,13 @@ class PagedReaderState extends State<PagedReader>
       // the page catching before it turns. Dragging still slides.
       _ctrl?.jumpToPage(target + _lead);
     } else if (dir > 0) {
-      r.next();
+      final lastChapter =
+          r.info != null && r.chapterIndex >= r.info!.chapters.length - 1;
+      if (lastChapter) {
+        widget.onForwardOffEnd?.call();
+      } else {
+        r.next();
+      }
     } else if (r.chapterIndex > 0) {
       if (!pastPlate && (widget.onBackOffStart?.call() ?? false)) return;
       _landAtEnd = true;

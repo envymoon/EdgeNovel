@@ -2286,18 +2286,22 @@ pub fn index_book(
             let mut rows: Vec<(i64, i64, Vec<u8>)> = Vec::with_capacity(chunks.len());
             for batch in chunks.chunks(EMBED_BATCH) {
                 if CANCEL_INDEX.load(Ordering::SeqCst) {
-                    break;
+                    return Ok(None);
                 }
                 let texts: Vec<String> = batch.iter().map(|c| c.text.clone()).collect();
                 for (c, v) in batch.iter().zip(embed(&texts)?) {
                     rows.push((c.start as i64, c.end as i64, chunk::quantize(&v)));
                 }
             }
-            Ok(rows)
+            if CANCEL_INDEX.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            Ok(Some(rows))
         });
 
         let progress = match result {
-            Ok(rows) => {
+            Ok(None) => break,
+            Ok(Some(rows)) => {
                 consecutive_errors = 0;
                 {
                     let mut guard = book::store().lock().unwrap();

@@ -10,6 +10,7 @@ import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'data_guard.dart';
 import 'dictionary.dart';
+import 'easter_eggs.dart';
 import 'font_manager.dart';
 import 'keep_alive.dart';
 import 'ai_runtime.dart';
@@ -350,6 +351,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
       unawaited(reader.endSession());
       reader.setReadingActive(false);
     } else if (state == AppLifecycleState.resumed && _reading) {
+      EasterEggEngine.instance.onResume();
       reader.resumeSession();
       reader.setReadingActive(true);
     }

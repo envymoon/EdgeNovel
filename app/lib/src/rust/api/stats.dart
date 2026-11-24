@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `chance`, `chars_from_bytes`, `compose`, `dominant_bucket`, `fmt_cpm`, `fmt_dur`, `fmt_wan`, `gather`, `hour_bucket`, `next`, `night_share`, `now`, `pace_cache`, `pct`, `pick`, `some`, `ymd`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Dice`, `Facts`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// One window of reading speed from the reader page. Written raw, idle and
 /// hunting included; `reading_stats` sorts them out when counting.
@@ -30,6 +30,30 @@ Future<void> logReadingWindow({
 Future<ReadingInsights> readingInsights({required PlatformInt64 tzSecs}) =>
     RustLib.instance.api.crateApiStatsReadingInsights(tzSecs: tzSecs);
 
+/// List all books (in shelf and archived) that have reading statistics so the
+/// reader can compare them and optionally delete a single book's stats.
+Future<List<BookStatItem>> listBookStatEntries() =>
+    RustLib.instance.api.crateApiStatsListBookStatEntries();
+
+/// Manually delete a single book's reading statistics (either archived or live).
+Future<void> deleteBookStats({
+  required bool isArchived,
+  required PlatformInt64 id,
+}) => RustLib.instance.api.crateApiStatsDeleteBookStats(
+  isArchived: isArchived,
+  id: id,
+);
+
+/// Compute a single book's completion report from local reading history and
+/// already-cached book metadata. Zero model calls, instant.
+Future<BookFinishReport> bookFinishReport({
+  required PlatformInt64 bookId,
+  required PlatformInt64 tzSecs,
+}) => RustLib.instance.api.crateApiStatsBookFinishReport(
+  bookId: bookId,
+  tzSecs: tzSecs,
+);
+
 /// Does the reader speed up when the story does? Up to three of the books
 /// with the most recorded reading, each split by its own 节奏 quartiles. Slow —
 /// it reads those books from disk — so the page asks for it after the rest.
@@ -47,6 +71,110 @@ Future<String> readerPortrait({
   angle: angle,
   tzSecs: tzSecs,
 );
+
+/// End-of-book reading report shown at the end of the final chapter.
+class BookFinishReport {
+  final PlatformInt64 bookId;
+  final String title;
+  final String? author;
+  final PlatformInt64 totalChars;
+  final PlatformInt64 chapterCount;
+  final PlatformInt64 chaptersCompleted;
+  final PlatformInt64 totalSecs;
+  final PlatformInt64 activeDays;
+  final PlatformInt64 spanDays;
+  final PlatformInt64? firstReadAt;
+  final PlatformInt64? lastReadAt;
+  final PlatformInt64 longestSitting;
+  final PlatformInt64? latestHour;
+  final double? bookCpm;
+  final double? libraryCpm;
+  final PlatformInt64 annotations;
+  final PlatformInt64 bookmarks;
+  final PlatformInt64 textCuts;
+  final String? topChapterTitle;
+  final PlatformInt64 topChapterSecs;
+  final List<String> topCharacters;
+  final String closingLine;
+
+  const BookFinishReport({
+    required this.bookId,
+    required this.title,
+    this.author,
+    required this.totalChars,
+    required this.chapterCount,
+    required this.chaptersCompleted,
+    required this.totalSecs,
+    required this.activeDays,
+    required this.spanDays,
+    this.firstReadAt,
+    this.lastReadAt,
+    required this.longestSitting,
+    this.latestHour,
+    this.bookCpm,
+    this.libraryCpm,
+    required this.annotations,
+    required this.bookmarks,
+    required this.textCuts,
+    this.topChapterTitle,
+    required this.topChapterSecs,
+    required this.topCharacters,
+    required this.closingLine,
+  });
+
+  @override
+  int get hashCode =>
+      bookId.hashCode ^
+      title.hashCode ^
+      author.hashCode ^
+      totalChars.hashCode ^
+      chapterCount.hashCode ^
+      chaptersCompleted.hashCode ^
+      totalSecs.hashCode ^
+      activeDays.hashCode ^
+      spanDays.hashCode ^
+      firstReadAt.hashCode ^
+      lastReadAt.hashCode ^
+      longestSitting.hashCode ^
+      latestHour.hashCode ^
+      bookCpm.hashCode ^
+      libraryCpm.hashCode ^
+      annotations.hashCode ^
+      bookmarks.hashCode ^
+      textCuts.hashCode ^
+      topChapterTitle.hashCode ^
+      topChapterSecs.hashCode ^
+      topCharacters.hashCode ^
+      closingLine.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BookFinishReport &&
+          runtimeType == other.runtimeType &&
+          bookId == other.bookId &&
+          title == other.title &&
+          author == other.author &&
+          totalChars == other.totalChars &&
+          chapterCount == other.chapterCount &&
+          chaptersCompleted == other.chaptersCompleted &&
+          totalSecs == other.totalSecs &&
+          activeDays == other.activeDays &&
+          spanDays == other.spanDays &&
+          firstReadAt == other.firstReadAt &&
+          lastReadAt == other.lastReadAt &&
+          longestSitting == other.longestSitting &&
+          latestHour == other.latestHour &&
+          bookCpm == other.bookCpm &&
+          libraryCpm == other.libraryCpm &&
+          annotations == other.annotations &&
+          bookmarks == other.bookmarks &&
+          textCuts == other.textCuts &&
+          topChapterTitle == other.topChapterTitle &&
+          topChapterSecs == other.topChapterSecs &&
+          topCharacters == other.topCharacters &&
+          closingLine == other.closingLine;
+}
 
 class BookSpeed {
   final String title;
@@ -66,6 +194,50 @@ class BookSpeed {
           runtimeType == other.runtimeType &&
           title == other.title &&
           cpm == other.cpm;
+}
+
+/// One book's stats row in 阅读数据, including books removed from the shelf.
+class BookStatItem {
+  final PlatformInt64 id;
+  final bool isArchived;
+  final String title;
+  final PlatformInt64 seconds;
+  final PlatformInt64 chaptersFinished;
+  final bool isFinished;
+  final PlatformInt64? archivedAt;
+
+  const BookStatItem({
+    required this.id,
+    required this.isArchived,
+    required this.title,
+    required this.seconds,
+    required this.chaptersFinished,
+    required this.isFinished,
+    this.archivedAt,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      isArchived.hashCode ^
+      title.hashCode ^
+      seconds.hashCode ^
+      chaptersFinished.hashCode ^
+      isFinished.hashCode ^
+      archivedAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BookStatItem &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          isArchived == other.isArchived &&
+          title == other.title &&
+          seconds == other.seconds &&
+          chaptersFinished == other.chaptersFinished &&
+          isFinished == other.isFinished &&
+          archivedAt == other.archivedAt;
 }
 
 class DayRecord {

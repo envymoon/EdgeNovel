@@ -11,6 +11,7 @@ import 'api/image.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
 import 'api/stats.dart';
+import 'api/sync.dart';
 import 'api/tts.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -102,10 +103,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookAnnotation dco_decode_book_annotation(dynamic raw);
 
   @protected
+  BookFinishReport dco_decode_book_finish_report(dynamic raw);
+
+  @protected
   BookInfo dco_decode_book_info(dynamic raw);
 
   @protected
   BookSpeed dco_decode_book_speed(dynamic raw);
+
+  @protected
+  BookStatItem dco_decode_book_stat_item(dynamic raw);
 
   @protected
   BookTime dco_decode_book_time(dynamic raw);
@@ -234,6 +241,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<BookAnnotation> dco_decode_list_book_annotation(dynamic raw);
 
   @protected
+  List<BookStatItem> dco_decode_list_book_stat_item(dynamic raw);
+
+  @protected
   List<BookTime> dco_decode_list_book_time(dynamic raw);
 
   @protected
@@ -326,6 +336,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceItem> dco_decode_list_source_item(dynamic raw);
+
+  @protected
+  List<SyncBookRef> dco_decode_list_sync_book_ref(dynamic raw);
+
+  @protected
+  List<SyncProgressConflict> dco_decode_list_sync_progress_conflict(
+    dynamic raw,
+  );
 
   @protected
   List<TextCut> dco_decode_list_text_cut(dynamic raw);
@@ -434,6 +452,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SourceTest dco_decode_source_test(dynamic raw);
+
+  @protected
+  SyncApplyResult dco_decode_sync_apply_result(dynamic raw);
+
+  @protected
+  SyncBookRef dco_decode_sync_book_ref(dynamic raw);
+
+  @protected
+  SyncMergePlan dco_decode_sync_merge_plan(dynamic raw);
+
+  @protected
+  SyncProgressConflict dco_decode_sync_progress_conflict(dynamic raw);
 
   @protected
   TestFeed dco_decode_test_feed(dynamic raw);
@@ -547,10 +577,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookAnnotation sse_decode_book_annotation(SseDeserializer deserializer);
 
   @protected
+  BookFinishReport sse_decode_book_finish_report(SseDeserializer deserializer);
+
+  @protected
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
   BookSpeed sse_decode_book_speed(SseDeserializer deserializer);
+
+  @protected
+  BookStatItem sse_decode_book_stat_item(SseDeserializer deserializer);
 
   @protected
   BookTime sse_decode_book_time(SseDeserializer deserializer);
@@ -681,6 +717,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<BookStatItem> sse_decode_list_book_stat_item(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<BookTime> sse_decode_list_book_time(SseDeserializer deserializer);
 
   @protected
@@ -789,6 +830,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceItem> sse_decode_list_source_item(SseDeserializer deserializer);
+
+  @protected
+  List<SyncBookRef> sse_decode_list_sync_book_ref(SseDeserializer deserializer);
+
+  @protected
+  List<SyncProgressConflict> sse_decode_list_sync_progress_conflict(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<TextCut> sse_decode_list_text_cut(SseDeserializer deserializer);
@@ -909,6 +958,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SourceTest sse_decode_source_test(SseDeserializer deserializer);
+
+  @protected
+  SyncApplyResult sse_decode_sync_apply_result(SseDeserializer deserializer);
+
+  @protected
+  SyncBookRef sse_decode_sync_book_ref(SseDeserializer deserializer);
+
+  @protected
+  SyncMergePlan sse_decode_sync_merge_plan(SseDeserializer deserializer);
+
+  @protected
+  SyncProgressConflict sse_decode_sync_progress_conflict(
+    SseDeserializer deserializer,
+  );
 
   @protected
   TestFeed sse_decode_test_feed(SseDeserializer deserializer);
@@ -1043,10 +1106,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_book_finish_report(
+    BookFinishReport self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_book_speed(BookSpeed self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_book_stat_item(BookStatItem self, SseSerializer serializer);
 
   @protected
   void sse_encode_book_time(BookTime self, SseSerializer serializer);
@@ -1198,6 +1270,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_book_annotation(
     List<BookAnnotation> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_book_stat_item(
+    List<BookStatItem> self,
     SseSerializer serializer,
   );
 
@@ -1373,6 +1451,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sync_book_ref(
+    List<SyncBookRef> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_progress_conflict(
+    List<SyncProgressConflict> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_text_cut(List<TextCut> self, SseSerializer serializer);
 
   @protected
@@ -1512,6 +1602,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_source_test(SourceTest self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_apply_result(
+    SyncApplyResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_book_ref(SyncBookRef self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_merge_plan(SyncMergePlan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_progress_conflict(
+    SyncProgressConflict self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_test_feed(TestFeed self, SseSerializer serializer);

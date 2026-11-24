@@ -112,10 +112,10 @@ void main() {
     expect(find.text('???'), findsWidgets);
     expect(find.text('记忆回溯'), findsNothing);
 
-    // Trigger rewind_memory (5 backward turns within 35s).
+    // Trigger rewind_memory (12 backward turns within 45s).
     final engine = EasterEggEngine.instance;
     engine.onBookOpen(bookId: 1, bookTitle: '诡秘', enabled: true);
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 12; i++) {
       engine.onPageTurn(
         backward: true,
         visibleText: '',
@@ -129,5 +129,36 @@ void main() {
     expect(find.text('已发现 1 / $total'), findsOneWidget);
     expect(find.text('记忆回溯'), findsOneWidget);
     expect(engine.activeBanner.value?.def.id, 'rewind_memory');
+
+    // Already-unlocked egg must never re-trigger.
+    engine.dismissBanner();
+    for (var i = 0; i < 12; i++) {
+      engine.onPageTurn(
+        backward: true,
+        visibleText: '',
+        baselineCharsPerMin: 500,
+        bookTitle: '诡秘',
+        enabled: true,
+      );
+    }
+    expect(engine.activeBanner.value, isNull);
+    expect(engine.unlocked['rewind_memory']?.count, 1);
+
+    // While TTS is playing, page turns must not trigger manual pace/dwell eggs.
+    engine.resetForTest();
+    engine.onBookOpen(bookId: 1, bookTitle: '诡秘', enabled: true);
+    engine.onTtsState(playing: true, bookTitle: '诡秘', enabled: true);
+    for (var i = 0; i < 15; i++) {
+      engine.onPageTurn(
+        backward: true,
+        visibleText: '',
+        baselineCharsPerMin: 500,
+        bookTitle: '诡秘',
+        enabled: true,
+        ttsPlaying: true,
+      );
+    }
+    expect(engine.activeBanner.value, isNull);
+    expect(engine.unlockedCount, 0);
   });
 }

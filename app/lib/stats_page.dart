@@ -29,7 +29,7 @@ const _weeks = 26;
 class _Stats {
   /// Seconds read per local day, keyed by days-since-epoch of the local date.
   final Map<int, int> byDay;
-  final List<BookTime> byBook;
+  final List<BookStatItem> byBook;
   final ReadingInsights insights;
 
   _Stats(this.byDay, this.byBook, this.insights);
@@ -111,7 +111,7 @@ class _StatsPageState extends State<StatsPage> {
       final events = await listEvents(
         since: since.millisecondsSinceEpoch ~/ 1000,
       );
-      final byBook = await timePerBook();
+      final byBook = await listBookStatEntries();
       final insights = await readingInsights(tzSecs: _tzSecs);
 
       final byDay = <int, int>{};
@@ -268,9 +268,21 @@ class _StatsPageState extends State<StatsPage> {
             if (i.annotations > 0) _row(t, '标注', '${i.annotations} 条'),
             const SizedBox(height: 28),
             if (s.byBook.isNotEmpty) ...[
-              _label(t, '各书时长'),
-              const SizedBox(height: 4),
-              for (final b in s.byBook.take(10)) _bookRow(b, s.byBook.first, t),
+              Row(
+                children: [
+                  _label(t, '各书时长'),
+                  const Spacer(),
+                  Text(
+                    '删书后仍保留统计，可按需手动清除',
+                    style: TextStyle(
+                      color: t.muted.withValues(alpha: 0.75),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              for (final b in s.byBook) _bookRow(b, s.byBook.first, t),
             ],
           ],
         ),
@@ -449,8 +461,54 @@ class _StatsPageState extends State<StatsPage> {
     ),
   );
 
-  Widget _bookRow(BookTime b, BookTime top, ReadingTheme t) {
-    final share = top.seconds > 0 ? b.seconds / top.seconds : 0.0;
+  Future<void> _confirmDeleteBookStats(
+    BookStatItem b,
+    ReadingTheme t,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: t.raisedSurface,
+        title: Text(
+          '删除《${b.title}》的阅读统计？',
+          style: TextStyle(color: t.text, fontSize: 16),
+        ),
+        content: Text(
+          b.isArchived
+              ? '这本书已从书架移除。删除后，它的阅读时长、阅读速度与完本记录将彻底清除，无法恢复。'
+              : '仅清除这本书的阅读时长与阅读速度记录，不会删除书架上的书籍文件与阅读进度。',
+          style: TextStyle(color: t.muted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消', style: TextStyle(color: t.muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除', style: TextStyle(color: Color(0xFFB3574D))),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await deleteBookStats(isArchived: b.isArchived, id: b.id);
+      await _load();
+      _genPortrait();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除失败：$e')),
+        );
+      }
+    }
+  }
+
+  Widget _bookRow(BookStatItem b, BookStatItem top, ReadingTheme t) {
+    final topSecs = top.seconds.toInt();
+    final secs = b.seconds.toInt();
+    final share = topSecs > 0 ? secs / topSecs : 0.0;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -459,32 +517,67 @@ class _StatsPageState extends State<StatsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  b.title,
-                  translate: false,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: t.text, fontSize: 13),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        b.title,
+                        translate: false,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: t.text, fontSize: 13),
+                      ),
+                    ),
+                    if (b.isArchived) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: t.muted.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '已移除',
+                          style: TextStyle(color: t.muted, fontSize: 10),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 4),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
-                    value: share,
+                    value: share.clamp(0.0, 1.0),
                     minHeight: 4,
                     backgroundColor: t.muted.withValues(alpha: 0.15),
                     valueColor: AlwaysStoppedAnimation(
-                      t.text.withValues(alpha: 0.55),
+                      t.text.withValues(alpha: b.isArchived ? 0.35 : 0.55),
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Text(
-            _fmtDuration(b.seconds),
+            _fmtDuration(secs),
             style: TextStyle(color: t.muted, fontSize: 12),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: '删除此书统计',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+            icon: Icon(
+              Icons.delete_outline,
+              size: 16,
+              color: t.muted.withValues(alpha: 0.7),
+            ),
+            onPressed: () => _confirmDeleteBookStats(b, t),
           ),
         ],
       ),

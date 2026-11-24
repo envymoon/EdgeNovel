@@ -45,6 +45,7 @@ class _AiQueuedTask {
     this.names = const [],
     this.paused = false,
     this.failed = false,
+    this.forced = false,
   });
 
   final _AiTaskKind kind;
@@ -61,6 +62,7 @@ class _AiQueuedTask {
   List<String> names;
   bool paused;
   bool failed;
+  bool forced;
 
   String get label => switch (kind) {
     _AiTaskKind.enrich => '章节分析',
@@ -88,6 +90,7 @@ class _AiQueuedTask {
     if (names.isNotEmpty) 'names': names,
     'paused': paused,
     'failed': failed,
+    if (forced) 'forced': true,
   };
 
   static _AiQueuedTask? fromJson(Object? value) {
@@ -122,6 +125,7 @@ class _AiQueuedTask {
       ],
       paused: value['paused'] == true,
       failed: value['failed'] == true,
+      forced: value['forced'] == true,
     );
   }
 }
@@ -289,6 +293,7 @@ class ReaderState extends ChangeNotifier {
   Timer? _aiMonitor;
   Timer? _engineIdleTimer;
   bool _schedulerBusy = false;
+  bool _reschedulePending = false;
   bool _readingActive = false;
   bool _aiExecutionAllowed = true;
   bool _pauseRequested = false;
@@ -852,6 +857,7 @@ class ReaderState extends ChangeNotifier {
     );
     if (task == null) return;
     task.paused = true;
+    task.forced = false;
     if (_activeAiTask == task) {
       await _requestActivePause('已手动暂停');
     } else {
@@ -867,6 +873,7 @@ class ReaderState extends ChangeNotifier {
     if (task == null || _activeAiTask == task) return;
     task.paused = false;
     task.failed = false;
+    task.forced = true;
     _aiQueue.remove(task);
     _aiQueue.insert(0, task);
     _forceNext = true;
@@ -921,6 +928,7 @@ class ReaderState extends ChangeNotifier {
   Future<void> pauseAllAi() async {
     for (final task in _aiQueue) {
       task.paused = true;
+      task.forced = false;
     }
     if (_activeAiTask != null) {
       await _requestActivePause('已手动暂停');
@@ -977,17 +985,23 @@ class ReaderState extends ChangeNotifier {
   }
 
   Future<void> _scheduleAi() async {
-    if (_schedulerBusy) return;
+    if (_schedulerBusy) {
+      _reschedulePending = true;
+      return;
+    }
     _schedulerBusy = true;
     try {
       if (!_aiExecutionAllowed) {
         aiWaitingReason = '等待系统允许后台运行';
         if (_activeAiTask != null && !_pauseRequested) {
+          if (AppPlatformSupport.hasBundledAiEngine) {
+            _restartEngineAfterPause = true;
+          }
           await _requestActivePause(aiWaitingReason!);
-        }
-        if (AppPlatformSupport.hasBundledAiEngine && !_aiExecutionAllowed) {
-          // Release native model memory as well as pausing the shared queue.
-          // In-flight inference is retried from the last completed chapter.
+        } else if (AppPlatformSupport.hasBundledAiEngine &&
+            !_aiExecutionAllowed &&
+            _activeAiTask == null) {
+          // Release native model memory once no task is in flight.
           await stopAi();
         }
         notifyListeners();
@@ -1012,7 +1026,7 @@ class ReaderState extends ChangeNotifier {
         final reason = aiRuntime.waitingReason(
           state,
           reading: _readingActive,
-          forceNow: _activeForced,
+          forceNow: _activeForced || active.forced,
         );
         if (reason != null && !_pauseRequested) {
           await _requestActivePause(reason);
@@ -1027,7 +1041,7 @@ class ReaderState extends ChangeNotifier {
       // Nothing to run is the state of an idle app all day: this tick comes
       // every ten seconds, and telling the shelf about it rebuilt every card.
       if (next == null) return;
-      final force = _forceNext;
+      final force = _forceNext || next.forced;
       final reason = aiRuntime.waitingReason(
         state,
         reading: _readingActive,
@@ -1047,6 +1061,10 @@ class ReaderState extends ChangeNotifier {
       notifyListeners();
     } finally {
       _schedulerBusy = false;
+      if (_reschedulePending) {
+        _reschedulePending = false;
+        unawaited(_scheduleAi());
+      }
     }
   }
 

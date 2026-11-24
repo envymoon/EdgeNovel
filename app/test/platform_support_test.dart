@@ -102,7 +102,7 @@ void main() {
     const desktop = AppExecutionPolicy(mobile: false);
     expect(mobile.aiAllowedIn(AppLifecycleState.resumed), isTrue);
     expect(mobile.aiAllowedIn(AppLifecycleState.paused), isFalse);
-    expect(mobile.aiAllowedIn(AppLifecycleState.inactive), isFalse);
+    expect(mobile.aiAllowedIn(AppLifecycleState.inactive), isTrue);
     expect(desktop.aiAllowedIn(AppLifecycleState.paused), isTrue);
   });
 }

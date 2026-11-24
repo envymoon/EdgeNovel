@@ -47,17 +47,17 @@ class ManagedModelPackage {
 }
 
 const chatModelPackage = ManagedModelPackage(
-  id: 'qwen3-0.6b-q8-official',
-  version: '2025.04-q8',
-  displayName: 'Qwen3 0.6B Q8',
+  id: 'qwen3-0.6b-q8-zh-pruned',
+  version: '2026.11-q8-zh',
+  displayName: 'Qwen3 0.6B Q8 中文精简版',
   role: ManagedModelRole.chat,
-  sourceFileName: 'Qwen3-0.6B-Q8_0.gguf',
+  sourceFileName: 'Qwen3-0.6B-Q8_0-zh.gguf',
   urls: [
-    'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf',
-    'https://hf-mirror.com/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf',
+    'https://huggingface.co/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh.gguf',
+    'https://hf-mirror.com/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh.gguf',
   ],
-  sha256: '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
-  minimumBytes: 600 * 1024 * 1024,
+  sha256: 'fff16c9a40d75362d083acffcb9e2741f557a3d115777cd479668a6a357ede8b',
+  minimumBytes: 480 * 1024 * 1024,
 );
 
 const embeddingModelPackage = ManagedModelPackage(

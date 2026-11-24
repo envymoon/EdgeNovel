@@ -23,6 +23,8 @@ pub mod store;
 pub mod tics;
 pub mod zh_g2p;
 
+pub use rusqlite;
+
 /// Full-width ideographic space. Two of them are the canonical Chinese
 /// paragraph indent, and their presence is the strongest structural signal
 /// we have: indented line = body text, flush line = structure.

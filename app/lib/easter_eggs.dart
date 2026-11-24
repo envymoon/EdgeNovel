@@ -71,39 +71,32 @@ class EasterEggEvent {
 
 /// Local-only, surprise reading easter egg registry & trigger engine.
 ///
-/// Each individual egg has a deliberately high bar so it feels earned and
-/// unexpected, while a broad catalog (28 eggs across time, pace, habits,
-/// text moments, audio, and rare coincidences) makes organic encounters more
-/// rewarding over time.
-/// - Global cooldown: at least 25 minutes between popups (max 2 per session).
-/// - First unlock fires once its threshold is met; repeat triggers only fire
-///   with low probability (15%) after cooldown.
+/// - 40 distinct, high-threshold, low-frequency eggs across habits, pacing,
+///   text moments, milestones, reader tools, and rare coincidences.
+/// - Every egg unlocks at most once; already-unlocked eggs never re-trigger.
+/// - No artificial global cooldown: rarity comes naturally from high thresholds.
 /// - Controlled by a single master toggle in settings.
 class EasterEggEngine extends ChangeNotifier {
   static final instance = EasterEggEngine._();
   EasterEggEngine._();
 
   static const _prefsKey = 'easterEggsUnlocked';
-  static const _repeatCooldownPerEgg = Duration(minutes: 20);
-  static const _repeatChance = 0.22;
+  static const _statsKey = 'easterEggStats';
 
   static const List<EasterEggDef> catalog = [
-    // 时间与作息
-    EasterEggDef(id: 'night_owl', title: '深夜修仙者', icon: Icons.nights_stay_outlined),
+    // 作息与时段
     EasterEggDef(id: 'night_marathon', title: '不眠夜', icon: Icons.bedtime_outlined),
+    EasterEggDef(id: 'dawn_survivor', title: '破晓战神', icon: Icons.wb_sunny_outlined),
     EasterEggDef(id: 'early_bird', title: '晨读卷王', icon: Icons.wb_twilight_outlined),
     EasterEggDef(id: 'midnight_cross', title: '跨夜人', icon: Icons.dark_mode_outlined),
-    EasterEggDef(id: 'lunch_escape', title: '午休摸鱼王', icon: Icons.lunch_dining_outlined),
     EasterEggDef(id: 'weekend_binge', title: '周末废寝忘食', icon: Icons.weekend_outlined),
-    EasterEggDef(id: 'friday_night', title: '周五夜解放', icon: Icons.celebration_outlined),
-    EasterEggDef(id: 'commute_reader', title: '通勤摸鱼人', icon: Icons.directions_transit_outlined),
-    EasterEggDef(id: 'sunset_read', title: '黄昏漫读', icon: Icons.wb_sunny_outlined),
-    // 沉浸与时长
-    EasterEggDef(id: 'time_vanish', title: '时间消失术', icon: Icons.hourglass_bottom_outlined),
+    // 沉浸与里程碑
     EasterEggDef(id: 'iron_eyes', title: '铁打的眼眶', icon: Icons.visibility_outlined),
     EasterEggDef(id: 'marathon_pages', title: '翻页永动机', icon: Icons.auto_stories_outlined),
-    EasterEggDef(id: 'five_chapters', title: '停不下来', icon: Icons.fast_forward_outlined),
     EasterEggDef(id: 'ten_chapters', title: '十连抽', icon: Icons.layers_outlined),
+    EasterEggDef(id: 'million_words', title: '字海百万', icon: Icons.menu_book_outlined),
+    EasterEggDef(id: 'tome_conqueror', title: '巨著征服者', icon: Icons.castle_outlined),
+    EasterEggDef(id: 'loyal_reader', title: '专一党', icon: Icons.favorite_outline),
     // 阅读节奏与习惯
     EasterEggDef(id: 'speed_demon', title: '匆忙的人', icon: Icons.bolt_outlined),
     EasterEggDef(id: 'turtle_savor', title: '逐字品鉴家', icon: Icons.coffee_outlined),
@@ -111,28 +104,31 @@ class EasterEggEngine extends ChangeNotifier {
     EasterEggDef(id: 'rewind_memory', title: '记忆回溯', icon: Icons.history_outlined),
     EasterEggDef(id: 'big_leap', title: '时空跳跃', icon: Icons.rocket_launch_outlined),
     EasterEggDef(id: 'chapter_bounce', title: '反复横跳', icon: Icons.swap_horiz_outlined),
-    // 剧情与文本彩蛋
+    EasterEggDef(id: 'archaeologist', title: '考古学家', icon: Icons.travel_explore_outlined),
+    // 剧情与文本
     EasterEggDef(id: 'shy_moment', title: '羞羞', icon: Icons.favorite_border),
     EasterEggDef(id: 'tears_moment', title: '破防瞬间', icon: Icons.water_drop_outlined),
     EasterEggDef(id: 'tic_bingo', title: '文风雷达', icon: Icons.radar_outlined),
     EasterEggDef(id: 'high_energy', title: '肾上腺素', icon: Icons.local_fire_department_outlined),
-    EasterEggDef(id: 'calm_harbor', title: '岁月静好', icon: Icons.spa_outlined),
+    EasterEggDef(id: 'mood_coaster', title: '情绪过山车', icon: Icons.show_chart_outlined),
     EasterEggDef(id: 'cliffhanger_victim', title: '断章受害者', icon: Icons.anchor_outlined),
-    EasterEggDef(id: 'battle_frenzy', title: '燃起来了', icon: Icons.whatshot_outlined),
     EasterEggDef(id: 'mystery_chill', title: '脊背发凉', icon: Icons.visibility_off_outlined),
     EasterEggDef(id: 'laugh_out_loud', title: '嘴角失守', icon: Icons.sentiment_very_satisfied_outlined),
-    EasterEggDef(id: 'dialogue_storm', title: '嘴炮现场', icon: Icons.forum_outlined),
-    // 探索与交互
+    // 探索与工具
     EasterEggDef(id: 'book_hopper', title: '书荒巡逻兵', icon: Icons.explore_outlined),
+    EasterEggDef(id: 'digital_hamster', title: '电子仓鼠', icon: Icons.inventory_2_outlined),
+    EasterEggDef(id: 'long_reunion', title: '久别重逢', icon: Icons.handshake_outlined),
     EasterEggDef(id: 'halfway_mark', title: '过半里程碑', icon: Icons.flag_outlined),
     EasterEggDef(id: 'book_finisher', title: '通关撒花', icon: Icons.emoji_events_outlined),
     EasterEggDef(id: 'night_audio', title: '枕边听书', icon: Icons.headphones_outlined),
-    EasterEggDef(id: 'day_audio', title: '白日听书', icon: Icons.record_voice_over_outlined),
-    EasterEggDef(id: 'deep_reader', title: '入戏太深', icon: Icons.menu_book_outlined),
+    EasterEggDef(id: 'clean_freak', title: '文字洁癖', icon: Icons.cleaning_services_outlined),
+    EasterEggDef(id: 'bug_hunter', title: '捉虫大师', icon: Icons.pest_control_outlined),
+    EasterEggDef(id: 'word_collector', title: '词海拾贝', icon: Icons.translate_outlined),
     // 稀有偶遇
-    EasterEggDef(id: 'exact_minute', title: '整点报时员', icon: Icons.schedule_outlined),
+    EasterEggDef(id: 'insomnia_404', title: '404 失眠者', icon: Icons.nights_stay_outlined),
+    EasterEggDef(id: 'new_year_keeper', title: '岁末守书人', icon: Icons.celebration_outlined),
     EasterEggDef(id: 'lucky_time', title: '叠字时刻', icon: Icons.auto_awesome_outlined),
-    EasterEggDef(id: 'hundred_club', title: '百章俱乐部', icon: Icons.military_tech_outlined),
+    EasterEggDef(id: 'thousand_club', title: '千章俱乐部', icon: Icons.military_tech_outlined),
     EasterEggDef(id: 'palindrome_ch', title: '对称强迫症', icon: Icons.filter_vintage_outlined),
   ];
 
@@ -150,12 +146,6 @@ class EasterEggEngine extends ChangeNotifier {
   static const _tearWords = [
     '眼泪', '泪水', '哽咽', '泣不成声', '诀别', '永别', '牺牲', '闭上眼',
     '泪流满面', '嚎啕大哭', '墓碑', '遗言', '再也回不来', '生离死别',
-  ];
-
-  /// High-action battle words for `battle_frenzy`.
-  static const _battleWords = [
-    '剑气', '轰鸣', '血战', '暴喝', '杀意', '刀光', '震碎', '决一死战',
-    '横扫', '剑芒', '炸裂', '一剑斩', '鲜血飞溅', '气息暴涨',
   ];
 
   /// Suspense / horror words for `mystery_chill`.
@@ -177,16 +167,20 @@ class EasterEggEngine extends ChangeNotifier {
     '就在这时', '心中暗道', '脸色大变', '点了点头', '摇了摇头',
   ];
 
-  static const _palindromeChapters = {
-    111, 222, 333, 444, 555, 666, 777, 888, 999, 1001, 1111, 1221, 1331,
-  };
+  static const _palindromeChapters = {666, 888, 999, 1111, 1221, 1331, 2222};
+  static const _thousandChapters = {1000, 2000, 3000};
 
-  static const _hundredChapters = {100, 200, 300, 500, 800, 1000, 1500, 2000};
-
-  final math.Random _rng = math.Random();
   Map<String, EasterEggRecord> _unlocked = {};
   bool _loaded = false;
-  final Map<String, DateTime> _lastTriggeredPerEgg = {};
+  bool _ttsPlaying = false;
+
+  // Persisted cumulative stats for long-term eggs.
+  int _totalReadChars = 0;
+  int _totalAdsCleaned = 0;
+  int _totalManualAds = 0;
+  int? _loyalBookId;
+  final List<String> _loyalDays = [];
+  final Map<String, int> _bookLastOpenedMs = {};
 
   // Cross-book hop tracker (bookId -> timestamp).
   final List<(int, DateTime)> _recentBooks = [];
@@ -202,11 +196,12 @@ class EasterEggEngine extends ChangeNotifier {
   final List<DateTime> _backTurns = [];
   final List<DateTime> _chapterJumps = [];
   int _consecutiveHighPace = 0;
-  int _consecutiveCalmPace = 0;
+  final List<double> _recentPaces = [];
   int? _lastChapter;
   DateTime? _nightTtsStart;
-  DateTime? _dayTtsStart;
-  int _deepPonderCount = 0;
+  int _bookTotalChars = 0;
+  bool _reunionPending = false;
+  int _sessionDictLookups = 0;
 
   /// Latest banner to show; listeners (reader page) display and clear it.
   final ValueNotifier<EasterEggEvent?> activeBanner = ValueNotifier(null);
@@ -228,6 +223,28 @@ class EasterEggEngine extends ChangeNotifier {
               e.key: EasterEggRecord.fromJson(e.value as Map<String, dynamic>),
         };
       }
+      final rawStats = prefs.getString(_statsKey);
+      if (rawStats != null && rawStats.isNotEmpty) {
+        final m = jsonDecode(rawStats) as Map<String, dynamic>;
+        _totalReadChars = (m['totalReadChars'] as num?)?.toInt() ?? 0;
+        _totalAdsCleaned = (m['totalAdsCleaned'] as num?)?.toInt() ?? 0;
+        _totalManualAds = (m['totalManualAds'] as num?)?.toInt() ?? 0;
+        _loyalBookId = (m['loyalBookId'] as num?)?.toInt();
+        _loyalDays
+          ..clear()
+          ..addAll(
+            (m['loyalDays'] as List?)?.whereType<String>() ?? const [],
+          );
+        final opened = m['bookLastOpenedMs'];
+        if (opened is Map) {
+          _bookLastOpenedMs
+            ..clear()
+            ..addAll({
+              for (final e in opened.entries)
+                if (e.value is num) '${e.key}': (e.value as num).toInt(),
+            });
+        }
+      }
     } catch (_) {}
     notifyListeners();
   }
@@ -242,11 +259,123 @@ class EasterEggEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> _saveStats() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _statsKey,
+        jsonEncode({
+          'totalReadChars': _totalReadChars,
+          'totalAdsCleaned': _totalAdsCleaned,
+          'totalManualAds': _totalManualAds,
+          'loyalBookId': _loyalBookId,
+          'loyalDays': _loyalDays,
+          'bookLastOpenedMs': _bookLastOpenedMs,
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /// Export unlocked easter eggs and cumulative counters for LAN sync.
+  Map<String, dynamic> exportSyncData() => {
+    'unlocked': {
+      for (final e in _unlocked.entries) e.key: e.value.toJson(),
+    },
+    'stats': {
+      'totalReadChars': _totalReadChars,
+      'totalAdsCleaned': _totalAdsCleaned,
+      'totalManualAds': _totalManualAds,
+    },
+  };
+
+  /// CRDT union merge of remote easter eggs: keeps all unlocked eggs (taking
+  /// the earlier unlock timestamp if unlocked on both devices) and takes max
+  /// on cumulative counters. Never drops any locally unlocked egg.
+  Future<int> mergeSyncData(Map<String, dynamic> remote) async {
+    await ensureLoaded();
+    var added = 0;
+    final rawUnlocked = remote['unlocked'];
+    if (rawUnlocked is Map) {
+      for (final entry in rawUnlocked.entries) {
+        if (entry.value is! Map) continue;
+        try {
+          final rec = EasterEggRecord.fromJson(
+            Map<String, dynamic>.from(entry.value as Map),
+          );
+          final existing = _unlocked[rec.id];
+          if (existing == null) {
+            _unlocked[rec.id] = rec;
+            added++;
+          } else if (rec.unlockedAtMs > 0 &&
+              (existing.unlockedAtMs == 0 ||
+                  rec.unlockedAtMs < existing.unlockedAtMs)) {
+            _unlocked[rec.id] = EasterEggRecord(
+              id: existing.id,
+              unlockedAtMs: rec.unlockedAtMs,
+              count: math.max(existing.count, rec.count),
+              lastDetail: existing.lastDetail.isNotEmpty
+                  ? existing.lastDetail
+                  : rec.lastDetail,
+              bookTitle: existing.bookTitle.isNotEmpty
+                  ? existing.bookTitle
+                  : rec.bookTitle,
+            );
+          }
+        } catch (_) {}
+      }
+    }
+    final stats = remote['stats'];
+    if (stats is Map) {
+      _totalReadChars = math.max(
+        _totalReadChars,
+        (stats['totalReadChars'] as num?)?.toInt() ?? 0,
+      );
+      _totalAdsCleaned = math.max(
+        _totalAdsCleaned,
+        (stats['totalAdsCleaned'] as num?)?.toInt() ?? 0,
+      );
+      _totalManualAds = math.max(
+        _totalManualAds,
+        (stats['totalManualAds'] as num?)?.toInt() ?? 0,
+      );
+    }
+    await _save();
+    await _saveStats();
+    notifyListeners();
+    return added;
+  }
+
+  static String _dayKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Called when the bookshelf loads so `digital_hamster` can be evaluated.
+  void onShelfLoaded({
+    required List<({int chapters, int lastChapter})> books,
+    required bool enabled,
+  }) {
+    if (!enabled || books.length < 20) return;
+    var untouched = 0;
+    for (final b in books) {
+      final pct = b.chapters <= 0 ? 0.0 : b.lastChapter / b.chapters;
+      if (b.lastChapter <= 0 || pct < 0.01) untouched++;
+    }
+    if (untouched >= 15) {
+      _tryTrigger(
+        id: 'digital_hamster',
+        detail: '书架囤了 ${books.length} 本书，其中 $untouched 本还停在开头没动过',
+        bookTitle: '书架',
+        enabled: enabled,
+      );
+    }
+  }
+
   /// Called when a book is opened in the reader.
   void onBookOpen({
     required int bookId,
     required String bookTitle,
     required bool enabled,
+    int totalChars = 0,
+    int currentChapter = 0,
   }) {
     unawaited(ensureLoaded());
     final now = DateTime.now();
@@ -260,20 +389,121 @@ class EasterEggEngine extends ChangeNotifier {
     _backTurns.clear();
     _chapterJumps.clear();
     _consecutiveHighPace = 0;
-    _consecutiveCalmPace = 0;
+    _recentPaces.clear();
     _lastChapter = null;
     _nightTtsStart = null;
-    _dayTtsStart = null;
-    _deepPonderCount = 0;
+    _bookTotalChars = totalChars;
+    _sessionDictLookups = 0;
 
-    _recentBooks.removeWhere((e) => now.difference(e.$2).inMinutes > 30);
+    // Long reunion: reopened a book untouched for >= 30 days.
+    final prevMs = _bookLastOpenedMs['$bookId'];
+    _reunionPending =
+        prevMs != null &&
+        now.difference(DateTime.fromMillisecondsSinceEpoch(prevMs)).inDays >= 30;
+    _bookLastOpenedMs['$bookId'] = now.millisecondsSinceEpoch;
+
+    // Loyal reader: 7 consecutive calendar days reading the same book only.
+    final today = _dayKey(now);
+    if (_loyalBookId != bookId) {
+      _loyalBookId = bookId;
+      _loyalDays
+        ..clear()
+        ..add(today);
+    } else if (_loyalDays.isEmpty || _loyalDays.last != today) {
+      if (_loyalDays.isNotEmpty) {
+        final prevDate = DateTime.tryParse(_loyalDays.last);
+        final todayDate = DateTime(now.year, now.month, now.day);
+        if (prevDate == null || todayDate.difference(prevDate).inDays != 1) {
+          _loyalDays.clear();
+        }
+      }
+      _loyalDays.add(today);
+      if (_loyalDays.length >= 7) {
+        _tryTrigger(
+          id: 'loyal_reader',
+          detail: '连续 7 天只追《$bookTitle》这一本书，绝对真爱粉',
+          bookTitle: bookTitle,
+          enabled: enabled,
+        );
+      }
+    }
+    unawaited(_saveStats());
+
+    if (totalChars >= 5000000 && currentChapter >= 50) {
+      _tryTrigger(
+        id: 'tome_conqueror',
+        detail: '已深入这本 ${(totalChars / 10000).round()} 万字超长篇巨著',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      );
+    }
+
+    _recentBooks.removeWhere((e) => now.difference(e.$2).inMinutes > 20);
     if (_recentBooks.every((e) => e.$1 != bookId)) {
       _recentBooks.add((bookId, now));
     }
-    if (_recentBooks.length >= 3) {
+    if (_recentBooks.length >= 8) {
       _tryTrigger(
         id: 'book_hopper',
-        detail: '半小时内连试了 ${_recentBooks.length} 本书，还在找电子榨菜？',
+        detail: '20 分钟内连试了 ${_recentBooks.length} 本书，还在找电子榨菜？',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      );
+    }
+  }
+
+  /// Called when the app returns to foreground so background time is never
+  /// counted as single-page dwell.
+  void onResume() {
+    _pageEnteredAt = DateTime.now();
+  }
+
+  /// Called when text cleanup removes ads/watermarks.
+  void onTextCleaned({
+    required int removedCount,
+    required String bookTitle,
+    required bool enabled,
+  }) {
+    if (removedCount <= 0) return;
+    _totalAdsCleaned += removedCount;
+    unawaited(_saveStats());
+    if (_totalAdsCleaned >= 500) {
+      _tryTrigger(
+        id: 'clean_freak',
+        detail: '累计用文本整理清除了 $_totalAdsCleaned 条广告与水印，版面一尘不染',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      );
+    }
+  }
+
+  /// Called when the reader manually marks selected text as an ad.
+  void onAdMarked({
+    required String bookTitle,
+    required bool enabled,
+  }) {
+    _totalManualAds++;
+    unawaited(_saveStats());
+    if (_totalManualAds >= 10) {
+      _tryTrigger(
+        id: 'bug_hunter',
+        detail: '已亲手揪出并标记 $_totalManualAds 条漏网广告，火眼金睛',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      );
+    }
+  }
+
+  /// Called when the offline dictionary returns a result during reading.
+  void onDictionaryLookup({
+    required String bookTitle,
+    required bool enabled,
+  }) {
+    _sessionDictLookups++;
+    if (_sessionDictLookups >= 5) {
+      _tryTrigger(
+        id: 'word_collector',
+        detail: '本次阅读已查词 $_sessionDictLookups 次，看书还不忘涨知识',
         bookTitle: bookTitle,
         enabled: enabled,
       );
@@ -287,19 +517,25 @@ class EasterEggEngine extends ChangeNotifier {
     required double? baselineCharsPerMin,
     required String bookTitle,
     required bool enabled,
+    bool ttsPlaying = false,
   }) {
     final now = DateTime.now();
     final prevAt = _pageEnteredAt;
     _pageEnteredAt = now;
 
+    if (ttsPlaying || _ttsPlaying) {
+      // Auto-following TTS turns pages slowly; never count as manual dwell/pace.
+      return;
+    }
+
     if (backward) {
       _backTurns.add(now);
-      _backTurns.removeWhere((t) => now.difference(t).inSeconds > 35);
-      if (_backTurns.length >= 5) {
+      _backTurns.removeWhere((t) => now.difference(t).inSeconds > 45);
+      if (_backTurns.length >= 12) {
         _backTurns.clear();
         _tryTrigger(
           id: 'rewind_memory',
-          detail: '刚刚连续往回翻了 5 页，是不是漏了什么伏笔？',
+          detail: '刚刚连续往回翻了 12 页，是不是漏了关键伏笔？',
           bookTitle: bookTitle,
           enabled: enabled,
         );
@@ -308,12 +544,25 @@ class EasterEggEngine extends ChangeNotifier {
       return;
     }
 
+    if (visibleText.isNotEmpty) {
+      _totalReadChars += visibleText.length.clamp(80, 700);
+      if (_forwardPages % 20 == 0) unawaited(_saveStats());
+      if (_totalReadChars >= 1000000) {
+        _tryTrigger(
+          id: 'million_words',
+          detail: '你在挚阅累计读完了一百万字，书海长征新里程碑',
+          bookTitle: bookTitle,
+          enabled: enabled,
+        );
+      }
+    }
+
     _forwardPages++;
-    if (_forwardPages >= 100) {
+    if (_forwardPages >= 300) {
       _forwardPages = 0;
       if (_tryTrigger(
         id: 'marathon_pages',
-        detail: '这一口气已经连续翻了 100 页，手指不酸吗？',
+        detail: '这一口气已经连续翻了 300 页，手指不酸吗？',
         bookTitle: bookTitle,
         enabled: enabled,
       )) {
@@ -321,23 +570,41 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    // Exact top-of-the-hour coincidence (xx:00) after >= 8 mins of reading.
+    // 404 Insomnia: flipped a page at 04:04 AM.
+    if (now.hour == 4 && now.minute == 4) {
+      if (_tryTrigger(
+        id: 'insomnia_404',
+        detail: '04:04 Not Found，你的睡眠已走丢',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      )) {
+        return;
+      }
+    }
+
+    // New Year Keeper: reading across Dec 31 23:55 .. Jan 1 00:05.
+    if ((now.month == 12 &&
+            now.day == 31 &&
+            now.hour == 23 &&
+            now.minute >= 55) ||
+        (now.month == 1 && now.day == 1 && now.hour == 0 && now.minute <= 5)) {
+      if (_tryTrigger(
+        id: 'new_year_keeper',
+        detail: '跨年钟声敲响的那一刻，你正沉浸在书里',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      )) {
+        return;
+      }
+    }
+
+    // Lucky repeating time: only 11:11 or 22:22 after >= 20 mins of reading.
     final mins = _sessionStart == null
         ? 0
         : now.difference(_sessionStart!).inMinutes;
-    if (now.minute == 0 && mins >= 8) {
-      if (_tryTrigger(
-        id: 'exact_minute',
-        detail: '刚好在 ${now.hour.toString().padLeft(2, '0')}:00 整翻过这一页',
-        bookTitle: bookTitle,
-        enabled: enabled,
-      )) {
-        return;
-      }
-    }
-
-    // Lucky repeating time (e.g. 11:11, 22:22, 12:12, 20:20, 23:23).
-    if (now.hour == now.minute && now.hour >= 10 && mins >= 5) {
+    if (((now.hour == 11 && now.minute == 11) ||
+            (now.hour == 22 && now.minute == 22)) &&
+        mins >= 20) {
       final hh = now.hour.toString().padLeft(2, '0');
       if (_tryTrigger(
         id: 'lucky_time',
@@ -350,17 +617,17 @@ class EasterEggEngine extends ChangeNotifier {
     }
 
     // Text-driven page eggs.
-    if (visibleText.length >= 100) {
-      // Tic bingo: >= 2 distinct classic tics packed onto a single page.
+    if (visibleText.length >= 120) {
+      // Tic bingo: >= 5 distinct classic tics packed onto a single page.
       final hits = <String>[];
       for (final w in _ticBingoWords) {
         if (visibleText.contains(w)) hits.add(w);
-        if (hits.length >= 3) break;
+        if (hits.length >= 5) break;
       }
-      if (hits.length >= 2) {
+      if (hits.length >= 5) {
         if (_tryTrigger(
           id: 'tic_bingo',
-          detail: '这一页凑齐了「${hits.join(' / ')}」',
+          detail: '这一页一口气凑齐了「${hits.take(3).join(' / ')}」等 5 个经典口癖',
           bookTitle: bookTitle,
           enabled: enabled,
         )) {
@@ -368,52 +635,16 @@ class EasterEggEngine extends ChangeNotifier {
         }
       }
 
-      // Battle frenzy: >= 3 distinct high-action combat cues on one page.
-      var battleHits = 0;
-      for (final w in _battleWords) {
-        if (visibleText.contains(w)) battleHits++;
-        if (battleHits >= 3) break;
-      }
-      if (battleHits >= 3) {
-        if (_tryTrigger(
-          id: 'battle_frenzy',
-          detail: '这一页刀光剑影，战意拉满',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        )) {
-          return;
-        }
-      }
-
-      // Laugh out loud: >= 2 distinct comedy cues on one page.
+      // Laugh out loud: >= 4 distinct comedy cues on one page.
       var laughHits = 0;
       for (final w in _laughWords) {
         if (visibleText.contains(w)) laughHits++;
-        if (laughHits >= 2) break;
+        if (laughHits >= 4) break;
       }
-      if (laughHits >= 2) {
+      if (laughHits >= 4) {
         if (_tryTrigger(
           id: 'laugh_out_loud',
-          detail: '这一段有点好笑，嘴角是不是没压住？',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        )) {
-          return;
-        }
-      }
-
-      // Dialogue storm: >= 12 opening/closing quote marks on one page.
-      var quotes = 0;
-      for (var i = 0; i < visibleText.length; i++) {
-        final cu = visibleText.codeUnitAt(i);
-        if (cu == 0x201C || cu == 0x201D || cu == 0x300C || cu == 0x300D) {
-          quotes++;
-        }
-      }
-      if (quotes >= 12) {
-        if (_tryTrigger(
-          id: 'dialogue_storm',
-          detail: '这一页全是唇枪舌剑，信息量拉满',
+          detail: '这一段笑点太密，嘴角是不是没压住？',
           bookTitle: bookTitle,
           enabled: enabled,
         )) {
@@ -429,14 +660,14 @@ class EasterEggEngine extends ChangeNotifier {
               ? (visibleText.length / baselineCharsPerMin * 60)
               : 10.0;
 
-      // Shy moment: >= 2 distinct intimate keywords AND slowed dwell.
-      if (dwell >= 12 && dwell <= 180 && visibleText.isNotEmpty) {
+      // Shy moment: >= 4 distinct intimate keywords AND slowed dwell >= 30s.
+      if (dwell >= 30 && dwell <= 200 && visibleText.isNotEmpty) {
         var hits = 0;
         for (final w in _shyWords) {
           if (visibleText.contains(w)) hits++;
-          if (hits >= 2) break;
+          if (hits >= 4) break;
         }
-        if (hits >= 2 && dwell >= expectedSecs * 1.25) {
+        if (hits >= 4 && dwell >= expectedSecs * 1.6) {
           _tryTrigger(
             id: 'shy_moment',
             detail: '检测到这一页停留了 $dwell 秒，看得格外仔细哦',
@@ -447,14 +678,14 @@ class EasterEggEngine extends ChangeNotifier {
         }
       }
 
-      // Tears moment: >= 2 distinct tragic keywords AND slowed dwell.
-      if (dwell >= 14 && dwell <= 200 && visibleText.isNotEmpty) {
+      // Tears moment: >= 4 distinct tragic keywords AND dwell >= 30s.
+      if (dwell >= 30 && dwell <= 240 && visibleText.isNotEmpty) {
         var hits = 0;
         for (final w in _tearWords) {
           if (visibleText.contains(w)) hits++;
-          if (hits >= 2) break;
+          if (hits >= 4) break;
         }
-        if (hits >= 2) {
+        if (hits >= 4) {
           _tryTrigger(
             id: 'tears_moment',
             detail: '这一段刀子有点狠，你静静停了 $dwell 秒',
@@ -465,17 +696,17 @@ class EasterEggEngine extends ChangeNotifier {
         }
       }
 
-      // Mystery chill: >= 2 suspense/horror words AND dwell >= 12s.
-      if (dwell >= 12 && dwell <= 200 && visibleText.isNotEmpty) {
+      // Mystery chill: late night (00:00..04:59) + >= 4 horror cues + dwell >= 25s.
+      if (now.hour < 5 && dwell >= 25 && dwell <= 240 && visibleText.isNotEmpty) {
         var hits = 0;
         for (final w in _mysteryWords) {
           if (visibleText.contains(w)) hits++;
-          if (hits >= 2) break;
+          if (hits >= 4) break;
         }
-        if (hits >= 2) {
+        if (hits >= 4) {
           _tryTrigger(
             id: 'mystery_chill',
-            detail: '这一段气氛有点诡异，回头看看身后？',
+            detail: '凌晨读到这么诡异的一段，回头看看身后？',
             bookTitle: bookTitle,
             enabled: enabled,
           );
@@ -483,20 +714,8 @@ class EasterEggEngine extends ChangeNotifier {
         }
       }
 
-      // Deep ponder: stayed on a single page 35s..240s.
-      if (dwell >= 35 && dwell <= 240) {
-        _deepPonderCount++;
-        if (_deepPonderCount >= 3) {
-          _deepPonderCount = 0;
-          if (_tryTrigger(
-            id: 'deep_reader',
-            detail: '已经连续多次在单页驻足细读，完全沉浸进去了',
-            bookTitle: bookTitle,
-            enabled: enabled,
-          )) {
-            return;
-          }
-        }
+      // Deep ponder: stayed on a single page 120s..300s.
+      if (dwell >= 120 && dwell <= 300) {
         _tryTrigger(
           id: 'deep_ponder',
           detail: '刚才那一页让你足足停了 $dwell 秒',
@@ -514,23 +733,29 @@ class EasterEggEngine extends ChangeNotifier {
     required double? baselineCharsPerMin,
     required String bookTitle,
     required bool enabled,
+    bool ttsPlaying = false,
   }) {
     if (secs <= 0 || chars <= 0) return;
+    if (ttsPlaying || _ttsPlaying) {
+      _fastWindows = 0;
+      _slowWindows = 0;
+      return;
+    }
     final now = DateTime.now();
     final cpm = chars / secs * 60.0;
 
-    // 1) Speed demon: 2 consecutive fast windows (>2.1x baseline and >=1250 cpm).
+    // 1) Speed demon: 5 consecutive fast windows (>2.5x baseline and >=1800 cpm).
     final fastThreshold =
         baselineCharsPerMin != null && baselineCharsPerMin > 200
-            ? math.max(baselineCharsPerMin * 2.1, 1250.0)
-            : 1450.0;
+            ? math.max(baselineCharsPerMin * 2.5, 1800.0)
+            : 1800.0;
     if (cpm >= fastThreshold && cpm < 8000) {
       _fastWindows++;
-      if (_fastWindows >= 2) {
+      if (_fastWindows >= 5) {
         _fastWindows = 0;
         _tryTrigger(
           id: 'speed_demon',
-          detail: '刚才飙到了 ${cpm.round()} 字/分，一目十行',
+          detail: '持续飙到了 ${cpm.round()} 字/分，真正的一目十行',
           bookTitle: bookTitle,
           enabled: enabled,
         );
@@ -540,13 +765,13 @@ class EasterEggEngine extends ChangeNotifier {
       _fastWindows = 0;
     }
 
-    // 2) Turtle savor: 3 consecutive very slow active windows (<0.5x baseline).
+    // 2) Turtle savor: 8 consecutive very slow active windows (<=0.4x baseline).
     if (baselineCharsPerMin != null &&
         baselineCharsPerMin >= 320 &&
         cpm >= 60 &&
-        cpm <= baselineCharsPerMin * 0.5) {
+        cpm <= baselineCharsPerMin * 0.4) {
       _slowWindows++;
-      if (_slowWindows >= 3) {
+      if (_slowWindows >= 8) {
         _slowWindows = 0;
         _tryTrigger(
           id: 'turtle_savor',
@@ -566,17 +791,34 @@ class EasterEggEngine extends ChangeNotifier {
     final hour = now.hour;
     final minute = now.minute;
 
-    // Crossed midnight in one continuous session.
+    // Dawn survivor: started before 02:00 and read continuously past 06:00.
+    if (start != null && mins >= 240 && hour >= 6 && hour < 10) {
+      final startedLateNight =
+          (start.day == now.day && start.hour < 2) ||
+          (start.day != now.day && start.hour >= 22);
+      if (startedLateNight) {
+        if (_tryTrigger(
+          id: 'dawn_survivor',
+          detail: '从深夜一路看到天亮（连续 $mins 分钟），真正的破晓战神',
+          bookTitle: bookTitle,
+          enabled: enabled,
+        )) {
+          return;
+        }
+      }
+    }
+
+    // Crossed midnight: started <= 23:30, now >= 00:30, >= 60 mins.
     if (start != null &&
         start.day != now.day &&
         start.hour == 23 &&
-        start.minute <= 52 &&
+        start.minute <= 30 &&
         hour == 0 &&
-        minute >= 3 &&
-        mins >= 10) {
+        minute >= 30 &&
+        mins >= 60) {
       if (_tryTrigger(
         id: 'midnight_cross',
-        detail: '从昨天一直看到零点以后，不知不觉跨了一天',
+        detail: '从昨天一直看到零点半以后，不知不觉跨了一天',
         bookTitle: bookTitle,
         enabled: enabled,
       )) {
@@ -584,97 +826,30 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    if ((hour == 1 && minute >= 15) || (hour >= 2 && hour < 5)) {
-      if (mins >= 35) {
-        _tryTrigger(
-          id: 'night_marathon',
-          detail:
-              '凌晨 ${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}，已连续看了 $mins 分钟',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        );
-        return;
-      }
-      if (mins >= 10) {
-        _tryTrigger(
-          id: 'night_owl',
-          detail:
-              '凌晨 ${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} 还在书海里修仙',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        );
-        return;
-      }
-    }
-
-    if ((hour == 5 && minute >= 30) || hour == 6 || (hour == 7 && minute <= 30)) {
-      if (mins >= 8) {
-        _tryTrigger(
-          id: 'early_bird',
-          detail:
-              '清晨 ${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} 就已经开卷了',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        );
-        return;
-      }
-    }
-
-    // Friday night release (Fri 20:00..23:59, >= 18 mins).
-    if (now.weekday == DateTime.friday && hour >= 20 && mins >= 18) {
-      if (_tryTrigger(
-        id: 'friday_night',
-        detail: '周五晚上已经沉浸看书 $mins 分钟，周末正式开启',
+    if (hour >= 2 && hour < 5 && mins >= 90) {
+      _tryTrigger(
+        id: 'night_marathon',
+        detail:
+            '凌晨 ${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}，已连续看了 $mins 分钟',
         bookTitle: bookTitle,
         enabled: enabled,
-      )) {
-        return;
-      }
+      );
+      return;
     }
 
-    // Weekday commute window (7:30-9:30 or 17:30-19:30, >= 10 mins).
-    if (now.weekday <= 5 &&
-        (((hour == 7 && minute >= 30) || hour == 8 || (hour == 9 && minute <= 30)) ||
-            ((hour == 17 && minute >= 30) || hour == 18 || (hour == 19 && minute <= 30))) &&
-        mins >= 10) {
-      if (_tryTrigger(
-        id: 'commute_reader',
-        detail: '通勤路上连看 $mins 分钟，小心别坐过站哦',
+    if ((hour == 5 || (hour == 6 && minute <= 30)) && mins >= 45) {
+      _tryTrigger(
+        id: 'early_bird',
+        detail:
+            '清晨 ${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} 就已连读 $mins 分钟',
         bookTitle: bookTitle,
         enabled: enabled,
-      )) {
-        return;
-      }
+      );
+      return;
     }
 
-    // Weekday lunch break reading.
-    if (now.weekday <= 5 &&
-        ((hour == 12) || (hour == 13 && minute <= 30)) &&
-        mins >= 12) {
-      if (_tryTrigger(
-        id: 'lunch_escape',
-        detail: '午休已经沉浸看了 $mins 分钟，充电完毕',
-        bookTitle: bookTitle,
-        enabled: enabled,
-      )) {
-        return;
-      }
-    }
-
-    // Sunset reading (17:00..19:00, >= 15 mins).
-    if (hour >= 17 && hour < 19 && mins >= 15) {
-      if (_tryTrigger(
-        id: 'sunset_read',
-        detail: '傍晚时分静静读了 $mins 分钟，日落刚好配好书',
-        bookTitle: bookTitle,
-        enabled: enabled,
-      )) {
-        return;
-      }
-    }
-
-    // Weekend binge (>= 60 mins).
-    if (now.weekday >= 6 && mins >= 60) {
+    // Weekend binge (>= 180 mins).
+    if (now.weekday >= 6 && mins >= 180) {
       if (_tryTrigger(
         id: 'weekend_binge',
         detail: '周末一口气连看 $mins 分钟，这才是放假的正确打开方式',
@@ -685,46 +860,40 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    if (mins >= 90) {
+    if (mins >= 180) {
       _tryTrigger(
         id: 'iron_eyes',
         detail: '已经连续读了 $mins 分钟，记得远眺歇歇眼',
         bookTitle: bookTitle,
         enabled: enabled,
       );
-      return;
-    }
-
-    if (mins >= 45) {
-      _tryTrigger(
-        id: 'time_vanish',
-        detail: '不知不觉已经连续看了 $mins 分钟',
-        bookTitle: bookTitle,
-        enabled: enabled,
-      );
     }
   }
 
-  /// Called on TTS playback ticks so listeners can unlock `night_audio` / `day_audio`.
+  /// Called on TTS playback ticks so listeners can unlock `night_audio`.
   void onTtsState({
     required bool playing,
     required String bookTitle,
     required bool enabled,
   }) {
+    if (_ttsPlaying != playing) {
+      _ttsPlaying = playing;
+      // Reset page dwell timer whenever TTS starts or stops so TTS pacing
+      // never bleeds into manual dwell eggs like `deep_ponder`.
+      _pageEnteredAt = DateTime.now();
+      _fastWindows = 0;
+      _slowWindows = 0;
+    }
     if (!playing) {
       _nightTtsStart = null;
-      _dayTtsStart = null;
       return;
     }
     final now = DateTime.now();
-    final isLate = (now.hour == 22 && now.minute >= 30) ||
-        now.hour == 23 ||
-        now.hour < 5;
+    final isLate = now.hour == 23 || now.hour < 5;
     if (isLate) {
-      _dayTtsStart = null;
       _nightTtsStart ??= now;
       final mins = now.difference(_nightTtsStart!).inMinutes;
-      if (mins >= 12) {
+      if (mins >= 45) {
         _nightTtsStart = now;
         _tryTrigger(
           id: 'night_audio',
@@ -735,17 +904,6 @@ class EasterEggEngine extends ChangeNotifier {
       }
     } else {
       _nightTtsStart = null;
-      _dayTtsStart ??= now;
-      final mins = now.difference(_dayTtsStart!).inMinutes;
-      if (mins >= 15) {
-        _dayTtsStart = now;
-        _tryTrigger(
-          id: 'day_audio',
-          detail: '解放双手听书 $mins 分钟，耳朵也跟着入戏了',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        );
-      }
     }
   }
 
@@ -764,8 +922,20 @@ class EasterEggEngine extends ChangeNotifier {
     final now = DateTime.now();
     final chNum = chapterIndex + 1;
 
-    // Book finisher: reached the last chapter of a book with >= 20 chapters.
-    if (totalChapters >= 20 && chapterIndex == totalChapters - 1) {
+    // Tome conqueror: >= 5M chars and past chapter 50.
+    if (_bookTotalChars >= 5000000 && chapterIndex >= 50) {
+      if (_tryTrigger(
+        id: 'tome_conqueror',
+        detail: '已深入这本 ${(_bookTotalChars / 10000).round()} 万字超长篇巨著',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      )) {
+        return;
+      }
+    }
+
+    // Book finisher: reached the last chapter of a book with >= 100 chapters.
+    if (totalChapters >= 100 && chapterIndex == totalChapters - 1) {
       if (_tryTrigger(
         id: 'book_finisher',
         detail: '抵达全书最终章（第 $totalChapters 章），完结撒花！',
@@ -776,8 +946,8 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    // Halfway mark: crossed the exact 50% chapter of a >= 30 chapter book.
-    if (totalChapters >= 30 && chapterIndex == totalChapters ~/ 2) {
+    // Halfway mark: crossed the exact 50% chapter of a >= 200 chapter book.
+    if (totalChapters >= 200 && chapterIndex == totalChapters ~/ 2) {
       if (_tryTrigger(
         id: 'halfway_mark',
         detail: '已经读到全书正中间（第 $chNum / $totalChapters 章），下半场开启',
@@ -788,11 +958,11 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    // Round hundred-chapter milestone.
-    if (_hundredChapters.contains(chNum)) {
+    // Thousand-chapter milestone.
+    if (_thousandChapters.contains(chNum)) {
       if (_tryTrigger(
-        id: 'hundred_club',
-        detail: '恭喜抵达第 $chNum 章整，长篇马拉松新里程碑',
+        id: 'thousand_club',
+        detail: '恭喜抵达第 $chNum 章整，超长篇马拉松新里程碑',
         bookTitle: bookTitle,
         enabled: enabled,
       )) {
@@ -800,7 +970,7 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
-    // Palindrome chapter number coincidence.
+    // Palindrome / repeating chapter number coincidence.
     if (_palindromeChapters.contains(chNum)) {
       if (_tryTrigger(
         id: 'palindrome_ch',
@@ -812,8 +982,20 @@ class EasterEggEngine extends ChangeNotifier {
       }
     }
 
+    // Archaeologist: jumped from chapter >= 300 back into the first 10 chapters.
+    if (prev >= 299 && chapterIndex < 10) {
+      if (_tryTrigger(
+        id: 'archaeologist',
+        detail: '从第 ${prev + 1} 章一下翻回第 $chNum 章，回开头挖大伏笔了？',
+        bookTitle: bookTitle,
+        enabled: enabled,
+      )) {
+        return;
+      }
+    }
+
     final jump = chapterIndex - prev;
-    if (jump.abs() >= 20) {
+    if (jump.abs() >= 100) {
       if (_tryTrigger(
         id: 'big_leap',
         detail: '一次跨过 ${jump.abs()} 章，直接瞬移到第 $chNum 章',
@@ -827,11 +1009,11 @@ class EasterEggEngine extends ChangeNotifier {
     if (jump.abs() >= 2) {
       _chapterJumps.add(now);
       _chapterJumps.removeWhere((t) => now.difference(t).inSeconds > 120);
-      if (_chapterJumps.length >= 4) {
+      if (_chapterJumps.length >= 8) {
         _chapterJumps.clear();
         if (_tryTrigger(
           id: 'chapter_bounce',
-          detail: '两分钟内在章节间来回跳转了 4 次，在核对线索吗？',
+          detail: '两分钟内在章节间来回跳转了 8 次，在核对线索吗？',
           bookTitle: bookTitle,
           enabled: enabled,
         )) {
@@ -842,21 +1024,12 @@ class EasterEggEngine extends ChangeNotifier {
 
     if (jump == 1) {
       _sequentialChapters++;
-      if (_sequentialChapters == 5) {
+
+      if (_reunionPending && _sequentialChapters >= 3) {
+        _reunionPending = false;
         if (_tryTrigger(
-          id: 'five_chapters',
-          detail: '已经一口气连追 5 章，节奏正好',
-          bookTitle: bookTitle,
-          enabled: enabled,
-        )) {
-          return;
-        }
-      }
-      if (_sequentialChapters >= 10) {
-        _sequentialChapters = 0;
-        if (_tryTrigger(
-          id: 'ten_chapters',
-          detail: '一口气连推 10 章不停歇，根本停不下来',
+          id: 'long_reunion',
+          detail: '时隔三十多天重新拾起《$bookTitle》，一下又连追了 3 章',
           bookTitle: bookTitle,
           enabled: enabled,
         )) {
@@ -864,13 +1037,25 @@ class EasterEggEngine extends ChangeNotifier {
         }
       }
 
-      if (now.hour < 5) {
+      if (_sequentialChapters >= 20) {
+        _sequentialChapters = 0;
+        if (_tryTrigger(
+          id: 'ten_chapters',
+          detail: '一口气连推 20 章不停歇，根本停不下来',
+          bookTitle: bookTitle,
+          enabled: enabled,
+        )) {
+          return;
+        }
+      }
+
+      if (now.hour >= 1 && now.hour < 5) {
         _nightChapters++;
-        if (_nightChapters >= 4) {
+        if (_nightChapters >= 10) {
           _nightChapters = 0;
           if (_tryTrigger(
             id: 'cliffhanger_victim',
-            detail: '凌晨连追 4 章，“看完这章就睡”的含金量还在上升',
+            detail: '凌晨连追 10 章，“看完这章就睡”的含金量还在上升',
             bookTitle: bookTitle,
             enabled: enabled,
           )) {
@@ -881,42 +1066,46 @@ class EasterEggEngine extends ChangeNotifier {
 
       if (paceScores != null && prev >= 0 && prev < paceScores.length) {
         final v = paceScores[prev];
-        if (v != null && v >= 1.2) {
-          _consecutiveHighPace++;
-          _consecutiveCalmPace = 0;
-          if (_consecutiveHighPace >= 3) {
+        if (v != null) {
+          _recentPaces.add(v);
+          if (_recentPaces.length > 3) _recentPaces.removeAt(0);
+          if (_recentPaces.length == 3) {
+            final lo = _recentPaces.reduce(math.min);
+            final hi = _recentPaces.reduce(math.max);
+            if (lo <= -0.8 && hi >= 1.6) {
+              _recentPaces.clear();
+              if (_tryTrigger(
+                id: 'mood_coaster',
+                detail: '短短三章内剧情从极度舒缓飙到极限高能，情绪过山车坐稳了',
+                bookTitle: bookTitle,
+                enabled: enabled,
+              )) {
+                return;
+              }
+            }
+          }
+          if (v >= 1.2) {
+            _consecutiveHighPace++;
+            if (_consecutiveHighPace >= 8) {
+              _consecutiveHighPace = 0;
+              _tryTrigger(
+                id: 'high_energy',
+                detail: '连看 8 章高能剧情，手心出汗了吗？',
+                bookTitle: bookTitle,
+                enabled: enabled,
+              );
+              return;
+            }
+          } else {
             _consecutiveHighPace = 0;
-            _tryTrigger(
-              id: 'high_energy',
-              detail: '连看 3 章高能剧情，手心出汗了吗？',
-              bookTitle: bookTitle,
-              enabled: enabled,
-            );
-            return;
           }
-        } else if (v != null && v <= -0.6) {
-          _consecutiveCalmPace++;
-          _consecutiveHighPace = 0;
-          if (_consecutiveCalmPace >= 4) {
-            _consecutiveCalmPace = 0;
-            _tryTrigger(
-              id: 'calm_harbor',
-              detail: '连读 4 章舒缓日常，享受难得的宁静片刻',
-              bookTitle: bookTitle,
-              enabled: enabled,
-            );
-            return;
-          }
-        } else {
-          _consecutiveHighPace = 0;
-          _consecutiveCalmPace = 0;
         }
       }
     } else {
       _sequentialChapters = 0;
       _nightChapters = 0;
       _consecutiveHighPace = 0;
-      _consecutiveCalmPace = 0;
+      _recentPaces.clear();
     }
   }
 
@@ -929,25 +1118,14 @@ class EasterEggEngine extends ChangeNotifier {
     if (!enabled) return false;
     final def = _byId[id];
     if (def == null) return false;
+    // Once unlocked, an easter egg never triggers again.
+    if (_unlocked.containsKey(id)) return false;
+
     final now = DateTime.now();
-
-    final existing = _unlocked[id];
-    final firstTime = existing == null;
-    if (!firstTime) {
-      final last = _lastTriggeredPerEgg[id];
-      if (last != null && now.difference(last) < _repeatCooldownPerEgg) {
-        return false;
-      }
-      if (_rng.nextDouble() > _repeatChance) {
-        return false;
-      }
-    }
-
-    _lastTriggeredPerEgg[id] = now;
     _unlocked[id] = EasterEggRecord(
       id: id,
-      unlockedAtMs: existing?.unlockedAtMs ?? now.millisecondsSinceEpoch,
-      count: (existing?.count ?? 0) + 1,
+      unlockedAtMs: now.millisecondsSinceEpoch,
+      count: 1,
       lastDetail: detail,
       bookTitle: bookTitle,
     );
@@ -956,7 +1134,7 @@ class EasterEggEngine extends ChangeNotifier {
     activeBanner.value = EasterEggEvent(
       def: def,
       detail: detail,
-      firstTime: firstTime,
+      firstTime: true,
     );
     return true;
   }
@@ -970,7 +1148,13 @@ class EasterEggEngine extends ChangeNotifier {
   @visibleForTesting
   void resetForTest() {
     _unlocked.clear();
-    _lastTriggeredPerEgg.clear();
+    _ttsPlaying = false;
+    _totalReadChars = 0;
+    _totalAdsCleaned = 0;
+    _totalManualAds = 0;
+    _loyalBookId = null;
+    _loyalDays.clear();
+    _bookLastOpenedMs.clear();
     _recentBooks.clear();
     _backTurns.clear();
     _chapterJumps.clear();
@@ -980,11 +1164,12 @@ class EasterEggEngine extends ChangeNotifier {
     _sequentialChapters = 0;
     _nightChapters = 0;
     _consecutiveHighPace = 0;
-    _consecutiveCalmPace = 0;
+    _recentPaces.clear();
     _lastChapter = null;
     _nightTtsStart = null;
-    _dayTtsStart = null;
-    _deepPonderCount = 0;
+    _bookTotalChars = 0;
+    _reunionPending = false;
+    _sessionDictLookups = 0;
     activeBanner.value = null;
     _loaded = true;
   }

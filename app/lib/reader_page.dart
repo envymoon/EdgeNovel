@@ -12,6 +12,7 @@ import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'background_task_bar.dart';
 import 'bloom.dart';
+import 'book_finish_report.dart';
 import 'dictionary.dart';
 import 'dictionary_page.dart';
 import 'easter_eggs.dart';
@@ -198,6 +199,8 @@ class _ReaderPageState extends State<ReaderPage> {
       EasterEggEngine.instance.onBookOpen(
         bookId: info.id,
         bookTitle: info.title,
+        totalChars: info.charCount.toInt(),
+        currentChapter: widget.reader.chapterIndex,
         enabled: widget.settings.easterEggs,
       );
       unawaited(
@@ -219,6 +222,7 @@ class _ReaderPageState extends State<ReaderPage> {
         baselineCharsPerMin: _cpm,
         bookTitle: cur.title,
         enabled: widget.settings.easterEggs,
+        ttsPlaying: _tts.playing,
       );
     });
   }
@@ -247,6 +251,7 @@ class _ReaderPageState extends State<ReaderPage> {
       baselineCharsPerMin: _cpm,
       bookTitle: info.title,
       enabled: widget.settings.easterEggs,
+      ttsPlaying: _tts.playing,
     );
   }
 
@@ -662,7 +667,16 @@ class _ReaderPageState extends State<ReaderPage> {
     final draft = _annotationDraft;
     if (draft == null) return;
     final found = await Dictionary.instance.lookup(draft.quote);
-    if (mounted && _annotationDraft == draft) setState(() => _found = found);
+    if (mounted && _annotationDraft == draft) {
+      setState(() => _found = found);
+      if (found.isNotEmpty) {
+        final title = widget.reader.info?.title ?? '';
+        EasterEggEngine.instance.onDictionaryLookup(
+          bookTitle: title,
+          enabled: widget.settings.easterEggs,
+        );
+      }
+    }
   }
 
   void _exitAnnotationMode() {
@@ -695,6 +709,10 @@ class _ReaderPageState extends State<ReaderPage> {
     final draft = _annotationDraft;
     final book = _currentBook;
     if (draft == null || book == null) return;
+    EasterEggEngine.instance.onAdMarked(
+      bookTitle: book.title,
+      enabled: widget.settings.easterEggs,
+    );
     _setAnnotationDraft(null);
     _openPage(
       TextCleanupPage(
@@ -897,54 +915,96 @@ class _ReaderPageState extends State<ReaderPage> {
     bottom: i == widget.reader.paragraphs.length - 1 ? 60 : 0,
   );
 
+  void _openFinishReport() {
+    final info = widget.reader.info;
+    if (info == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BookFinishReportPage(
+          bookId: info.id,
+          settings: widget.settings,
+        ),
+      ),
+    );
+  }
+
   Widget _scrollList(
     EdgeInsets readerPadding,
     ReadingTheme t, {
     required bool compact,
   }) => ListenableBuilder(
     listenable: _tts,
-    builder: (context, _) => ScrollablePositionedList.builder(
-      key: ValueKey(widget.reader.chapterIndex),
-      initialScrollIndex: widget.reader.initialParagraph,
-      itemScrollController: _itemScroll,
-      itemPositionsListener: _positions,
-      itemCount: widget.reader.paragraphs.length,
-      itemBuilder: (context, i) => WheelGlide(
-        scale: widget.settings.wheelScale,
-        child: Padding(
-          padding: _itemPadding(readerPadding, i),
-          child: ParagraphView(
-            para: widget.reader.paragraphs[i],
-            settings: widget.settings,
-            theme: t,
-            active: _tts.activeParagraph == i,
-            activeStart: _tts.activeParagraph == i ? _tts.activeStart : -1,
-            onTapSentence: compact || !AppPlatformSupport.hasReadAloud
-                ? null
-                : (start) => _tts.seekToSentence(i, start),
-            // On a phone a tap is the menu: a finger held on a sentence
-            // reads on from it, while one is lit.
-            onHoldSentence:
-                compact && _tts.hasQueue && _tts.activeParagraph >= 0
-                ? (start) => _tts.listenFrom(i, start)
-                : null,
-            annotations: widget.reader.annotationsForParagraph(
-              widget.reader.paragraphs[i],
+    builder: (context, _) {
+      final info = widget.reader.info;
+      final isLastChapter =
+          info != null && widget.reader.chapterIndex >= info.chapters.length - 1;
+      final paraCount = widget.reader.paragraphs.length;
+      return ScrollablePositionedList.builder(
+        key: ValueKey(widget.reader.chapterIndex),
+        initialScrollIndex: widget.reader.initialParagraph,
+        itemScrollController: _itemScroll,
+        itemPositionsListener: _positions,
+        itemCount: paraCount + (isLastChapter ? 1 : 0),
+        itemBuilder: (context, i) {
+          if (isLastChapter && i == paraCount) {
+            return WheelGlide(
+              scale: widget.settings.wheelScale,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  readerPadding.left,
+                  12,
+                  readerPadding.right,
+                  readerPadding.bottom,
+                ),
+                child: BookFinishReportCard(
+                  bookId: info.id,
+                  theme: t,
+                  onOpenFull: _openFinishReport,
+                  onBackToShelf: () =>
+                      Navigator.of(context).popUntil((r) => r.isFirst),
+                ),
+              ),
+            );
+          }
+          return WheelGlide(
+            scale: widget.settings.wheelScale,
+            child: Padding(
+              padding: _itemPadding(readerPadding, i),
+              child: ParagraphView(
+                para: widget.reader.paragraphs[i],
+                settings: widget.settings,
+                theme: t,
+                active: _tts.activeParagraph == i,
+                activeStart: _tts.activeParagraph == i ? _tts.activeStart : -1,
+                onTapSentence: compact || !AppPlatformSupport.hasReadAloud
+                    ? null
+                    : (start) => _tts.seekToSentence(i, start),
+                // On a phone a tap is the menu: a finger held on a sentence
+                // reads on from it, while one is lit.
+                onHoldSentence:
+                    compact && _tts.hasQueue && _tts.activeParagraph >= 0
+                    ? (start) => _tts.listenFrom(i, start)
+                    : null,
+                annotations: widget.reader.annotationsForParagraph(
+                  widget.reader.paragraphs[i],
+                ),
+                onShowAnnotations: (annotations) => showAnnotationComments(
+                  context,
+                  reader: widget.reader,
+                  settings: widget.settings,
+                  paragraph: widget.reader.paragraphs[i],
+                  annotations: annotations,
+                ),
+                annotationMode: _annotationMode,
+                annotationChapter: widget.reader.chapterIndex,
+                onAnnotationSelection: _setAnnotationDraft,
+              ),
             ),
-            onShowAnnotations: (annotations) => showAnnotationComments(
-              context,
-              reader: widget.reader,
-              settings: widget.settings,
-              paragraph: widget.reader.paragraphs[i],
-              annotations: annotations,
-            ),
-            annotationMode: _annotationMode,
-            annotationChapter: widget.reader.chapterIndex,
-            onAnnotationSelection: _setAnnotationDraft,
-          ),
-        ),
-      ),
-    ),
+          );
+        },
+      );
+    },
   );
 
   /// Where the reader is while the bars are away: the chapter, how long it has
@@ -1425,6 +1485,7 @@ class _ReaderPageState extends State<ReaderPage> {
                                   compactTapZones: compact,
                                   onToggleControls: _toggleChrome,
                                   onBackOffStart: _plateOnTheWayBack,
+                                  onForwardOffEnd: _openFinishReport,
                                   plateBefore: _plateBefore,
                                   plateAfter: _plateAfter,
                                   tts: _tts,
@@ -1801,8 +1862,8 @@ class _ReaderPageState extends State<ReaderPage> {
           tooltip: i < n - 1
               ? '下一章'
               : r.isChapterCompleted(i)
-              ? '已读完'
-              : '本书末章',
+              ? '查看完本阅读报告'
+              : '本书末章 · 完本报告',
           icon: Icon(
             i < n - 1
                 ? Icons.chevron_right
@@ -1811,7 +1872,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 : Icons.check_circle_outline,
           ),
           color: t.muted,
-          onPressed: i < n - 1 ? _nextChapter : null,
+          onPressed: i < n - 1 ? _nextChapter : _openFinishReport,
         ),
       ],
     );

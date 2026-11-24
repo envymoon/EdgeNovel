@@ -132,13 +132,14 @@ fn chars_from_bytes(bytes: i64) -> i64 {
 }
 
 fn gather(tz_secs: i64) -> Result<Facts, String> {
-    let (events, windows, books, (chapters_finished, finished_bytes), annotations) = {
+    let (events, windows, books, archived, (chapters_finished, finished_bytes), annotations) = {
         let guard = book::store().lock().unwrap();
         let s = guard.as_ref().ok_or("数据库未初始化")?;
         (
             s.events_since(0).map_err(|e| format!("{e}"))?,
             s.windows_since(0).map_err(|e| format!("{e}"))?,
             s.library().map_err(|e| format!("{e}"))?,
+            s.archived_books().map_err(|e| format!("{e}"))?,
             s.finished_chapters().map_err(|e| format!("{e}"))?,
             s.annotation_count().map_err(|e| format!("{e}"))?,
         )
@@ -168,8 +169,15 @@ fn gather(tz_secs: i64) -> Result<Facts, String> {
         *by_book.entry(s.book_id).or_default() += s.secs();
     }
 
-    // The shelf, as it stands.
-    let title: HashMap<i64, &str> = books.iter().map(|b| (b.id, b.title.as_str())).collect();
+    // The shelf + archived books, so deleted books still participate in lifetime
+    // finished counts, top-book / author / genre portraits, and speed comparisons.
+    let mut title: HashMap<i64, String> = books
+        .iter()
+        .map(|b| (b.id, b.title.clone()))
+        .collect();
+    for a in &archived {
+        title.insert(-a.id, a.title.clone());
+    }
     let (mut finished, mut reading, mut shelved, mut unopened) = (0, 0, 0, 0);
     let mut genre_secs: HashMap<String, i64> = HashMap::new();
     let mut author_secs: HashMap<String, i64> = HashMap::new();
@@ -203,6 +211,32 @@ fn gather(tz_secs: i64) -> Result<Facts, String> {
         if let Some(a) = b.author.as_deref().map(str::trim) {
             if !a.is_empty() && a != "佚名" && a != "未知" {
                 *author_secs.entry(a.to_string()).or_default() += secs;
+            }
+        }
+    }
+    for a in &archived {
+        if a.is_finished {
+            finished += 1;
+        }
+        let secs = by_book.get(&(-a.id)).copied().unwrap_or(0);
+        if secs == 0 {
+            continue;
+        }
+        if top_book.as_ref().is_none_or(|(_, t, _)| secs > *t) {
+            top_book = Some((a.title.clone(), secs, chars_from_bytes(a.total_bytes)));
+        }
+        for g in a
+            .genre_tags
+            .iter()
+            .flat_map(|t| t.split(&[',', '，', '、', ' '][..]))
+            .map(str::trim)
+            .filter(|g| !g.is_empty())
+        {
+            *genre_secs.entry(g.to_string()).or_default() += secs;
+        }
+        if let Some(author) = a.author.as_deref().map(str::trim) {
+            if !author.is_empty() && author != "佚名" && author != "未知" {
+                *author_secs.entry(author.to_string()).or_default() += secs;
             }
         }
     }
@@ -328,6 +362,250 @@ pub fn reading_insights(tz_secs: i64) -> Result<ReadingInsights, String> {
         earlier_speed: f.earlier_speed,
         fastest_book: f.fastest_book,
         slowest_book: f.slowest_book,
+    })
+}
+
+/// One book's stats row in 阅读数据, including books removed from the shelf.
+#[derive(Debug, Clone)]
+pub struct BookStatItem {
+    pub id: i64,
+    pub is_archived: bool,
+    pub title: String,
+    pub seconds: i64,
+    pub chapters_finished: i64,
+    pub is_finished: bool,
+    pub archived_at: Option<i64>,
+}
+
+/// List all books (in shelf and archived) that have reading statistics so the
+/// reader can compare them and optionally delete a single book's stats.
+pub fn list_book_stat_entries() -> Result<Vec<BookStatItem>, String> {
+    let guard = book::store().lock().unwrap();
+    let s = guard.as_ref().ok_or("数据库未初始化")?;
+    let rows = s.book_stat_entries().map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| BookStatItem {
+            id: r.id,
+            is_archived: r.is_archived,
+            title: r.title,
+            seconds: r.seconds,
+            chapters_finished: r.chapters_finished,
+            is_finished: r.is_finished,
+            archived_at: r.archived_at,
+        })
+        .collect())
+}
+
+/// Manually delete a single book's reading statistics (either archived or live).
+pub fn delete_book_stats(is_archived: bool, id: i64) -> Result<(), String> {
+    let guard = book::store().lock().unwrap();
+    let s = guard.as_ref().ok_or("数据库未初始化")?;
+    s.delete_book_stats(is_archived, id)
+        .map_err(|e| format!("{e}"))
+}
+
+/// End-of-book reading report shown at the end of the final chapter.
+#[derive(Debug, Clone)]
+pub struct BookFinishReport {
+    pub book_id: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub total_chars: i64,
+    pub chapter_count: i64,
+    pub chapters_completed: i64,
+    pub total_secs: i64,
+    pub active_days: i64,
+    pub span_days: i64,
+    pub first_read_at: Option<i64>,
+    pub last_read_at: Option<i64>,
+    pub longest_sitting: i64,
+    pub latest_hour: Option<i64>,
+    pub book_cpm: Option<f64>,
+    pub library_cpm: Option<f64>,
+    pub annotations: i64,
+    pub bookmarks: i64,
+    pub text_cuts: i64,
+    pub top_chapter_title: Option<String>,
+    pub top_chapter_secs: i64,
+    pub top_characters: Vec<String>,
+    pub closing_line: String,
+}
+
+/// Compute a single book's completion report from local reading history and
+/// already-cached book metadata. Zero model calls, instant.
+pub fn book_finish_report(book_id: i64, tz_secs: i64) -> Result<BookFinishReport, String> {
+    let (
+        meta,
+        raw_events,
+        book_windows,
+        all_windows,
+        completed_chapters,
+        bookmarks_cnt,
+        annotations_cnt,
+        cuts_cnt,
+        top_chapter_title,
+        top_chapter_secs,
+        top_characters,
+    ) = {
+        let guard = book::store().lock().unwrap();
+        let s = guard.as_ref().ok_or("数据库未初始化")?;
+        let books = s.library().map_err(|e| format!("{e}"))?;
+        let meta = books
+            .into_iter()
+            .find(|b| b.id == book_id)
+            .ok_or("找不到这本书")?;
+        let raw_events = s.book_events(book_id).map_err(|e| format!("{e}"))?;
+        let book_windows = s.book_windows(book_id).map_err(|e| format!("{e}"))?;
+        let all_windows = s.windows_since(0).map_err(|e| format!("{e}"))?;
+        let completed_chapters = s
+            .completed_chapters(book_id)
+            .map_err(|e| format!("{e}"))?
+            .len() as i64;
+        let bookmarks_cnt = s.bookmarks(book_id).map_err(|e| format!("{e}"))?.len() as i64;
+        let annotations_cnt = s
+            .annotations(book_id)
+            .map_err(|e| format!("{e}"))?
+            .len() as i64;
+        let cuts_cnt = s
+            .book_text_cuts_count(book_id)
+            .map_err(|e| format!("{e}"))?;
+
+        let mut chapter_secs: HashMap<i64, i64> = HashMap::new();
+        for w in &book_windows {
+            *chapter_secs.entry(w.chapter).or_default() += w.secs;
+        }
+        let (top_chapter_title, top_chapter_secs) = chapter_secs
+            .into_iter()
+            .max_by_key(|(_, secs)| *secs)
+            .and_then(|(idx, secs)| {
+                let title = s.chapter_title(book_id, idx).ok().flatten()?;
+                Some((Some(title), secs))
+            })
+            .unwrap_or((None, 0));
+
+        // Pull top 3 characters from cast_cache if it was already built (zero cost).
+        let top_characters: Vec<String> = s
+            .conn()
+            .query_row(
+                "SELECT json FROM cast_cache WHERE book_id = ?1",
+                [book_id],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+            .and_then(|v| {
+                let arr = v.get("nodes")?.as_array()?;
+                let mut pairs: Vec<(String, i64)> = arr
+                    .iter()
+                    .filter_map(|n| {
+                        let name = n.get("name")?.as_str()?.trim().to_string();
+                        if name.is_empty() {
+                            return None;
+                        }
+                        let count = n
+                            .get("mentions")
+                            .or_else(|| n.get("count"))
+                            .and_then(|c| c.as_i64())
+                            .unwrap_or(0);
+                        Some((name, count))
+                    })
+                    .collect();
+                pairs.sort_by(|a, b| b.1.cmp(&a.1));
+                Some(pairs.into_iter().take(3).map(|(n, _)| n).collect())
+            })
+            .unwrap_or_default();
+
+        (
+            meta,
+            raw_events,
+            book_windows,
+            all_windows,
+            completed_chapters,
+            bookmarks_cnt,
+            annotations_cnt,
+            cuts_cnt,
+            top_chapter_title,
+            top_chapter_secs,
+            top_characters,
+        )
+    };
+
+    let sessions: Vec<Session> = raw_events
+        .iter()
+        .map(|&(started, ended, _, _)| Session {
+            book_id,
+            started,
+            ended,
+        })
+        .collect();
+    let total_secs: i64 = sessions.iter().map(|s| s.secs()).sum();
+    let sittings = rs::sittings(&sessions);
+    let longest_sitting = sittings.iter().map(|s| s.secs()).max().unwrap_or(0);
+    let by_day = rs::by_day(&sessions, tz_secs);
+    let active_days = by_day.len() as i64;
+    let first_read_at = sessions.iter().map(|s| s.started).min();
+    let last_read_at = sessions.iter().map(|s| s.ended).max();
+    let span_days = match (first_read_at, last_read_at) {
+        (Some(a), Some(b)) => {
+            let da = rs::local_day(a, tz_secs);
+            let db = rs::local_day(b, tz_secs);
+            (db - da).max(0) + 1
+        }
+        _ => 0,
+    };
+
+    // Find the latest night hour (0..5 beats 23..6 in "late night" ranking).
+    let (hours, _) = rs::clock(&sessions, tz_secs);
+    let latest_hour = [4, 3, 2, 1, 0, 23, 22]
+        .into_iter()
+        .find(|&h| hours[h as usize] >= 120);
+
+    let book_cpm = rs::speed(&book_windows).map(|s| s.cpm);
+    let library_cpm = rs::speed(&all_windows).map(|s| s.cpm);
+    let total_chars = chars_from_bytes(meta.total_bytes);
+
+    let closing_line = if span_days >= 30 {
+        format!("横跨 {} 天，终于把这段漫长的旅程走到了终点。", span_days)
+    } else if latest_hour.is_some_and(|h| h <= 4) {
+        "陪它熬过的那些深夜，此刻都有了回响。".to_string()
+    } else if total_chars >= 1_000_000 {
+        "百万字的长卷合上，这一程辛苦，也值得。".to_string()
+    } else if let (Some(bc), Some(lc)) = (book_cpm, library_cpm) {
+        if bc >= lc * 1.15 {
+            "读得比平时快了不少，看来是真的放不下手。".to_string()
+        } else if bc <= lc * 0.85 {
+            "读得比平时慢了些，好故事本来就值得慢慢翻。".to_string()
+        } else {
+            "合上最后一页，山高水长，江湖再见。".to_string()
+        }
+    } else {
+        "合上最后一页，山高水长，江湖再见。".to_string()
+    };
+
+    Ok(BookFinishReport {
+        book_id,
+        title: meta.title,
+        author: meta.author,
+        total_chars,
+        chapter_count: meta.chapter_count,
+        chapters_completed: completed_chapters.max(1).min(meta.chapter_count),
+        total_secs,
+        active_days,
+        span_days,
+        first_read_at,
+        last_read_at,
+        longest_sitting,
+        latest_hour,
+        book_cpm,
+        library_cpm,
+        annotations: annotations_cnt,
+        bookmarks: bookmarks_cnt,
+        text_cuts: cuts_cnt,
+        top_chapter_title,
+        top_chapter_secs,
+        top_characters,
+        closing_line,
     })
 }
 

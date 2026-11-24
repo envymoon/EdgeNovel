@@ -6,6 +6,7 @@ import 'ai_page.dart';
 import 'ai_runtime_page.dart';
 import 'feedback_page.dart';
 import 'font_page.dart';
+import 'lan_sync_page.dart';
 import 'platform_support.dart';
 import 'source_manager_page.dart';
 import 'src/rust/api/book.dart';
@@ -268,6 +269,18 @@ class SettingsPage extends StatelessWidget {
                 _group(
                   t,
                   children: [
+                    _entry(
+                      t,
+                      icon: Icons.sync_alt,
+                      title: '数据同步与备份',
+                      subtitle: '局域网三端无云端合并，或导出/导入全量数据包',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => LanSyncPage(settings: settings),
+                        ),
+                      ),
+                    ),
                     _entry(
                       t,
                       icon: Icons.storage_outlined,

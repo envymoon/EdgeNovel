@@ -150,7 +150,7 @@ fn adopt_books() {
 }
 
 /// Where the library lives, so the settings page can weigh it.
-fn db_path() -> &'static OnceLock<PathBuf> {
+pub(crate) fn db_path() -> &'static OnceLock<PathBuf> {
     static P: OnceLock<PathBuf> = OnceLock::new();
     &P
 }

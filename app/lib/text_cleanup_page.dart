@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text;
 
 import 'app_localizations.dart';
+import 'easter_eggs.dart';
 import 'reader_state.dart';
 import 'src/rust/api/book.dart';
 import 'src/rust/api/cleanup.dart';
@@ -170,6 +171,11 @@ class _TextCleanupPageState extends State<TextCleanupPage> {
         cuts: cuts,
       );
       await widget.reader.reopenAfterRecut(_path);
+      EasterEggEngine.instance.onTextCleaned(
+        removedCount: n,
+        bookTitle: widget.book.title,
+        enabled: widget.settings.easterEggs,
+      );
       if (!mounted) return;
       _say('已删除 $n 处');
       await _load();
