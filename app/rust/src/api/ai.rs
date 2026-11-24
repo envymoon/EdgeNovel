@@ -427,17 +427,24 @@ fn dir_bytes(p: &Path) -> i64 {
 
 pub fn ai_status() -> Result<AiStatus, String> {
     let dir = ai_dir()?;
+    let engine = find_engine(dir).is_some();
+    let model = find_model(dir);
+    let embed = find_gguf(dir, true);
+    let running = engine
+        && ((model.is_some() && health(PORT)) || (embed.is_some() && health(EMBED_PORT)));
     Ok(AiStatus {
         dir: dir.display().to_string(),
-        engine: find_engine(dir).is_some(),
-        model: find_model(dir)
+        engine,
+        model: model
+            .as_ref()
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
-        embed_model: find_gguf(dir, true)
+        embed_model: embed
+            .as_ref()
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
         engine_bytes: engine_files(dir).iter().map(|p| dir_bytes(p)).sum(),
-        model_bytes: file_bytes(find_model(dir)),
-        embed_bytes: file_bytes(find_gguf(dir, true)),
-        running: health(PORT) || health(EMBED_PORT),
+        model_bytes: file_bytes(model),
+        embed_bytes: file_bytes(embed),
+        running,
     })
 }
 
@@ -476,6 +483,17 @@ pub fn delete_engine() -> Result<(), String> {
 }
 
 fn health(port: u16) -> bool {
+    // Fast loopback pre-check: on Windows, a closed localhost port takes ~2s
+    // with the default 2s connect_timeout, which stalls UI status checks.
+    // A listening loopback server completes TCP handshake in <1ms.
+    if TcpStream::connect_timeout(
+        &([127, 0, 0, 1], port).into(),
+        Duration::from_millis(120),
+    )
+    .is_err()
+    {
+        return false;
+    }
     // /health and /v1/models are public in llama.cpp. Use a protected endpoint
     // on phones so a different llama-server instance cannot be reused.
     let path = if cfg!(any(target_os = "android", in_process_engine)) {
@@ -1689,13 +1707,21 @@ fn summarize_relation(a: &str, b: &str, evidence: &[(usize, String)]) -> Result<
         evidence.len()
     );
     // One considered pass. A low temperature keeps it grounded; the retry is only
-    // for the rare pass that comes back empty (all thinking, no answer).
+    // for the rare pass that comes back empty (all thinking, no answer). If both
+    // thinking passes exhaust the budget or loop (common on dense pairs with 1.7B),
+    // fall back to a direct /no_think pass rather than giving up.
     for _ in 0..2 {
-        let raw = chat_once(&system, &user, 1200, 0.4)?;
+        let raw = chat_once(&system, &user, 1800, 0.4)?;
         let summary = after_think(&raw, 60);
         if !summary.is_empty() {
             return Ok(summary);
         }
+    }
+    let direct_user = format!("{user} /no_think");
+    let raw = chat_once(&system, &direct_user, 256, 0.2)?;
+    let summary = after_think(&raw, 60);
+    if !summary.is_empty() {
+        return Ok(summary);
     }
     Ok(format!("{a}与{b}多次同场，模型没能概括出两人的来往。"))
 }
@@ -1747,11 +1773,17 @@ fn summarize_person(
         evidence.len()
     );
     for _ in 0..2 {
-        let raw = chat_once(&system, &user, 1400, 0.4)?;
+        let raw = chat_once(&system, &user, 2000, 0.4)?;
         let summary = after_think(&raw, 110);
         if !summary.is_empty() {
             return Ok(summary);
         }
+    }
+    let direct_user = format!("{user} /no_think");
+    let raw = chat_once(&system, &direct_user, 320, 0.2)?;
+    let summary = after_think(&raw, 110);
+    if !summary.is_empty() {
+        return Ok(summary);
     }
     Ok(format!("{name}多次出场，模型没能概括出 TA 的为人和经历。"))
 }
