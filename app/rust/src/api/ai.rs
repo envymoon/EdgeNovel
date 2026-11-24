@@ -1579,12 +1579,20 @@ fn chat_once(
     max_tokens: u32,
     temperature: f32,
 ) -> Result<String, String> {
+    // Official Qwen3 thinking-mode sampling defaults: top_p=0.95, top_k=20,
+    // min_p=0, no presence/repeat penalty (penalties in thinking mode trigger
+    // endless reasoning loops).
     let body = json!({
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "temperature": temperature,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0,
         "max_tokens": max_tokens,
     });
     let mut watch = LoopWatch::default();
@@ -1658,18 +1666,38 @@ fn tail_pick(raw: &str, vocab: &[&'static str]) -> Option<&'static str> {
 }
 
 /// The answer after a thinking model's `</think>` block, cleaned up for display:
-/// newlines collapsed, trimmed, and clipped so one over-eager pair can't write a
-/// paragraph. Empty if the model produced nothing usable.
+/// newlines collapsed, trimmed, and clipped at a sentence boundary when
+/// possible so one over-eager pair never ends mid-word with an ellipsis.
 fn after_think(raw: &str, max_chars: usize) -> String {
     let tail = raw.rsplit("</think>").next().unwrap_or(raw);
     let one_line: String = tail.split_whitespace().collect::<Vec<_>>().join(" ");
     let s = one_line
         .trim()
         .trim_matches(|c| "。.！!；;：:\"“”".contains(c));
-    let mut out: String = s.chars().take(max_chars).collect();
-    if out.chars().count() < s.chars().count() {
-        out.push('…');
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
     }
+    let head: String = s.chars().take(max_chars).collect();
+    if let Some((byte_idx, ch)) = head
+        .char_indices()
+        .rev()
+        .find(|(_, c)| "。！？；".contains(*c))
+    {
+        let sentence = head[..byte_idx].trim_end_matches(|c| "，、：； ".contains(c));
+        let kept = sentence.chars().count();
+        if kept >= (max_chars / 2).min(20) {
+            let mut complete = sentence.to_string();
+            if ch == '！' || ch == '？' {
+                complete.push(ch);
+            }
+            return complete;
+        }
+    }
+    let mut out = head
+        .trim_end_matches(|c| "，、：；。.！!？? ".contains(c))
+        .to_string();
+    out.push('…');
     out
 }
 
@@ -1706,20 +1734,19 @@ fn summarize_relation(a: &str, b: &str, evidence: &[(usize, String)]) -> Result<
          用一两句话概括【{a}】和【{b}】之间的来往。",
         evidence.len()
     );
-    // One considered pass. A low temperature keeps it grounded; the retry is only
-    // for the rare pass that comes back empty (all thinking, no answer). If both
-    // thinking passes exhaust the budget or loop (common on dense pairs with 1.7B),
-    // fall back to a direct /no_think pass rather than giving up.
+    // Official Qwen3 thinking-mode temperature (0.6) avoids low-temp reasoning
+    // loops while keeping prose grounded. If both thinking passes still come
+    // back empty, fall back to a direct /no_think pass rather than giving up.
     for _ in 0..2 {
-        let raw = chat_once(&system, &user, 1800, 0.4)?;
-        let summary = after_think(&raw, 60);
+        let raw = chat_once(&system, &user, 1800, 0.6)?;
+        let summary = after_think(&raw, 85);
         if !summary.is_empty() {
             return Ok(summary);
         }
     }
     let direct_user = format!("{user} /no_think");
     let raw = chat_once(&system, &direct_user, 256, 0.2)?;
-    let summary = after_think(&raw, 60);
+    let summary = after_think(&raw, 85);
     if !summary.is_empty() {
         return Ok(summary);
     }
@@ -1773,15 +1800,15 @@ fn summarize_person(
         evidence.len()
     );
     for _ in 0..2 {
-        let raw = chat_once(&system, &user, 2000, 0.4)?;
-        let summary = after_think(&raw, 110);
+        let raw = chat_once(&system, &user, 2000, 0.6)?;
+        let summary = after_think(&raw, 140);
         if !summary.is_empty() {
             return Ok(summary);
         }
     }
     let direct_user = format!("{user} /no_think");
     let raw = chat_once(&system, &direct_user, 320, 0.2)?;
-    let summary = after_think(&raw, 110);
+    let summary = after_think(&raw, 140);
     if !summary.is_empty() {
         return Ok(summary);
     }
