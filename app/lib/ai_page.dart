@@ -76,7 +76,8 @@ class _AiPageState extends State<AiPage> {
   static int _lightPendingBytes = 0;
   static ResumableFileDownload? _lightTransfer;
   static var _lightCancelled = false;
-  static int _chatPendingBytes = 0;
+  static Map<String, int> _chatPendingById = const {};
+  static String? _downloadingChatId;
   static int _embedPendingBytes = 0;
   static ResumableFileDownload? _chatTransfer;
   static ResumableFileDownload? _embedTransfer;
@@ -138,11 +139,12 @@ class _AiPageState extends State<AiPage> {
         ? 0
         : await pendingDownloadBytes(lightVoiceDir(ts.dir), lightVoiceFiles);
     final states = await Future.wait([
-      _models.inspect(s.dir, chatModelPackage),
+      _models.inspect(s.dir, chatModelStandardPackage),
       _models.inspect(s.dir, embeddingModelPackage),
     ]);
     final pending = await Future.wait([
-      _models.pendingDownloadBytes(s.dir, chatModelPackage),
+      _models.pendingDownloadBytes(s.dir, chatModelStandardPackage),
+      _models.pendingDownloadBytes(s.dir, chatModelHighPackage),
       _models.pendingDownloadBytes(s.dir, embeddingModelPackage),
     ]);
     if (mounted) {
@@ -155,8 +157,11 @@ class _AiPageState extends State<AiPage> {
         _lightPendingBytes = lightPending;
         _chatModel = states[0];
         _embeddingModel = states[1];
-        _chatPendingBytes = pending[0];
-        _embedPendingBytes = pending[1];
+        _chatPendingById = {
+          chatModelStandardPackage.id: pending[0],
+          chatModelHighPackage.id: pending[1],
+        };
+        _embedPendingBytes = pending[2];
       });
       if (widget.showVoice && !_shownVoice) {
         _shownVoice = true;
@@ -312,12 +317,42 @@ class _AiPageState extends State<AiPage> {
     }
   }
 
-  Future<void> _downloadModel() => _downloadManagedModel(
-    chatModelPackage,
-    onProgress: (value) => _modelProgress = value,
-    onError: (value) => _modelError = value,
-    onStage: (value) => _modelStage = value,
-  );
+  Future<void> _downloadChatModel(ManagedModelPackage package) async {
+    if (_chatTransfer != null) return;
+    _downloadingChatId = package.id;
+    try {
+      await _downloadManagedModel(
+        package,
+        onProgress: (value) => _modelProgress = value,
+        onError: (value) => _modelError = value,
+        onStage: (value) => _modelStage = value,
+      );
+    } finally {
+      _downloadingChatId = null;
+    }
+  }
+
+  Future<void> _switchChatToRollback(ManagedModelPackage target) async {
+    try {
+      await _models.rollback(
+        directory: _status!.dir,
+        package: target,
+        stopEngine: stopAi,
+      );
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已切换至 ${target.displayName}')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('切换失败：$e')));
+      }
+    }
+  }
 
   Future<void> _downloadEmbed() => _downloadManagedModel(
     embeddingModelPackage,
@@ -536,6 +571,34 @@ class _AiPageState extends State<AiPage> {
     }
   }
 
+  static String _chatTierTitle(ManagedModelPackage package) =>
+      package.id == chatModelHighPackage.id
+      ? '分析模型 · 高配 1.7B'
+      : '分析模型 · 标准 0.6B';
+
+  String _chatTierSubtitle(
+    ManagedModelPackage package,
+    ManagedModelState? state,
+    String? detectedName,
+    int activeBytes,
+  ) {
+    final isVerifiedActive = state?.isVerifiedCurrent(package) == true;
+    final isLegacyStandard =
+        package.id == chatModelStandardPackage.id &&
+        (state?.installed == true || detectedName != null) &&
+        state?.activePackageFrom(chatModelPackages) == null;
+    if (isVerifiedActive) {
+      return '当前使用 · 已校验 · ${_size(activeBytes)}';
+    }
+    if (isLegacyStandard) {
+      return '当前使用（旧版）· ${_size(activeBytes)}';
+    }
+    if (state?.isVerifiedRollback(package) == true) {
+      return '已下载 · ${package.estimatedLabel}';
+    }
+    return package.estimatedLabel;
+  }
+
   String _modelSubtitle(
     ManagedModelPackage package,
     ManagedModelState? state,
@@ -543,7 +606,9 @@ class _AiPageState extends State<AiPage> {
     int bytes,
   ) {
     if (state?.installed != true && detectedName == null) {
-      return package.role == ManagedModelRole.chat ? '约 640 MB' : '约 48 MB';
+      return package.estimatedLabel.isNotEmpty
+          ? package.estimatedLabel
+          : (package.role == ManagedModelRole.chat ? '约 482 MB' : '约 48 MB');
     }
     final verified = state?.isVerifiedCurrent(package) == true
         ? '已校验'
@@ -668,47 +733,74 @@ class _AiPageState extends State<AiPage> {
                               ? () => _delete('AI 引擎', deleteEngine)
                               : null,
                         ),
-                      _item(
-                        t,
-                        ok: chatInstalled,
-                        title: '分析模型',
-                        subtitle: _withPending(
-                          _modelSubtitle(
-                            chatModelPackage,
-                            _chatModel,
-                            s.model,
-                            s.modelBytes,
-                          ),
-                          _chatPendingBytes,
-                        ),
-                        progress: _modelProgress,
-                        progressText: _modelStage,
-                        error: _modelError,
-                        onDownload: _downloadModel,
-                        downloadLabel: _chatPendingBytes > 0 ? '继续' : '下载',
-                        hasPendingDownload: _chatPendingBytes > 0,
-                        onPause: () => _pauseModelDownload(chatModelPackage),
-                        onCancel: () => _cancelModelDownload(
-                          chatModelPackage,
-                          onProgress: (value) => _modelProgress = value,
-                          onError: (value) => _modelError = value,
-                          onStage: (value) => _modelStage = value,
-                        ),
-                        onReinstall: chatInstalled ? _downloadModel : null,
-                        onRollback: _chatModel?.canRollback == true
-                            ? () => _rollbackModel(chatModelPackage, '分析模型')
-                            : null,
-                        onDelete: chatInstalled
-                            ? () => _delete(
-                                '分析模型',
-                                () => _models.deleteInstalled(
-                                  directory: s.dir,
-                                  package: chatModelPackage,
-                                  stopEngine: stopAi,
-                                ),
-                              )
-                            : null,
-                      ),
+                      for (final pkg in chatModelPackages)
+                        () {
+                          final isVerifiedActive =
+                              _chatModel?.isVerifiedCurrent(pkg) == true;
+                          final isLegacyStandard =
+                              pkg.id == chatModelStandardPackage.id &&
+                              chatInstalled &&
+                              _chatModel?.activePackageFrom(
+                                    chatModelPackages,
+                                  ) ==
+                                  null;
+                          final isActive = isVerifiedActive || isLegacyStandard;
+                          final isCached =
+                              _chatModel?.isVerifiedRollback(pkg) == true;
+                          final isInstalled = isActive || isCached;
+                          final isDownloadingThis =
+                              _downloadingChatId == pkg.id;
+                          final pending = _chatPendingById[pkg.id] ?? 0;
+                          final title = _chatTierTitle(pkg);
+                          return _item(
+                            t,
+                            ok: isInstalled,
+                            title: title,
+                            subtitle: _withPending(
+                              _chatTierSubtitle(
+                                pkg,
+                                _chatModel,
+                                s.model,
+                                s.modelBytes,
+                              ),
+                              pending,
+                            ),
+                            progress: isDownloadingThis ? _modelProgress : null,
+                            progressText: isDownloadingThis
+                                ? _modelStage
+                                : null,
+                            error: isDownloadingThis ? _modelError : null,
+                            onDownload: () => _downloadChatModel(pkg),
+                            downloadLabel: pending > 0 ? '继续' : '下载',
+                            actionLabel: isCached ? '切换' : null,
+                            onAction: isCached
+                                ? () => _switchChatToRollback(pkg)
+                                : null,
+                            hasPendingDownload: pending > 0,
+                            onPause: isDownloadingThis
+                                ? () => _pauseModelDownload(pkg)
+                                : null,
+                            onCancel: () => _cancelModelDownload(
+                              pkg,
+                              onProgress: (value) => _modelProgress = value,
+                              onError: (value) => _modelError = value,
+                              onStage: (value) => _modelStage = value,
+                            ),
+                            onReinstall: isInstalled
+                                ? () => _downloadChatModel(pkg)
+                                : null,
+                            onDelete: isInstalled
+                                ? () => _delete(
+                                    title,
+                                    () => _models.deletePackage(
+                                      directory: s.dir,
+                                      package: pkg,
+                                      stopEngine: stopAi,
+                                    ),
+                                  )
+                                : null,
+                          );
+                        }(),
                       _item(
                         t,
                         ok: embeddingInstalled,
@@ -1023,6 +1115,8 @@ class _AiPageState extends State<AiPage> {
     required String? error,
     required VoidCallback onDownload,
     String downloadLabel = '下载',
+    String? actionLabel,
+    VoidCallback? onAction,
     bool hasPendingDownload = false,
     VoidCallback? onPause,
     VoidCallback? onCancel,
@@ -1083,6 +1177,16 @@ class _AiPageState extends State<AiPage> {
                     onPressed: onCancel,
                     icon: const Icon(Icons.close),
                   ),
+              ],
+              if (ok &&
+                  progress == null &&
+                  onAction != null &&
+                  actionLabel != null) ...[
+                FilledButton.tonal(
+                  onPressed: onAction,
+                  child: Text(actionLabel),
+                ),
+                const SizedBox(width: 2),
               ],
               if (ok &&
                   progress == null &&

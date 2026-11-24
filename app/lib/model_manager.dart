@@ -17,6 +17,7 @@ class ManagedModelPackage {
     required this.urls,
     required this.sha256,
     required this.minimumBytes,
+    this.estimatedLabel = '',
   });
 
   final String id;
@@ -27,6 +28,7 @@ class ManagedModelPackage {
   final List<String> urls;
   final String sha256;
   final int minimumBytes;
+  final String estimatedLabel;
 
   String get activeFileName => switch (role) {
     ManagedModelRole.chat => 'novel-chat-current.gguf',
@@ -43,22 +45,41 @@ class ManagedModelPackage {
     ManagedModelRole.embedding => '.novel-embed-model.json',
   };
 
-  String get downloadFileName => '$activeFileName.download';
+  String get downloadFileName => '$activeFileName.$id.download';
 }
 
-const chatModelPackage = ManagedModelPackage(
-  id: 'qwen3-0.6b-q8-zh-pruned',
-  version: '2026.11-q8-zh',
-  displayName: 'Qwen3 0.6B Q8 中文精简版',
+const chatModelStandardPackage = ManagedModelPackage(
+  id: 'qwen3-0.6b-q8-zh-only',
+  version: '2026.11-q8-zh-only',
+  displayName: 'Qwen3 0.6B 标准版',
   role: ManagedModelRole.chat,
-  sourceFileName: 'Qwen3-0.6B-Q8_0-zh.gguf',
+  sourceFileName: 'Qwen3-0.6B-Q8_0-zh-only.gguf',
   urls: [
-    'https://huggingface.co/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh.gguf',
-    'https://hf-mirror.com/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh.gguf',
+    'https://huggingface.co/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh-only.gguf',
+    'https://hf-mirror.com/ianhaimo/Qwen3-0.6B-Q8_0-zh-GGUF/resolve/main/Qwen3-0.6B-Q8_0-zh-only.gguf',
   ],
-  sha256: 'fff16c9a40d75362d083acffcb9e2741f557a3d115777cd479668a6a357ede8b',
-  minimumBytes: 480 * 1024 * 1024,
+  sha256: 'f412a1321ab5dd3bff203b004f22dc53127f465b703e2211c44f7416ae0fce99',
+  minimumBytes: 450 * 1024 * 1024,
+  estimatedLabel: '约 482 MB',
 );
+
+const chatModelHighPackage = ManagedModelPackage(
+  id: 'qwen3-1.7b-q4km-zh-only',
+  version: '2026.11-q4km-zh-only',
+  displayName: 'Qwen3 1.7B 高配版',
+  role: ManagedModelRole.chat,
+  sourceFileName: 'Qwen3-1.7B-Q4_K_M-zh.gguf',
+  urls: [
+    'https://huggingface.co/ianhaimo/Qwen3-1.7B-Q4_K_M-zh-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M-zh.gguf',
+    'https://hf-mirror.com/ianhaimo/Qwen3-1.7B-Q4_K_M-zh-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M-zh.gguf',
+  ],
+  sha256: 'ecf8f2809324f95054b377d961cb995f2c1b254557665cb9b68e39220270c0f4',
+  minimumBytes: 820 * 1024 * 1024,
+  estimatedLabel: '约 861 MB',
+);
+
+const chatModelPackage = chatModelStandardPackage;
+const chatModelPackages = [chatModelStandardPackage, chatModelHighPackage];
 
 const embeddingModelPackage = ManagedModelPackage(
   id: 'bge-small-zh-v1.5-f16',
@@ -72,6 +93,7 @@ const embeddingModelPackage = ManagedModelPackage(
   ],
   sha256: 'ab9b81d9cd329c712eee379cf0068eabe6a5e2a01d0def61535eba9384085e2c',
   minimumBytes: 40 * 1024 * 1024,
+  estimatedLabel: '约 48 MB',
 );
 
 /// The downloaded file itself is wrong; any other failure leaves it worth
@@ -113,6 +135,19 @@ class ManagedModelState {
       activeId == package.id &&
       activeVersion == package.version &&
       activeSha256 == package.sha256;
+
+  bool isVerifiedRollback(ManagedModelPackage package) =>
+      canRollback &&
+      previousId == package.id &&
+      previousVersion == package.version &&
+      previousSha256 == package.sha256;
+
+  ManagedModelPackage? activePackageFrom(List<ManagedModelPackage> packages) {
+    for (final package in packages) {
+      if (isVerifiedCurrent(package)) return package;
+    }
+    return null;
+  }
 }
 
 class ModelManager {
@@ -280,6 +315,69 @@ class ModelManager {
     if (await record.exists()) await record.delete();
     final download = downloadTarget(directory, package);
     await ResumableFileDownload.discard(download);
+  }
+
+  /// Removes only [package]. When another model occupies the opposite slot
+  /// (active vs rollback), keeps that other model intact (promoting it to
+  /// active if [package] was the active one).
+  Future<void> deletePackage({
+    required String directory,
+    required ManagedModelPackage package,
+    required Future<void> Function() stopEngine,
+  }) async {
+    final state = await inspect(directory, package);
+    final dir = Directory(directory);
+    final download = downloadTarget(directory, package);
+
+    if (state.isVerifiedRollback(package)) {
+      if (state.rollbackFile case final previous?) {
+        if (await previous.exists()) await previous.delete();
+      }
+      await _writeRecord(dir, package, {
+        'activeId': state.activeId,
+        'activeVersion': state.activeVersion,
+        'activeSha256': state.activeSha256,
+        'activeFile': state.activeFile == null
+            ? null
+            : _name(state.activeFile!.path),
+        'previousId': null,
+        'previousVersion': null,
+        'previousSha256': null,
+        'previousFile': null,
+        'installedAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      await ResumableFileDownload.discard(download);
+      return;
+    }
+
+    if (state.isVerifiedCurrent(package) && state.rollbackFile != null) {
+      await stopEngine();
+      final activeTarget = File(_join(directory, package.activeFileName));
+      if (state.activeFile case final active?) {
+        if (await active.exists()) await active.delete();
+      }
+      if (await activeTarget.exists()) await activeTarget.delete();
+      await state.rollbackFile!.rename(activeTarget.path);
+      await _writeRecord(dir, package, {
+        'activeId': state.previousId,
+        'activeVersion': state.previousVersion,
+        'activeSha256': state.previousSha256,
+        'activeFile': package.activeFileName,
+        'previousId': null,
+        'previousVersion': null,
+        'previousSha256': null,
+        'previousFile': null,
+        'installedAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      await ResumableFileDownload.discard(download);
+      return;
+    }
+
+    await deleteInstalled(
+      directory: directory,
+      package: package,
+      stopEngine: stopEngine,
+    );
   }
 
   Future<void> _verify(File file, ManagedModelPackage package) async {
