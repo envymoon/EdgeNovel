@@ -200,7 +200,7 @@ const LEXICON: &[(&str, &[&str])] = &[
         "悬疑灵异",
         &[
             "凶手", "命案", "鬼魂", "阴气", "灵异", "凶案", "法医", "冤魂", "厉鬼", "案发现场",
-            "尸检", "邪祟", "阴森", "鬼怪", "诡秘", "失控", "非凡者",
+            "尸检", "邪祟", "阴森", "鬼怪",
         ],
     ),
     (
@@ -222,6 +222,96 @@ const LEXICON: &[(&str, &[&str])] = &[
             "社长",
             "galgame",
             "攻略",
+        ],
+    ),
+];
+
+/// High-precision secondary subgenres. Evaluated independently from the 14
+/// primary categories so they refine a book (e.g. `都市、官场`, `都市、鉴宝`,
+/// `奇幻、克苏鲁`, `文学、青春校园`) without stealing primary votes.
+const SUBGENRES: &[(&str, &[&str])] = &[
+    (
+        "官场",
+        &[
+            "市委", "县委", "省委", "常委会", "纪委", "组织部", "政绩", "副市长", "省长", "县长",
+            "书记", "市长", "厅长", "干部",
+        ],
+    ),
+    (
+        "鉴宝",
+        &[
+            "古玩", "青花瓷", "捡漏", "翡翠", "赌石", "潘家园", "字画", "拍卖行", "瓷器", "真品",
+            "赝品", "古董", "玉石", "鉴宝",
+        ],
+    ),
+    (
+        "医道",
+        &[
+            "门诊", "手术室", "急诊", "中医", "针灸", "病历", "脉象", "主治医师", "科室", "病房",
+            "病人", "诊所", "药方", "医术",
+        ],
+    ),
+    (
+        "商战",
+        &[
+            "融资", "股权", "并购", "风投", "上市公司", "估值", "董事会", "IPO", "财报", "投资人",
+            "资本", "控股", "市值", "风控",
+        ],
+    ),
+    (
+        "文娱",
+        &[
+            "票房", "导演", "剧本", "片场", "唱片", "专辑", "影帝", "综艺", "娱乐圈", "开机",
+            "杀青", "剧组", "配角", "试镜",
+        ],
+    ),
+    (
+        "末世",
+        &[
+            "丧尸", "幸存者", "避难所", "基地市", "变异体", "晶核", "末日", "尸潮", "安全区",
+            "进化者", "异能者", "感染者",
+        ],
+    ),
+    (
+        "诸天无限",
+        &[
+            "主神", "轮回者", "位面", "任务世界", "主线任务", "支线任务", "奖励点", "主神空间",
+            "轮回空间", "穿梭",
+        ],
+    ),
+    (
+        "刑侦推理",
+        &[
+            "刑警", "嫌疑人", "尸检", "不在场证明", "案发现场", "重案组", "审讯室", "作案动机",
+            "凶器", "刑侦", "法医", "目击者",
+        ],
+    ),
+    (
+        "克苏鲁",
+        &[
+            "非凡者", "序列", "旧日", "呓语", "不可名状", "邪神", "魔药", "失控", "诡秘",
+            "占卜家", "非凡特性", "污染",
+        ],
+    ),
+    (
+        "青春校园",
+        &[
+            "高考", "高三", "晚自习", "班主任", "宿舍", "军训", "课间", "同学录", "教室", "操场",
+            "月考", "同桌", "食堂",
+        ],
+    ),
+    (
+        "年代",
+        &[
+            "供销社", "粮票", "知青", "插队", "生产队", "公社", "大队长", "拖拉机", "国营厂",
+            "布票", "工分", "下乡",
+        ],
+    ),
+    (
+        "古言宅斗",
+        &[
+            "嫡女", "庶女", "侯府", "后宅", "嫁妆", "夫君", "世子妃", "选秀", "侧妃", "姨娘",
+            "祖母", "主母", "聘礼",
         ],
     ),
 ];
@@ -266,14 +356,20 @@ const WORD_CAP: f32 = 160.0;
 /// Below this effective score the "winner" is noise.
 const FLOOR: f32 = 120.0;
 
+/// Strict floor for secondary subgenres so stray mentions never attach a tag.
+const SUB_FLOOR: f32 = 300.0;
+
 /// A runner-up this close to the winner is kept as a genuine second tag.
 const SECOND_SHARE: f32 = 0.55;
 
-/// Every category, scored with per-word saturation and distinct-word breadth
-/// so neither book length nor a single overloaded word can dominate.
-pub fn scores(text: &str) -> Vec<(&'static str, f32)> {
+fn score_lexicon(
+    text: &str,
+    lexicon: &[(&'static str, &[&str])],
+    min_distinct: usize,
+    allow_two_cap: f32,
+) -> Vec<(&'static str, f32)> {
     let chars = text.chars().count().max(1) as f32;
-    let mut out: Vec<(&'static str, f32)> = LEXICON
+    let mut out: Vec<(&'static str, f32)> = lexicon
         .iter()
         .map(|(g, words)| {
             let mut capped = 0.0f32;
@@ -288,7 +384,7 @@ pub fn scores(text: &str) -> Vec<(&'static str, f32)> {
                     }
                 }
             }
-            let eff = if distinct < 2 || (distinct < 3 && capped < 260.0) {
+            let eff = if distinct < 2 || (distinct < min_distinct && capped < allow_two_cap) {
                 0.0
             } else {
                 capped * (0.55 + 0.1 * distinct.min(8) as f32)
@@ -300,13 +396,18 @@ pub fn scores(text: &str) -> Vec<(&'static str, f32)> {
     out
 }
 
-/// One tag, or two when the book really is two things, or `文学` when no
-/// web-novel genre fires and literary prose markers are present, or none when
-/// the text does not say.
+/// Every primary category, scored with per-word saturation and distinct-word
+/// breadth so neither book length nor a single overloaded word can dominate.
+pub fn scores(text: &str) -> Vec<(&'static str, f32)> {
+    score_lexicon(text, LEXICON, 3, 260.0)
+}
+
+/// One or two tags: primary genre(s) (or `文学` fallback), refined with a
+/// high-confidence subgenre when clearly present.
 pub fn tags(text: &str) -> Vec<&'static str> {
     let scored = scores(text);
     let top = scored.first().map(|(_, s)| *s).unwrap_or(0.0);
-    if top < FLOOR {
+    let mut primary: Vec<&'static str> = if top < FLOOR {
         let chars = text.chars().count().max(1) as f32;
         let mut lit_capped = 0.0f32;
         let mut lit_distinct = 0usize;
@@ -321,16 +422,30 @@ pub fn tags(text: &str) -> Vec<&'static str> {
             }
         }
         if lit_distinct >= 3 && lit_capped >= 60.0 {
-            return vec!["文学"];
+            vec!["文学"]
+        } else {
+            Vec::new()
         }
-        return Vec::new();
+    } else {
+        scored
+            .iter()
+            .take(2)
+            .filter(|(_, s)| *s >= (top * SECOND_SHARE).max(FLOOR))
+            .map(|(g, _)| *g)
+            .collect()
+    };
+
+    let sub = score_lexicon(text, SUBGENRES, 3, f32::INFINITY);
+    if let Some((sg, sg_score)) = sub.first().copied().filter(|(_, s)| *s >= SUB_FLOOR) {
+        if primary.is_empty() {
+            primary.push(sg);
+        } else if primary.len() == 1 {
+            primary.push(sg);
+        } else if scored.get(1).map(|(_, s)| sg_score > *s).unwrap_or(false) {
+            primary[1] = sg;
+        }
     }
-    scored
-        .into_iter()
-        .take(2)
-        .filter(|(_, s)| *s >= (top * SECOND_SHARE).max(FLOOR))
-        .map(|(g, _)| g)
-        .collect()
+    primary
 }
 
 #[cfg(test)]
@@ -389,6 +504,17 @@ mod tests {
         let text = filler
             + "黄昏时分，麦田和芦苇荡飘起炊烟，知青插队在生产队住瓦房、点煤油灯，童年岁月留在村庄的河滩与院子里。".repeat(8).as_str()
             + "连长来过一次，孩子们在校门口和球场玩。";
-        assert_eq!(tags(&text), vec!["文学"]);
+        assert_eq!(tags(&text), vec!["文学", "年代"]);
+    }
+
+    #[test]
+    fn high_confidence_subgenre_refines_primary_tag() {
+        let urban_official = "他掏出手机发微信，坐地铁去公司找老板，写字楼电梯里偶遇总裁。".repeat(20)
+            + &"市委常委会结束后，县委书记和副市长在组织部讨论政绩与纪委巡查。".repeat(20);
+        assert_eq!(tags(&urban_official), vec!["都市", "官场"]);
+
+        let lovecraft = "骑士和法师在教廷研究魔法与炼金术。".repeat(20)
+            + &"非凡者服下魔药晋升序列，耳边响起旧日邪神的呓语，险些失控。".repeat(20);
+        assert_eq!(tags(&lovecraft), vec!["奇幻", "克苏鲁"]);
     }
 }
