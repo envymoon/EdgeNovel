@@ -280,6 +280,7 @@ const SCENES: &[Scene] = &[
     ("科幻", "science fiction, neon lights", "futuristic city", "starry sky", "futuristic jacket"),
     ("悬疑灵异", "mystery, dark atmosphere", "foggy alley", "night, moonlight", "coat"),
     ("轻小说", "", "classroom, cherry blossoms", "window light", "school uniform"),
+    ("文学", "literary, warm nostalgia", "quiet countryside, old town", "golden afternoon sunlight", "simple everyday clothes"),
     // Not genres a book is tagged with: worlds to pick by hand.
     ("古风", "chinese style, traditional architecture", "pavilion, lotus pond", "", "hanfu"),
     ("宫廷", "ancient china, imperial palace", "palace, red walls", "", "hanfu, hair ornament"),
@@ -1498,7 +1499,7 @@ mod tests {
         // The genres novel-core tags books with, in its order.
         let genres = [
             "玄幻", "奇幻", "武侠", "仙侠", "都市", "现实", "历史", "军事", "游戏", "体育", "科幻",
-            "悬疑灵异", "轻小说",
+            "悬疑灵异", "轻小说", "文学",
         ];
         for g in genres {
             assert_eq!(default_cover_scene(vec![g.to_string()]), g);

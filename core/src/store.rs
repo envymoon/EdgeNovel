@@ -680,6 +680,35 @@ impl Store {
                 [],
             )?;
         }
+
+        // Re-tag existing books once with the v2 genre classifier (breadth-
+        // weighted + literary fallback), keeping old tags for missing files.
+        let genre_v2: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'genre_v2'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if genre_v2.is_none() {
+            let books: Vec<(i64, String)> = {
+                let mut st = conn.prepare("SELECT id, path FROM books WHERE genre_tags IS NOT NULL")?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<Result<_>>()?
+            };
+            for (book_id, book_path) in books {
+                if Path::new(&book_path).exists() {
+                    conn.execute(
+                        "UPDATE books SET genre_tags = NULL WHERE id = ?1",
+                        params![book_id],
+                    )?;
+                }
+            }
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('genre_v2', 'done')",
+                [],
+            )?;
+        }
         Ok(Store { conn })
     }
 

@@ -15,7 +15,7 @@
 //! worth everything. Anything generic enough to show up in all of them (少女,
 //! 同学, 大人) was measured polluting a real book's score and taken out.
 
-/// The thirteen categories the Chinese web-novel world actually uses.
+/// The web-novel categories plus a literary fallback (`文学`).
 const LEXICON: &[(&str, &[&str])] = &[
     (
         "玄幻",
@@ -31,6 +31,17 @@ const LEXICON: &[(&str, &[&str])] = &[
             "法则之力",
             "大帝",
             "本源",
+            "灵力",
+            "灵诀",
+            "灵阵",
+            "玄力",
+            "玄气",
+            "灵脉",
+            "至尊",
+            "妖兽",
+            "灵兽",
+            "神境",
+            "圣者",
         ],
     ),
     (
@@ -43,11 +54,15 @@ const LEXICON: &[(&str, &[&str])] = &[
             "矮人",
             "教廷",
             "德鲁伊",
-            "魔王",
-            "龙王",
             "血统",
             "屠龙",
             "炼金术",
+            "魔导师",
+            "圣骑士",
+            "魔杖",
+            "巫师",
+            "魔力",
+            "龙族",
         ],
     ),
     (
@@ -63,20 +78,22 @@ const LEXICON: &[(&str, &[&str])] = &[
             "镖局",
             "侠客",
             "武林盟主",
+            "招式",
+            "点穴",
         ],
     ),
     (
         "仙侠",
         &[
             "修真", "筑基", "金丹", "元婴", "渡劫", "灵根", "道友", "洞府", "仙人", "法宝", "真人",
-            "仙气", "飞升",
+            "仙气", "飞升", "化神", "结丹", "修士",
         ],
     ),
     (
         "都市",
         &[
             "手机", "微信", "公司", "老板", "小区", "地铁", "股票", "警局", "上班", "短信", "电梯",
-            "总裁",
+            "总裁", "银行卡", "咖啡厅", "写字楼",
         ],
     ),
     (
@@ -105,6 +122,12 @@ const LEXICON: &[(&str, &[&str])] = &[
             "县令",
             "陛下",
             "将军府",
+            "微臣",
+            "臣妾",
+            "御史",
+            "翰林",
+            "太监",
+            "锦衣卫",
         ],
     ),
     (
@@ -113,13 +136,17 @@ const LEXICON: &[(&str, &[&str])] = &[
             "部队",
             "连长",
             "步枪",
-            "战场",
             "指挥部",
             "师长",
             "坦克",
             "特种兵",
-            "子弹",
             "营长",
+            "手榴弹",
+            "机枪",
+            "军区",
+            "冲锋枪",
+            "炮弹",
+            "团长",
         ],
     ),
     (
@@ -136,12 +163,14 @@ const LEXICON: &[(&str, &[&str])] = &[
             "刷怪",
             "爆装",
             "等级提升",
+            "血条",
+            "技能点",
         ],
     ),
     (
         "体育",
         &[
-            "比赛", "教练", "球队", "进球", "联赛", "球场", "赛季", "球迷",
+            "比赛", "教练", "球队", "进球", "联赛", "球场", "赛季", "球迷", "裁判", "半场", "禁区",
         ],
     ),
     (
@@ -159,12 +188,19 @@ const LEXICON: &[(&str, &[&str])] = &[
             "飞船",
             "智能核心",
             "改造人",
+            "光甲",
+            "师士",
+            "战舰",
+            "星系",
+            "激光",
+            "能量罩",
         ],
     ),
     (
         "悬疑灵异",
         &[
-            "尸体", "凶手", "命案", "鬼魂", "阴气", "诡异", "灵异", "凶案", "法医", "冤魂",
+            "凶手", "命案", "鬼魂", "阴气", "灵异", "凶案", "法医", "冤魂", "厉鬼", "案发现场",
+            "尸检", "邪祟", "阴森", "鬼怪", "诡秘", "失控", "非凡者",
         ],
     ),
     (
@@ -172,50 +208,121 @@ const LEXICON: &[(&str, &[&str])] = &[
         &[
             "学园",
             "社团",
-            "前辈",
             "学姐",
             "东京",
             "漫画",
             "轻音",
             "便当",
-            "部长",
             "女仆",
-            "校门口",
+            "二次元",
+            "动漫",
+            "秋叶原",
+            "轻小说",
+            "吐槽",
+            "社长",
+            "galgame",
+            "攻略",
         ],
     ),
 ];
 
-/// Below this rate the "winner" is noise: a handful of stray words in a million
-/// characters says nothing about what the book is.
-const FLOOR: f32 = 30.0;
+/// Literary / rural / era prose markers used only when no web-novel genre
+/// crosses the floor — so 《草房子》《红瓦黑瓦》《青铜葵花》《黄金时代》 are
+/// recognized as `文学` rather than misclassified by stray words.
+const LITERARY_WORDS: &[&str] = &[
+    "麦田",
+    "芦苇",
+    "炊烟",
+    "田埂",
+    "茅草",
+    "知青",
+    "插队",
+    "生产队",
+    "公社",
+    "煤油灯",
+    "瓦房",
+    "河滩",
+    "桑树",
+    "稻田",
+    "乡下",
+    "暮色",
+    "黄昏",
+    "童年",
+    "岁月",
+    "村庄",
+    "集市",
+    "河堤",
+    "草垛",
+    "柳树",
+    "院子",
+    "胡同",
+];
 
-/// A runner-up this close to the winner is not a runner-up. 龙族 is a school
-/// story about monster hunters and scores 都市 544 / 奇幻 512 — calling it one or
-/// the other would be picking a side the book itself does not pick.
-const SECOND_SHARE: f32 = 0.5;
+/// Cap each individual word's contribution (per million chars) so one
+/// overloaded term (e.g. 太子 in 太子党, or 部长 in 官场) cannot drown out
+/// a genre that matches many distinct discriminators.
+const WORD_CAP: f32 = 160.0;
 
-/// Every category, scored by hits per million characters — so a four-million
-/// character epic cannot out-vote a short book on sheer volume.
+/// Below this effective score the "winner" is noise.
+const FLOOR: f32 = 120.0;
+
+/// A runner-up this close to the winner is kept as a genuine second tag.
+const SECOND_SHARE: f32 = 0.55;
+
+/// Every category, scored with per-word saturation and distinct-word breadth
+/// so neither book length nor a single overloaded word can dominate.
 pub fn scores(text: &str) -> Vec<(&'static str, f32)> {
     let chars = text.chars().count().max(1) as f32;
     let mut out: Vec<(&'static str, f32)> = LEXICON
         .iter()
         .map(|(g, words)| {
-            let hits: usize = words.iter().map(|w| text.matches(w).count()).sum();
-            (*g, hits as f32 * 1_000_000.0 / chars)
+            let mut capped = 0.0f32;
+            let mut distinct = 0usize;
+            for w in *words {
+                let c = text.matches(w).count();
+                if c > 0 {
+                    let rate = c as f32 * 1_000_000.0 / chars;
+                    capped += rate.min(WORD_CAP);
+                    if rate >= 3.0 {
+                        distinct += 1;
+                    }
+                }
+            }
+            let eff = if distinct < 2 || (distinct < 3 && capped < 260.0) {
+                0.0
+            } else {
+                capped * (0.55 + 0.1 * distinct.min(8) as f32)
+            };
+            (*g, eff)
         })
         .collect();
     out.sort_by(|a, b| b.1.total_cmp(&a.1));
     out
 }
 
-/// One tag, or two when the book really is two things, or none when the text
-/// does not say. Never more: a book that is "everything" is a book the reader
-/// learns nothing about.
+/// One tag, or two when the book really is two things, or `文学` when no
+/// web-novel genre fires and literary prose markers are present, or none when
+/// the text does not say.
 pub fn tags(text: &str) -> Vec<&'static str> {
     let scored = scores(text);
     let top = scored.first().map(|(_, s)| *s).unwrap_or(0.0);
     if top < FLOOR {
+        let chars = text.chars().count().max(1) as f32;
+        let mut lit_capped = 0.0f32;
+        let mut lit_distinct = 0usize;
+        for w in LITERARY_WORDS {
+            let c = text.matches(w).count();
+            if c > 0 {
+                let rate = c as f32 * 1_000_000.0 / chars;
+                lit_capped += rate.min(WORD_CAP);
+                if rate >= 5.0 {
+                    lit_distinct += 1;
+                }
+            }
+        }
+        if lit_distinct >= 3 && lit_capped >= 60.0 {
+            return vec!["文学"];
+        }
         return Vec::new();
     }
     scored
@@ -259,9 +366,29 @@ mod tests {
     #[test]
     fn a_long_book_does_not_outscore_a_short_one_on_length() {
         let short = "金丹渡劫飞升。".repeat(10);
-        let long = short.clone() + &"今天天气不错，他出门散步。".repeat(500);
+        let long = short.clone() + &"今天天气不错，他出门散步。".repeat(10_000);
         let s = scores(&short)[0].1;
         let l = scores(&long)[0].1;
         assert!(l < s, "长书 {l} 应当被稀释，而不是压过短书 {s}");
+    }
+
+    /// One overloaded word (e.g. 太子 in 太子党) must not beat a real genre
+    /// supported by many distinct discriminators.
+    #[test]
+    fn single_overloaded_word_cannot_hijack_genre() {
+        let text = "太子党的人聚在一起。".repeat(200)
+            + &"他掏出手机发微信，坐地铁去公司找老板，小区电梯坏了，总裁在写字楼等他。".repeat(15);
+        assert_eq!(tags(&text), vec!["都市"]);
+    }
+
+    /// Rural / era literary prose with stray words like 连长 or 球场 gets 文学,
+    /// not 军事 or 轻小说.
+    #[test]
+    fn literary_prose_gets_literature_tag() {
+        let filler = "村里的日子很安静，风吹过田野，人们沿着河边慢慢走回家。".repeat(400);
+        let text = filler
+            + "黄昏时分，麦田和芦苇荡飘起炊烟，知青插队在生产队住瓦房、点煤油灯，童年岁月留在村庄的河滩与院子里。".repeat(8).as_str()
+            + "连长来过一次，孩子们在校门口和球场玩。";
+        assert_eq!(tags(&text), vec!["文学"]);
     }
 }
