@@ -1335,6 +1335,48 @@ class ReaderState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Promotes a newly opened unpinned book to the top of the unpinned zone
+  /// (immediately below pinned books), even when a custom manual order exists.
+  Future<void> _promoteOpenedBook(int bookId) async {
+    await _ensureManualOrderLoaded();
+    if (_manualShelfOrder.isNotEmpty) {
+      final isPinned = shelf.any((b) => b.id == bookId && b.pinned);
+      if (!isPinned) {
+        final next = <int>[
+          bookId,
+          for (final id in _manualShelfOrder)
+            if (id != bookId) id,
+        ];
+        _manualShelfOrder = List<int>.unmodifiable(next);
+        unawaited(
+          SharedPreferences.getInstance()
+              .then(
+                (p) => p.setStringList(
+                  _manualOrderKey,
+                  [for (final id in _manualShelfOrder) '$id'],
+                ),
+              )
+              .catchError((_) => false),
+        );
+      }
+    }
+    final idx = shelf.indexWhere((b) => b.id == bookId);
+    if (idx >= 0 && !shelf[idx].pinned) {
+      final item = shelf[idx];
+      final pinned = <ShelfItem>[];
+      final rest = <ShelfItem>[];
+      for (final b in shelf) {
+        if (b.id == bookId) continue;
+        if (b.pinned) {
+          pinned.add(b);
+        } else {
+          rest.add(b);
+        }
+      }
+      shelf = [...pinned, item, ...rest];
+    }
+  }
+
   Future<void> loadLibrary() async {
     await _ensureManualOrderLoaded();
     shelf = _applyManualOrder(await listBooks());
@@ -1420,6 +1462,7 @@ class ReaderState extends ChangeNotifier {
           .map((value) => value.toInt())
           .toSet();
       await readingSessionStore?.remember(path);
+      await _promoteOpenedBook(b.id);
     } catch (e) {
       error = '$e';
       info = null;
