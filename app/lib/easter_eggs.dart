@@ -172,6 +172,7 @@ class EasterEggEngine extends ChangeNotifier {
 
   Map<String, EasterEggRecord> _unlocked = {};
   bool _loaded = false;
+  Future<void>? _loadFuture;
   bool _ttsPlaying = false;
 
   // Persisted cumulative stats for long-term eggs.
@@ -209,9 +210,12 @@ class EasterEggEngine extends ChangeNotifier {
   Map<String, EasterEggRecord> get unlocked => Map.unmodifiable(_unlocked);
   int get unlockedCount => _unlocked.length;
 
-  Future<void> ensureLoaded() async {
-    if (_loaded) return;
-    _loaded = true;
+  Future<void> ensureLoaded() {
+    if (_loaded) return Future.value();
+    return _loadFuture ??= _doLoad();
+  }
+
+  Future<void> _doLoad() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
@@ -245,11 +249,16 @@ class EasterEggEngine extends ChangeNotifier {
             });
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _loaded = true;
+      _loadFuture = null;
+    }
     notifyListeners();
   }
 
   Future<void> _save() async {
+    if (!_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final encoded = jsonEncode({
@@ -260,6 +269,7 @@ class EasterEggEngine extends ChangeNotifier {
   }
 
   Future<void> _saveStats() async {
+    if (!_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -354,6 +364,14 @@ class EasterEggEngine extends ChangeNotifier {
     required bool enabled,
   }) {
     if (!enabled || books.length < 20) return;
+    if (!_loaded) {
+      unawaited(
+        ensureLoaded().then((_) {
+          onShelfLoaded(books: books, enabled: enabled);
+        }),
+      );
+      return;
+    }
     var untouched = 0;
     for (final b in books) {
       final pct = b.chapters <= 0 ? 0.0 : b.lastChapter / b.chapters;
@@ -1130,7 +1148,7 @@ class EasterEggEngine extends ChangeNotifier {
     required String bookTitle,
     required bool enabled,
   }) {
-    if (!enabled) return false;
+    if (!enabled || !_loaded) return false;
     final def = _byId[id];
     if (def == null) return false;
     // Once unlocked, an easter egg never triggers again.
@@ -1166,8 +1184,9 @@ class EasterEggEngine extends ChangeNotifier {
   }
 
   @visibleForTesting
-  void resetForTest() {
+  void resetForTest({bool loaded = true}) {
     _unlocked.clear();
+    _loadFuture = null;
     _ttsPlaying = false;
     _totalReadChars = 0;
     _totalAdsCleaned = 0;
@@ -1191,7 +1210,7 @@ class EasterEggEngine extends ChangeNotifier {
     _reunionPending = false;
     _sessionDictLookups = 0;
     activeBanner.value = null;
-    _loaded = true;
+    _loaded = loaded;
   }
 }
 
@@ -1214,6 +1233,7 @@ class _EasterEggBannerOverlayState extends State<EasterEggBannerOverlay> {
   void initState() {
     super.initState();
     EasterEggEngine.instance.activeBanner.addListener(_onBanner);
+    _onBanner();
   }
 
   @override

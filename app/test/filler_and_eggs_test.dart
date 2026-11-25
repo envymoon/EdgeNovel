@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -200,5 +201,72 @@ void main() {
     }
     expect(engine.unlocked.containsKey('iron_eyes'), isFalse);
     expect(engine.unlocked.containsKey('marathon_pages'), isFalse);
+  });
+
+  test('onShelfLoaded before ensureLoaded preserves persisted eggs and does not re-trigger digital_hamster', () async {
+    SharedPreferences.setMockInitialValues({
+      'easterEggsUnlocked': jsonEncode({
+        'digital_hamster': {
+          'id': 'digital_hamster',
+          'unlockedAtMs': 1700000000000,
+          'count': 1,
+          'lastDetail': '书架囤了 25 本书，其中 20 本还停在开头没动过',
+          'bookTitle': '书架',
+        },
+        'rewind_memory': {
+          'id': 'rewind_memory',
+          'unlockedAtMs': 1700000001000,
+          'count': 1,
+          'lastDetail': '连续回翻 12 页',
+          'bookTitle': '诡秘',
+        },
+      }),
+    });
+
+    final engine = EasterEggEngine.instance;
+    engine.resetForTest(loaded: false);
+
+    // Simulate ShelfPage.initState firing before ensureLoaded() has completed.
+    final books = List.generate(25, (_) => (chapters: 100, lastChapter: 0));
+    engine.onShelfLoaded(books: books, enabled: true);
+
+    await engine.ensureLoaded();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(engine.activeBanner.value, isNull);
+    expect(engine.unlockedCount, 2);
+    expect(engine.unlocked.containsKey('digital_hamster'), isTrue);
+    expect(engine.unlocked.containsKey('rewind_memory'), isTrue);
+
+    // Persisted storage must still contain both eggs.
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('easterEggsUnlocked')!) as Map<String, dynamic>;
+    expect(saved.keys, containsAll(['digital_hamster', 'rewind_memory']));
+  });
+
+  testWidgets('EasterEggBannerOverlay auto-hides a banner queued before mount', (
+    tester,
+  ) async {
+    final engine = EasterEggEngine.instance;
+    engine.resetForTest();
+    final books = List.generate(20, (_) => (chapters: 100, lastChapter: 0));
+    engine.onShelfLoaded(books: books, enabled: true);
+    expect(engine.activeBanner.value?.def.id, 'digital_hamster');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              EasterEggBannerOverlay(theme: ReadingSettings().theme),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('电子仓鼠'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(engine.activeBanner.value, isNull);
   });
 }

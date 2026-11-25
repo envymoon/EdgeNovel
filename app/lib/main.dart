@@ -91,6 +91,7 @@ Future<void> main() async {
     }
   }
   await ShelfCategories.instance.initialize();
+  await EasterEggEngine.instance.ensureLoaded();
   await Dictionary.instance.check();
   await AiRuntimeSettings.instance.initialize(
     deviceStatus: services.deviceStatus,
