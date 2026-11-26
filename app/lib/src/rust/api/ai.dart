@@ -7,10 +7,10 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `background_rest`, `chat_engine_args`, `chat_once`, `chat_stream`, `classify_mood`, `clean_summary`, `cpu_only`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine_slots`, `ensure_engine`, `ensure_on`, `ensure`, `feed`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `health`, `http`, `inference_backend`, `is_a_person`, `is_embed_model`, `is_engine_entry`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `normalized_evidence`, `repeats_original`, `runtime_config`, `send`, `stop_chat_engine`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `summary_request`, `tail_pick`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ChatEngineState`, `LastInputInfo`, `LlamaServerBackend`, `LoopWatch`, `MemoryStatusEx`, `SystemPowerStatus`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `chat_completion_stream`, `chat_completion_stream`, `chat_completion`, `chat_completion`, `embeddings`, `embeddings`, `prepare_chat_slots`, `prepare_chat_slots`, `prepare_chat`, `prepare_chat`, `prepare_embeddings`, `prepare_embeddings`
+// These functions are ignored because they are not marked as `pub`: `after_think`, `ai_dir`, `background_rest`, `chat_engine_args`, `chat_once`, `chat_stream_typed`, `chat_stream`, `classify_ask_route`, `classify_mood`, `clean_ask_answer`, `clean_summary`, `contains_any`, `cpu_only`, `dechunk`, `dir_bytes`, `embed_child`, `embed`, `engine_child`, `engine_files`, `engine_state`, `ensure_embedder_with`, `ensure_embedder`, `ensure_engine_slots`, `ensure_engine`, `ensure_on`, `ensure`, `extract_cjk_terms`, `feed`, `file_bytes`, `find_engine`, `find_gguf`, `find_model`, `finish`, `health`, `http`, `inference_backend`, `is_a_person`, `is_ask_noise_chunk`, `is_embed_model`, `is_engine_entry`, `kill_port_holder`, `landmine_context_spans`, `landmine_context`, `landmine_queries`, `new`, `normalized_evidence`, `push`, `repeats_original`, `runtime_config`, `send`, `slice_utf8_clamped`, `stop_chat_engine`, `summarize_excerpt`, `summarize_person`, `summarize_relation`, `summary_request`, `tail_pick`, `take_chars`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AskRoute`, `ChatEngineState`, `LastInputInfo`, `LlamaServerBackend`, `LoopWatch`, `MemoryStatusEx`, `SystemPowerStatus`, `ThinkStreamParser`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `chat_completion_stream_typed`, `chat_completion_stream_typed`, `chat_completion_stream`, `chat_completion_stream`, `chat_completion`, `chat_completion`, `embeddings`, `embeddings`, `prepare_chat_slots`, `prepare_chat_slots`, `prepare_chat`, `prepare_chat`, `prepare_embeddings`, `prepare_embeddings`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 Future<void> setAiRuntimeConfig({
@@ -185,6 +185,19 @@ Stream<ScanProgress> scanLandmine({
   k: k,
 );
 
+/// Answer an arbitrary reader question about a book using the dual-model local
+/// stack (BGE embeddings + Qwen3 chat in thinking mode), streaming phase and
+/// answer deltas back to the UI.
+Stream<AskBookEvent> askBook({
+  required String path,
+  required PlatformInt64 bookId,
+  required String question,
+}) => RustLib.instance.api.crateApiAiAskBook(
+  path: path,
+  bookId: bookId,
+  question: question,
+);
+
 /// Platform facts used by the shared queue controller. Android and iOS will
 /// provide these through their native adapters; Windows is implemented here so
 /// the policy can be exercised before the mobile shells exist.
@@ -335,6 +348,69 @@ class AiStatus {
           modelBytes == other.modelBytes &&
           embedBytes == other.embedBytes &&
           running == other.running;
+}
+
+class AskBookEvent {
+  /// "searching" | "thinking" | "answering" | "done"
+  final String phase;
+
+  /// Incremental visible answer text when phase == "answering".
+  final String delta;
+
+  /// Complete final answer when phase == "done".
+  final String answer;
+
+  /// Clickable chapter sources (attached on "thinking" and "done").
+  final List<AskBookSource> sources;
+
+  const AskBookEvent({
+    required this.phase,
+    required this.delta,
+    required this.answer,
+    required this.sources,
+  });
+
+  @override
+  int get hashCode =>
+      phase.hashCode ^ delta.hashCode ^ answer.hashCode ^ sources.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AskBookEvent &&
+          runtimeType == other.runtimeType &&
+          phase == other.phase &&
+          delta == other.delta &&
+          answer == other.answer &&
+          sources == other.sources;
+}
+
+class AskBookSource {
+  final int chapter;
+  final String title;
+  final PlatformInt64 start;
+  final String snippet;
+
+  const AskBookSource({
+    required this.chapter,
+    required this.title,
+    required this.start,
+    required this.snippet,
+  });
+
+  @override
+  int get hashCode =>
+      chapter.hashCode ^ title.hashCode ^ start.hashCode ^ snippet.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AskBookSource &&
+          runtimeType == other.runtimeType &&
+          chapter == other.chapter &&
+          title == other.title &&
+          start == other.start &&
+          snippet == other.snippet;
 }
 
 class DescribeProgress {

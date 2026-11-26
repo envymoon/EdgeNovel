@@ -33,6 +33,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<AskBookEvent> dco_decode_StreamSink_ask_book_event_Sse(
+    dynamic raw,
+  );
+
+  @protected
   RustStreamSink<CoverProgress> dco_decode_StreamSink_cover_progress_Sse(
     dynamic raw,
   );
@@ -97,6 +102,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AiStatus dco_decode_ai_status(dynamic raw);
+
+  @protected
+  AskBookEvent dco_decode_ask_book_event(dynamic raw);
+
+  @protected
+  AskBookSource dco_decode_ask_book_source(dynamic raw);
 
   @protected
   AuthorTics dco_decode_author_tics(dynamic raw);
@@ -238,6 +249,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<AskBookSource> dco_decode_list_ask_book_source(dynamic raw);
 
   @protected
   List<BookAnnotation> dco_decode_list_book_annotation(dynamic raw);
@@ -501,6 +515,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<AskBookEvent> sse_decode_StreamSink_ask_book_event_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<CoverProgress> sse_decode_StreamSink_cover_progress_Sse(
     SseDeserializer deserializer,
   );
@@ -571,6 +590,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AiStatus sse_decode_ai_status(SseDeserializer deserializer);
+
+  @protected
+  AskBookEvent sse_decode_ask_book_event(SseDeserializer deserializer);
+
+  @protected
+  AskBookSource sse_decode_ask_book_source(SseDeserializer deserializer);
 
   @protected
   AuthorTics sse_decode_author_tics(SseDeserializer deserializer);
@@ -712,6 +737,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<AskBookSource> sse_decode_list_ask_book_source(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<BookAnnotation> sse_decode_list_book_annotation(
@@ -1012,6 +1042,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_ask_book_event_Sse(
+    RustStreamSink<AskBookEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_cover_progress_Sse(
     RustStreamSink<CoverProgress> self,
     SseSerializer serializer,
@@ -1097,6 +1133,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ai_status(AiStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ask_book_event(AskBookEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ask_book_source(AskBookSource self, SseSerializer serializer);
 
   @protected
   void sse_encode_author_tics(AuthorTics self, SseSerializer serializer);
@@ -1268,6 +1310,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_ask_book_source(
+    List<AskBookSource> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_book_annotation(

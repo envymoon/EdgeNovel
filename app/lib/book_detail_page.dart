@@ -4,6 +4,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'analysis_run_card.dart';
 import 'app_localizations.dart';
 import 'ai_runtime_page.dart';
+import 'ask_book_page.dart';
 import 'bloom.dart';
 import 'cast_graph_page.dart';
 import 'cover.dart';
@@ -47,6 +48,7 @@ class BookDetailPage extends StatefulWidget {
 class _BookDetailPageState extends State<BookDetailPage> {
   BookInfo? _info;
   IndexStatus? _index;
+  AiStatus? _ai;
   List<BookAnnotation> _annotations = const [];
   Set<int> _completedChapters = const {};
   RelationshipStructureInfo? _relationship;
@@ -80,17 +82,22 @@ class _BookDetailPageState extends State<BookDetailPage> {
   Future<void> _load() async {
     try {
       final completedFuture = listCompletedChapters(bookId: widget.book.id);
+      final aiFuture = AppPlatformSupport.hasAiEngine
+          ? aiStatus().then<AiStatus?>((v) => v).catchError((_) => null)
+          : Future<AiStatus?>.value(null);
       final results = await Future.wait<Object>([
         openBook(path: widget.book.path),
         indexStatus(path: widget.book.path, bookId: widget.book.id),
         listAnnotations(bookId: widget.book.id),
       ]);
       final completed = await completedFuture;
+      final ai = await aiFuture;
       if (!mounted) return;
       setState(() {
         _info = results[0] as BookInfo;
         _index = results[1] as IndexStatus;
         _annotations = results[2] as List<BookAnnotation>;
+        _ai = ai;
         _completedChapters = completed.map((value) => value.toInt()).toSet();
         _error = null;
       });
@@ -602,6 +609,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
+  String _askBookSubtitle(int indexed, int total) {
+    final hasChat = (_ai?.engine ?? false) && _ai?.model != null;
+    final hasEmbed = _ai?.embedModel != null;
+    if (!hasChat && !hasEmbed) return '需安装对话与向量模型';
+    if (!hasChat) return '需安装对话模型';
+    if (!hasEmbed) return '需安装向量模型';
+    if (indexed == 0) return '需建立语义索引';
+    if (total > 0 && indexed < total) return '已就绪 · 索引 $indexed / $total 章';
+    return '已就绪';
+  }
+
   Widget _reportEntries(ReadingTheme t, BookInfo info) {
     final summaryCount = info.chapters
         .where((c) => (c.summary ?? '').trim().isNotEmpty)
@@ -634,6 +652,21 @@ class _BookDetailPageState extends State<BookDetailPage> {
             _line(t),
           ],
           if (AppPlatformSupport.hasAiEngine) ...[
+            _entry(
+              t,
+              icon: Icons.forum_outlined,
+              title: '问问挚阅',
+              subtitle: _askBookSubtitle(indexed, total),
+              onTap: () => _open(
+                AskBookPage(
+                  book: widget.book,
+                  reader: widget.reader,
+                  settings: widget.settings,
+                  onOpenChapter: _read,
+                ),
+              ),
+            ),
+            _line(t),
             _entry(
               t,
               icon: Icons.notes_outlined,

@@ -1099,6 +1099,17 @@ fn chat_stream(
     timeout_secs: u64,
     stop: &mut dyn FnMut(&str) -> bool,
 ) -> Result<(u16, String, bool), String> {
+    chat_stream_typed(port, body, timeout_secs, &mut |_is_reasoning, t| stop(t))
+}
+
+/// Like [chat_stream], but tells the callback whether each streamed delta came
+/// from `reasoning_content` (thinking) or `content` (visible answer).
+fn chat_stream_typed(
+    port: u16,
+    body: &Value,
+    timeout_secs: u64,
+    on_chunk: &mut dyn FnMut(bool, &str) -> bool,
+) -> Result<(u16, String, bool), String> {
     let mut body = body.clone();
     body["stream"] = json!(true);
     let mut s = send(port, "POST", "/v1/chat/completions", Some(&body), timeout_secs)?;
@@ -1168,12 +1179,12 @@ fn chat_stream(
                 continue;
             };
             let delta = &v["choices"][0]["delta"];
-            for key in ["reasoning_content", "content"] {
+            for (is_reasoning, key) in [(true, "reasoning_content"), (false, "content")] {
                 if let Some(t) = delta[key].as_str() {
-                    if key == "content" {
+                    if !is_reasoning {
                         answer.push_str(t);
                     }
-                    if stop(t) {
+                    if on_chunk(is_reasoning, t) {
                         let _ = s.shutdown(std::net::Shutdown::Both);
                         return Ok((status, answer, true));
                     }
@@ -1229,6 +1240,13 @@ trait LocalInferenceBackend: Sync {
         stop: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(u16, String, bool), String>;
     #[flutter_rust_bridge::frb(ignore)]
+    fn chat_completion_stream_typed(
+        &self,
+        body: &Value,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(bool, &str) -> bool,
+    ) -> Result<(u16, String, bool), String>;
+    #[flutter_rust_bridge::frb(ignore)]
     fn embeddings(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
 }
 
@@ -1266,6 +1284,15 @@ impl LocalInferenceBackend for LlamaServerBackend {
         stop: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(u16, String, bool), String> {
         chat_stream(PORT, body, timeout_secs, stop)
+    }
+
+    fn chat_completion_stream_typed(
+        &self,
+        body: &Value,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(bool, &str) -> bool,
+    ) -> Result<(u16, String, bool), String> {
+        chat_stream_typed(PORT, body, timeout_secs, on_chunk)
     }
 
     fn embeddings(&self, body: &Value, timeout_secs: u64) -> Result<(u16, Vec<u8>), String> {
@@ -2710,6 +2737,737 @@ pub fn scan_landmine(
     Ok(())
 }
 
+// ── 问问挚阅（书内通用问答）──────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct AskBookSource {
+    pub chapter: u32,
+    pub title: String,
+    pub start: i64,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AskBookEvent {
+    /// "searching" | "thinking" | "answering" | "done"
+    pub phase: String,
+    /// Incremental visible answer text when phase == "answering".
+    pub delta: String,
+    /// Complete final answer when phase == "done".
+    pub answer: String,
+    /// Clickable chapter sources (attached on "thinking" and "done").
+    pub sources: Vec<AskBookSource>,
+}
+
+/// Filters `<think>...</think>` blocks from a live token stream (handling both
+/// `reasoning_content` deltas and inline `<think>` tags split across tokens).
+struct ThinkStreamParser {
+    in_think: bool,
+    started_visible: bool,
+    pending: String,
+}
+
+impl ThinkStreamParser {
+    fn new() -> Self {
+        Self {
+            in_think: false,
+            started_visible: false,
+            pending: String::new(),
+        }
+    }
+
+    /// Feed a streamed token. Returns any newly visible answer text to display.
+    fn push(&mut self, is_reasoning: bool, token: &str) -> String {
+        if is_reasoning || token.is_empty() {
+            return String::new();
+        }
+        self.pending.push_str(token);
+        let mut out = String::new();
+
+        loop {
+            if self.in_think {
+                if let Some(pos) = self.pending.find("</think>") {
+                    let after = pos + "</think>".len();
+                    self.pending.drain(..after);
+                    self.in_think = false;
+                    continue;
+                }
+                // Keep at most the tail that could be a partial "</think>" tag
+                let keep = "</think>".len().saturating_sub(1);
+                if self.pending.len() > keep {
+                    let mut cut = self.pending.len() - keep;
+                    while cut > 0 && !self.pending.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    self.pending.drain(..cut);
+                }
+                break;
+            }
+
+            if !self.started_visible {
+                let trimmed = self.pending.trim_start();
+                if trimmed.is_empty() {
+                    break;
+                }
+                if trimmed.starts_with("<think>") {
+                    let lead = self.pending.len() - trimmed.len();
+                    self.pending.drain(..lead + "<think>".len());
+                    self.in_think = true;
+                    continue;
+                }
+                if "<think>".starts_with(trimmed) {
+                    // Could still be the start of "<think>" across split tokens.
+                    break;
+                }
+                // First visible character is not `<think>`: trim leading whitespace once.
+                let lead = self.pending.len() - trimmed.len();
+                self.pending.drain(..lead);
+                self.started_visible = true;
+            }
+
+            // Visible mode: watch out for a late `<think>` tag just in case.
+            if let Some(pos) = self.pending.find("<think>") {
+                out.push_str(&self.pending[..pos]);
+                self.pending.drain(..pos + "<think>".len());
+                self.in_think = true;
+                continue;
+            }
+            let keep = "<think>".len().saturating_sub(1);
+            if self.pending.len() > keep {
+                let mut cut = self.pending.len() - keep;
+                while cut > 0 && !self.pending.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                out.push_str(&self.pending[..cut]);
+                self.pending.drain(..cut);
+            }
+            break;
+        }
+        out
+    }
+
+    fn finish(self) -> String {
+        if self.in_think {
+            return String::new();
+        }
+        if !self.started_visible {
+            self.pending.trim_start().to_string()
+        } else {
+            self.pending
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AskRoute {
+    StyleSample,
+    EndingScope,
+    OpeningScope,
+    LandmineOrRelation,
+    GeneralHybrid,
+}
+
+const AUTHOR_NOTE_PATTERNS: &[&str] = &[
+    "求月票",
+    "求订阅",
+    "求推荐票",
+    "完本感言",
+    "上架感言",
+    "请假条",
+    "明天两更",
+    "一天一更",
+    "读者弃书",
+    "书友群",
+    "[起][点]",
+    "新书世界观",
+    "题材诞生之初",
+    "写第一序列",
+    "感谢盟主",
+    "打赏加更",
+    "起点读书APP",
+];
+
+const TITLE_NOISE_PATTERNS: &[&str] = &[
+    "感言", "请假", "番外", "单章", "新书", "推书", "致歉", "后记", "彩蛋",
+];
+
+fn is_ask_noise_chunk(chapter: i64, title: &str, text: &str) -> bool {
+    if chapter <= 0 {
+        return true;
+    }
+    if TITLE_NOISE_PATTERNS.iter().any(|k| title.contains(k)) {
+        return true;
+    }
+    if text.chars().count() < 40 {
+        return true;
+    }
+    AUTHOR_NOTE_PATTERNS.iter().any(|k| text.contains(k))
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|k| haystack.contains(k))
+}
+
+fn classify_ask_route(question: &str, has_side_cast: bool) -> AskRoute {
+    if contains_any(
+        question,
+        &[
+            "文笔", "语言风格", "文风", "描写", "可读性", "白不白", "小白文", "节奏", "慢热",
+            "适合什么", "劝退",
+        ],
+    ) {
+        return AskRoute::StyleSample;
+    }
+    if !has_side_cast
+        && contains_any(
+            question,
+            &["大结局", "结局", "结尾", "烂尾", "最后怎么样", "完结"],
+        )
+    {
+        return AskRoute::EndingScope;
+    }
+    if contains_any(
+        question,
+        &[
+            "开局", "前期", "初期", "金手指", "外挂", "力量体系", "境界", "世界观", "穿越",
+        ],
+    ) {
+        return AskRoute::OpeningScope;
+    }
+    if contains_any(
+        question,
+        &[
+            "舔狗", "出轨", "绿帽", "NTR", "ntr", "受虐", "憋屈", "虐主", "虐心", "发刀",
+            "刀子", "圣母", "后宫", "单女主", "多女主", "无女主", "情感关系", "感情线",
+        ],
+    ) {
+        return AskRoute::LandmineOrRelation;
+    }
+    AskRoute::GeneralHybrid
+}
+
+fn clean_ask_answer(raw: &str) -> String {
+    let mut s = raw.trim();
+    if let Some(end) = s.find("</think>") {
+        s = s[end + "</think>".len()..].trim_start();
+    } else if s.starts_with("<think>") {
+        // Incomplete thinking block if hit token cap: keep whatever follows a blank line or trim tag.
+        s = s.trim_start_matches("<think>").trim();
+    }
+    s.trim().to_string()
+}
+
+fn slice_utf8_clamped(text: &str, start: i64, end: i64) -> &str {
+    let len = text.len();
+    let mut s = (start.max(0) as usize).min(len);
+    let mut e = (end.max(0) as usize).min(len);
+    while s < e && !text.is_char_boundary(s) {
+        s += 1;
+    }
+    while e > s && !text.is_char_boundary(e) {
+        e -= 1;
+    }
+    &text[s..e]
+}
+
+fn take_chars(text: &str, max_chars: usize) -> String {
+    text.trim().chars().take(max_chars).collect()
+}
+
+fn extract_cjk_terms(question: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "这本书", "本书", "主角", "怎么", "什么", "有没有", "如何", "特点", "印象", "深刻",
+        "他们", "平时", "人物", "最后", "结局", "怎么样", "是不是", "一下", "一下吗", "可以",
+    ];
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in question.chars() {
+        if ('\u{4E00}'..='\u{9FFF}').contains(&ch) {
+            cur.push(ch);
+        } else {
+            if !cur.is_empty() {
+                let len = cur.chars().count();
+                if (2..=5).contains(&len) && !STOP.contains(&cur.as_str()) {
+                    out.push(cur.clone());
+                }
+                cur.clear();
+            }
+        }
+    }
+    if !cur.is_empty() {
+        let len = cur.chars().count();
+        if (2..=5).contains(&len) && !STOP.contains(&cur.as_str()) {
+            out.push(cur);
+        }
+    }
+    out
+}
+
+/// Answer an arbitrary reader question about a book using the dual-model local
+/// stack (BGE embeddings + Qwen3 chat in thinking mode), streaming phase and
+/// answer deltas back to the UI.
+pub fn ask_book(
+    path: String,
+    book_id: i64,
+    question: String,
+    sink: StreamSink<AskBookEvent>,
+) -> Result<(), String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("请先输入想问的问题".into());
+    }
+
+    let _ = sink.add(AskBookEvent {
+        phase: "searching".into(),
+        delta: String::new(),
+        answer: String::new(),
+        sources: Vec::new(),
+    });
+
+    book::ensure_loaded(&path)?;
+    inference_backend().prepare_embeddings()?;
+    inference_backend().prepare_chat(CAST_CONTEXT)?;
+
+    let (book_meta, rows, narrative) = {
+        let mut guard = book::store().lock().unwrap();
+        let s = guard.as_mut().ok_or("数据库未初始化")?;
+        let meta = s
+            .library()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .find(|b| b.id == book_id)
+            .ok_or("找不到这本书的记录")?;
+        let rows = s
+            .chunk_vectors(book_id, i64::MAX)
+            .map_err(|e| format!("{e}"))?;
+        let nf = s
+            .narrative_focus(
+                book_id,
+                novel_core::focus::FOCUS_VERSION,
+                meta.total_bytes,
+                meta.chapter_count,
+            )
+            .ok()
+            .flatten();
+        (meta, rows, nf)
+    };
+
+    if rows.is_empty() {
+        return Err("这本书还没有建立语义索引，请先在当前页面建立索引".into());
+    }
+
+    let titles = book::chapter_titles(&path)?;
+    let cast = book::scan_cached(&path, book_id, i64::MAX).ok().map(|(c, _)| c);
+
+    let mut protagonist = String::new();
+    let mut cast_names: Vec<String> = Vec::new();
+    let mut top_cast_labels: Vec<String> = Vec::new();
+    let mut rel_summary = String::new();
+
+    if let Some(ref c) = cast {
+        let mut sorted: Vec<&novel_core::cast::Person> = c.people.iter().collect();
+        sorted.sort_by(|a, b| b.mentions.cmp(&a.mentions));
+        if let Some(ref rel) = c.relationship {
+            if !rel.protagonist.trim().is_empty() {
+                protagonist = rel.protagonist.clone();
+            }
+            let confirmed: Vec<String> = rel
+                .people
+                .iter()
+                .filter(|p| p.confirmed || p.sustained || p.possible)
+                .take(4)
+                .map(|p| format!("{}({})", p.name, p.status))
+                .collect();
+            if confirmed.is_empty() {
+                rel_summary = format!("感情结构：{}", rel.label);
+            } else {
+                rel_summary = format!("感情结构：{}（{}）", rel.label, confirmed.join("、"));
+            }
+        }
+        if protagonist.is_empty() {
+            if let Some(first) = sorted.first() {
+                protagonist = first.name.clone();
+            }
+        }
+        for p in sorted.iter().take(10) {
+            cast_names.push(p.name.clone());
+            if top_cast_labels.len() < 8 {
+                top_cast_labels.push(format!("{}({}次)", p.name, p.mentions));
+            }
+        }
+    }
+
+    let mentioned_cast: Vec<String> = cast_names
+        .iter()
+        .filter(|name| question.contains(name.as_str()))
+        .cloned()
+        .collect();
+    let side_cast: Vec<String> = mentioned_cast
+        .iter()
+        .filter(|name| *name != &protagonist)
+        .cloned()
+        .collect();
+
+    let route = classify_ask_route(&question, !side_cast.is_empty());
+
+    // Build clean chunk view inside `with_text`
+    struct CleanChunk {
+        chapter: i64,
+        start: i64,
+        text: String,
+        vec_idx: usize,
+    }
+
+    let clean_chunks: Vec<CleanChunk> = book::with_text(&path, |full_text| {
+        let mut out = Vec::with_capacity(rows.len());
+        for (i, (ch, start, end, _)) in rows.iter().enumerate() {
+            let title = titles.get(*ch as usize).map(String::as_str).unwrap_or("");
+            let slice = slice_utf8_clamped(full_text, *start, *end).trim();
+            if is_ask_noise_chunk(*ch, title, slice) {
+                continue;
+            }
+            out.push(CleanChunk {
+                chapter: *ch,
+                start: *start,
+                text: slice.to_string(),
+                vec_idx: i,
+            });
+        }
+        out
+    })?;
+
+    if clean_chunks.is_empty() {
+        return Err("这本书的索引正文为空，请重新建立索引".into());
+    }
+
+    let max_clean_ch = clean_chunks
+        .iter()
+        .map(|c| c.chapter)
+        .max()
+        .unwrap_or(book_meta.chapter_count);
+
+    // Select passages according to route
+    let mut selected_indices: Vec<usize> = Vec::new();
+
+    if route == AskRoute::StyleSample {
+        let total = clean_chunks.len();
+        for frac in [0.03_f64, 0.25, 0.55, 0.80] {
+            let base = ((total as f64) * frac) as usize;
+            let base = base.min(total - 1);
+            let mut best = base;
+            for offset in 0..15.min(total - base) {
+                if clean_chunks[base + offset].text.chars().count() >= 180 {
+                    best = base + offset;
+                    break;
+                }
+            }
+            if !selected_indices.contains(&best) {
+                selected_indices.push(best);
+            }
+        }
+    } else {
+        let mut queries: Vec<String> = Vec::new();
+        let mut boost_terms: Vec<String> = mentioned_cast.clone();
+        if question.contains("主角") && !protagonist.is_empty() && !boost_terms.contains(&protagonist)
+        {
+            boost_terms.push(protagonist.clone());
+        }
+
+        let (ch_min, ch_max, max_per_ch) = match route {
+            AskRoute::EndingScope => {
+                queries.push(question.clone());
+                queries.push(format!("{protagonist} 结局 最后 归宿 尾声"));
+                ((max_clean_ch - 6).max(1), max_clean_ch, 2usize)
+            }
+            AskRoute::OpeningScope => {
+                let mut open_cap = ((max_clean_ch * 12) / 100).clamp(30, 80);
+                queries.push(question.clone());
+                if contains_any(&question, &["金手指", "外挂", "特殊能力"]) {
+                    queries.push(format!("{protagonist} 系统 能力 金手指 觉醒 获得 神秘"));
+                } else if contains_any(&question, &["力量体系", "境界", "世界观"]) {
+                    queries.push("修炼 境界 序列 等级 途径 灵气 世界观 划分".into());
+                } else if contains_any(&question, &["开局", "前期", "初期", "危机", "转折"]) {
+                    queries.push(format!("{protagonist} 穿越 危险 危机 遭遇 决定"));
+                    open_cap = open_cap.min(40);
+                }
+                (1, open_cap, 2usize)
+            }
+            AskRoute::LandmineOrRelation => {
+                if question.contains("舔狗") {
+                    queries.push(format!("{protagonist} 讨好 卑微 追求 甘愿付出"));
+                    queries.push(format!("{protagonist} 拒绝 傲慢 冷漠 羞辱 依然跟随"));
+                } else if contains_any(&question, &["出轨", "绿帽", "NTR", "ntr"]) {
+                    queries.push(format!("{protagonist} 出轨 背叛 别的男人 移情别恋 戴绿帽"));
+                    queries.push(format!("{protagonist} 喜欢的人 嫁给别人 投入怀抱"));
+                } else if contains_any(&question, &["受虐", "憋屈", "虐主"]) {
+                    queries.push(format!("{protagonist} 屈辱 折磨 欺凌 忍气吞声 无力反抗"));
+                    queries.push(format!("{protagonist} 惨败 重伤 悲惨 绝望 痛苦"));
+                } else if contains_any(&question, &["虐心", "发刀", "刀子"]) {
+                    queries.push(format!("{protagonist} 牺牲 死了 告别 眼泪 悲伤 永别"));
+                    queries.push("战死 牺牲 葬礼 遗言 崩溃 痛哭".into());
+                } else {
+                    queries.push(format!("{protagonist} 喜欢 爱 恋人 妻子 告白 感情"));
+                    queries.push(question.clone());
+                }
+                (1, max_clean_ch, 1usize)
+            }
+            AskRoute::GeneralHybrid | AskRoute::StyleSample => {
+                // Side-character fate query: pull the last 2 appearances of that character!
+                if !side_cast.is_empty()
+                    && contains_any(&question, &["最后", "结局", "死了", "牺牲", "下场", "怎么了"])
+                {
+                    let target = &side_cast[0];
+                    let mut last_hits: Vec<usize> = clean_chunks
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .filter(|(_, c)| c.text.contains(target.as_str()))
+                        .map(|(i, _)| i)
+                        .take(3)
+                        .collect();
+                    last_hits.reverse();
+                    for idx in last_hits {
+                        if selected_indices.len() < 2 {
+                            selected_indices.push(idx);
+                        }
+                    }
+                }
+                for kw in extract_cjk_terms(&question) {
+                    if !boost_terms.contains(&kw) {
+                        boost_terms.push(kw);
+                    }
+                }
+                queries.push(question.clone());
+                if !protagonist.is_empty() && question.contains("主角") {
+                    queries.push(question.replace("主角", &protagonist));
+                }
+                (1, max_clean_ch, 2usize)
+            }
+        };
+
+        let prefixed: Vec<String> = queries
+            .iter()
+            .map(|q| format!("{QUERY_PREFIX}{q}"))
+            .collect();
+        let q_vecs = embed(&prefixed)?;
+
+        let mut scored: Vec<(f32, usize)> = Vec::new();
+        for (i, c) in clean_chunks.iter().enumerate() {
+            if c.chapter < ch_min || c.chapter > ch_max {
+                continue;
+            }
+            let packed = &rows[c.vec_idx].3;
+            let mut best_sim = f32::NEG_INFINITY;
+            for qv in &q_vecs {
+                let s = chunk::cosine(qv, packed);
+                if s > best_sim {
+                    best_sim = s;
+                }
+            }
+            scored.push((best_sim, i));
+        }
+        // Fallback to whole book if chapter range had no chunks
+        if scored.is_empty() {
+            for (i, c) in clean_chunks.iter().enumerate() {
+                let packed = &rows[c.vec_idx].3;
+                let mut best_sim = f32::NEG_INFINITY;
+                for qv in &q_vecs {
+                    let s = chunk::cosine(qv, packed);
+                    if s > best_sim {
+                        best_sim = s;
+                    }
+                }
+                scored.push((best_sim, i));
+            }
+        }
+
+        // Rerank top 300 semantic candidates with lexical/entity boost
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored.truncate(300);
+        if !boost_terms.is_empty() {
+            for (score, idx) in &mut scored {
+                let txt = &clean_chunks[*idx].text;
+                let hits = boost_terms
+                    .iter()
+                    .filter(|t| txt.contains(t.as_str()))
+                    .count();
+                if hits > 0 {
+                    *score += 0.06 * (hits.min(3) as f32);
+                }
+            }
+            scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        }
+
+        let mut per_ch: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for &idx in &selected_indices {
+            *per_ch.entry(clean_chunks[idx].chapter).or_insert(0) += 1;
+        }
+        for (_, idx) in scored {
+            if selected_indices.len() >= 5 {
+                break;
+            }
+            if selected_indices.contains(&idx) {
+                continue;
+            }
+            let ch = clean_chunks[idx].chapter;
+            let cnt = per_ch.entry(ch).or_insert(0);
+            if *cnt >= max_per_ch {
+                continue;
+            }
+            *cnt += 1;
+            selected_indices.push(idx);
+        }
+    }
+
+    // Build concise book dossier (only inject relationship line when relevant to avoid bleed)
+    let mut dossier = vec![format!(
+        "书名：《{}》｜作者：{}｜题材：{}｜约{}章",
+        book_meta.title,
+        book_meta.author.as_deref().unwrap_or("未知"),
+        book_meta.genre_tags.as_deref().unwrap_or("未分类"),
+        book_meta.chapter_count
+    )];
+    if !protagonist.is_empty() {
+        dossier.push(format!(
+            "核心人物：主角为{}；其他高频人物：{}",
+            protagonist,
+            top_cast_labels.join("、")
+        ));
+    }
+    if !rel_summary.is_empty()
+        && matches!(
+            route,
+            AskRoute::LandmineOrRelation | AskRoute::StyleSample | AskRoute::EndingScope
+        )
+    {
+        dossier.push(rel_summary);
+    }
+    if let Some((career, romance, growth)) = narrative {
+        dossier.push(format!(
+            "叙事侧重：事业={career}，感情={romance}，成长={growth}"
+        ));
+    }
+
+    let mut passages = Vec::with_capacity(selected_indices.len());
+    let mut sources: Vec<AskBookSource> = Vec::new();
+    let mut seen_source_ch: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for idx in &selected_indices {
+        let c = &clean_chunks[*idx];
+        let title = titles
+            .get(c.chapter as usize)
+            .cloned()
+            .unwrap_or_else(|| format!("第{}章", c.chapter));
+        let excerpt = take_chars(&c.text, 300);
+        passages.push(format!("[第{}章 {}]\n{}", c.chapter, title, excerpt));
+        if sources.len() < 3 && seen_source_ch.insert(c.chapter) {
+            sources.push(AskBookSource {
+                chapter: c.chapter as u32,
+                title,
+                start: c.start,
+                snippet: take_chars(&c.text, 80),
+            });
+        }
+    }
+
+    let sys_prompt = match route {
+        AskRoute::LandmineOrRelation => {
+            "你是挚阅本地书内问答助手。请综合【书籍档案】和【书内原文片段】，用自然直白的口吻回答读者问题。\
+             要求：1. 依据提供的档案与片段直接给出判断；\
+             2. 若抽检片段里没有明确命中雷点（如出轨、舔狗、受虐），请说明“当前抽检片段未见明显雷点”，不要凭空编造；\
+             3. 注意“未发现明确感情线”代表无女主或感情线极淡，不要错说成单女主；\
+             4. 回答控制在140字以内，简洁明了。"
+        }
+        AskRoute::StyleSample => {
+            "你是挚阅本地书内问答助手。请根据【书籍档案】和下面从全书均匀抽样的【原文片段】，用自然直白的口吻评价这本书的文笔、风格、节奏或受众。\
+             要求：1. 结合片段里的具体描写特征作答，不要空泛套话；\
+             2. 不要胡编片段里没有的情节；\
+             3. 回答控制在140字以内，简洁有干货。"
+        }
+        _ => {
+            "你是挚阅本地书内问答助手。请综合【书籍档案】和【书内原文片段】，用自然、直白、对读者有帮助的口吻回答问题。\
+             要求：1. 优先依据提供的档案与片段作答，给出清晰结论；\
+             2. 若片段不足以确定某些细节，直接坦诚说明即可，不要凭空编造未出现的情节或人物关系；\
+             3. 回答控制在140字以内，简洁有干货。"
+        }
+    };
+
+    let user_prompt = format!(
+        "【书籍档案】\n{}\n\n【书内原文片段】\n{}\n\n【读者问题】\n{}",
+        dossier.join("\n"),
+        passages.join("\n\n"),
+        question
+    );
+
+    let _ = sink.add(AskBookEvent {
+        phase: "thinking".into(),
+        delta: String::new(),
+        answer: String::new(),
+        sources: sources.clone(),
+    });
+
+    let body = json!({
+        "messages": [
+            { "role": "system", "content": sys_prompt },
+            { "role": "user", "content": user_prompt }
+        ],
+        "chat_template_kwargs": { "enable_thinking": true },
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "max_tokens": 1200,
+    });
+
+    let mut parser = ThinkStreamParser::new();
+    let mut visible_answer = String::new();
+    let (status, raw_content, _) =
+        inference_backend().chat_completion_stream_typed(&body, 180, &mut |is_reasoning, tok| {
+            let vis = parser.push(is_reasoning, tok);
+            if !vis.is_empty() {
+                visible_answer.push_str(&vis);
+                let _ = sink.add(AskBookEvent {
+                    phase: "answering".into(),
+                    delta: vis,
+                    answer: String::new(),
+                    sources: Vec::new(),
+                });
+            }
+            false
+        })?;
+    if status != 200 {
+        return Err(format!("对话引擎返回 {status}"));
+    }
+
+    let tail = parser.finish();
+    if !tail.is_empty() {
+        visible_answer.push_str(&tail);
+        let _ = sink.add(AskBookEvent {
+            phase: "answering".into(),
+            delta: tail,
+            answer: String::new(),
+            sources: Vec::new(),
+        });
+    }
+
+    let final_answer = if visible_answer.trim().is_empty() {
+        clean_ask_answer(&raw_content)
+    } else {
+        visible_answer.trim().to_string()
+    };
+    if final_answer.is_empty() {
+        return Err("模型未生成有效回答，请重试".into());
+    }
+
+    let _ = sink.add(AskBookEvent {
+        phase: "done".into(),
+        delta: String::new(),
+        answer: final_answer,
+        sources,
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3899,5 +4657,69 @@ mod relprobe {
         }
         println!("\n用时 {:?}", t0.elapsed());
         stop_ai();
+    }
+
+    #[test]
+    fn ask_book_router_and_filters_work() {
+        assert_eq!(
+            classify_ask_route("这本书的文笔如何？", false),
+            AskRoute::StyleSample
+        );
+        assert_eq!(
+            classify_ask_route("主角在大结局最后怎么样了？", false),
+            AskRoute::EndingScope
+        );
+        // Side character fate should stay on GeneralHybrid so we can pull their last chapters
+        assert_eq!(
+            classify_ask_route("邓恩队长最后结局怎么了？", true),
+            AskRoute::GeneralHybrid
+        );
+        assert_eq!(
+            classify_ask_route("主角的金手指是什么？", false),
+            AskRoute::OpeningScope
+        );
+        assert_eq!(
+            classify_ask_route("主角是不是舔狗？", false),
+            AskRoute::LandmineOrRelation
+        );
+        assert_eq!(
+            classify_ask_route("塔罗会是什么组织？", false),
+            AskRoute::GeneralHybrid
+        );
+
+        assert!(is_ask_noise_chunk(0, "序", "这是一段很长的序言正文内容需要超过四十个字才能不被长度过滤掉"));
+        assert!(is_ask_noise_chunk(10, "完本感言", "这是一段很长的完本感言正文内容需要超过四十个字才能不被长度过滤掉"));
+        assert!(is_ask_noise_chunk(
+            10,
+            "第十章",
+            "新书世界观早就定好了，求月票求订阅，大家记得来起点读书APP支持一下这本书！"
+        ));
+        assert!(!is_ask_noise_chunk(
+            10,
+            "第十章 风起",
+            "克莱恩推开木门，煤气灯微弱的光芒照亮了桌上的塔罗牌，夜风吹过街角带来潮湿的雾气。"
+        ));
+
+        assert_eq!(
+            clean_ask_answer("<think>先分析一下</think>\n主角是克莱恩。"),
+            "主角是克莱恩。"
+        );
+
+        // Stream parser: inline <think> split across tokens
+        let mut p1 = ThinkStreamParser::new();
+        let mut out1 = String::new();
+        for tok in ["<th", "ink>先思考", "一下</th", "ink>\n\n", "主角", "是克莱恩。"] {
+            out1.push_str(&p1.push(false, tok));
+        }
+        out1.push_str(&p1.finish());
+        assert_eq!(out1.trim(), "主角是克莱恩。");
+
+        // Stream parser: separate reasoning_content deltas
+        let mut p2 = ThinkStreamParser::new();
+        let mut out2 = String::new();
+        out2.push_str(&p2.push(true, "思考过程不该输出"));
+        out2.push_str(&p2.push(false, "主角是吕树。"));
+        out2.push_str(&p2.finish());
+        assert_eq!(out2.trim(), "主角是吕树。");
     }
 }
